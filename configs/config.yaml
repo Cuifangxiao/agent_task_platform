@@ -25,4 +25,5 @@ redis:
 jwt:
   secret: change-me-in-production
   issuer: agent-task-platform
-  expire_hours: 24
+  access_expire_minutes: 30
+  refresh_expire_hours: 168

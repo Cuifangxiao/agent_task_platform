@@ -38,12 +38,18 @@ func main() {
 	log.Printf("redis connected: %s/%d", cfg.Redis.Address(), cfg.Redis.DB)
 
 	userRepo := user.NewRepository(db)
-	jwtManager := auth.NewManager(cfg.JWT.Secret, cfg.JWT.Issuer, cfg.JWT.ExpireDuration())
-	userService := user.NewService(userRepo, jwtManager)
+	jwtManager := auth.NewManager(
+		cfg.JWT.Secret,
+		cfg.JWT.Issuer,
+		cfg.JWT.AccessExpireDuration(),
+		cfg.JWT.RefreshExpireDuration(),
+	)
+	sessionStore := auth.NewRedisSessionStore(redisClient)
+	userService := user.NewService(userRepo, jwtManager, sessionStore)
 	userHandler := user.NewHandler(userService)
 
 	r := gin.Default()
-	router.Register(r, userHandler, jwtManager)
+	router.Register(r, userHandler, jwtManager, sessionStore)
 
 	if err := r.Run(cfg.Server.Address()); err != nil {
 		panic(err)

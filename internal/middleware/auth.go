@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func Auth(jwtManager *auth.Manager) gin.HandlerFunc {
+func Auth(jwtManager *auth.Manager, sessionStore auth.SessionStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -36,9 +36,49 @@ func Auth(jwtManager *auth.Manager) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		if err := claims.RequireTokenType(auth.TokenTypeAccess); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"message": "invalid or expired token",
+			})
+			c.Abort()
+			return
+		}
+
+		isBlacklisted, err := sessionStore.IsAccessTokenBlacklisted(c.Request.Context(), claims.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "failed to validate token",
+			})
+			c.Abort()
+			return
+		}
+		if isBlacklisted {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"message": "invalid or expired token",
+			})
+			c.Abort()
+			return
+		}
+
+		session, err := sessionStore.GetSession(c.Request.Context(), claims.UserID, claims.Device)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "failed to validate session",
+			})
+			c.Abort()
+			return
+		}
+		if session == nil || session.Status != auth.SessionStatusActive || session.SessionID != claims.SessionID {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"message": "invalid or expired token",
+			})
+			c.Abort()
+			return
+		}
 
 		c.Set("userID", claims.UserID)
 		c.Set("username", claims.Username)
+		c.Set(auth.ContextKeyClaims, claims)
 		c.Next()
 	}
 }

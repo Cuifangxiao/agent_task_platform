@@ -45,9 +45,11 @@ type RedisConfig struct {
 }
 
 type JWTConfig struct {
-	Secret      string `yaml:"secret"`
-	Issuer      string `yaml:"issuer"`
-	ExpireHours int    `yaml:"expire_hours"`
+	Secret              string `yaml:"secret"`
+	Issuer              string `yaml:"issuer"`
+	ExpireHours         int    `yaml:"expire_hours"`
+	AccessExpireMinutes int    `yaml:"access_expire_minutes"`
+	RefreshExpireHours  int    `yaml:"refresh_expire_hours"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -90,10 +92,26 @@ func (c RedisConfig) Address() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
-func (c JWTConfig) ExpireDuration() time.Duration {
-	if c.ExpireHours <= 0 {
-		return 24 * time.Hour
+func (c JWTConfig) AccessExpireDuration() time.Duration {
+	if c.AccessExpireMinutes > 0 {
+		return time.Duration(c.AccessExpireMinutes) * time.Minute
 	}
 
-	return time.Duration(c.ExpireHours) * time.Hour
+	if c.ExpireHours > 0 {
+		return time.Duration(c.ExpireHours) * time.Hour
+	}
+
+	return 30 * time.Minute
+}
+
+func (c JWTConfig) RefreshExpireDuration() time.Duration {
+	if c.RefreshExpireHours > 0 {
+		return time.Duration(c.RefreshExpireHours) * time.Hour
+	}
+
+	return 7 * 24 * time.Hour
+}
+
+func (c JWTConfig) ExpireDuration() time.Duration {
+	return c.AccessExpireDuration()
 }
