@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 
+	"agent-task-platform/internal/auth"
 	"agent-task-platform/internal/bootstrap"
 	"agent-task-platform/internal/router"
 	"agent-task-platform/internal/user"
@@ -36,11 +37,12 @@ func main() {
 	log.Printf("redis connected: %s/%d", cfg.Redis.Address(), cfg.Redis.DB)
 
 	userRepo := user.NewRepository(db)
-	userService := user.NewService(userRepo)
+	jwtManager := auth.NewManager(cfg.JWT.Secret, cfg.JWT.Issuer, cfg.JWT.ExpireDuration())
+	userService := user.NewService(userRepo, jwtManager)
 	userHandler := user.NewHandler(userService)
 
 	r := gin.Default()
-	router.Register(r, userHandler)
+	router.Register(r, userHandler, jwtManager)
 
 	if err := r.Run(cfg.Server.Address()); err != nil {
 		panic(err)

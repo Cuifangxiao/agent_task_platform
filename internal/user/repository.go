@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	mysqlDriver "github.com/go-sql-driver/mysql"
 )
 
 type Repository interface {
 	GetByUsername(ctx context.Context, username string) (*User, error)
+	Create(ctx context.Context, user User) error
 }
 
 type MySQLRepository struct {
@@ -42,4 +45,23 @@ func (r *MySQLRepository) GetByUsername(ctx context.Context, username string) (*
 	}
 
 	return &user, nil
+}
+
+func (r *MySQLRepository) Create(ctx context.Context, user User) error {
+	query := `
+		INSERT INTO users (username, password_hash)
+		VALUES (?, ?)
+	`
+
+	_, err := r.db.ExecContext(ctx, query, user.Username, user.PasswordHash)
+	if err != nil {
+		var mysqlErr *mysqlDriver.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return ErrUsernameAlreadyExists
+		}
+
+		return err
+	}
+
+	return nil
 }

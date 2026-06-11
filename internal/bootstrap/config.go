@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -12,6 +13,7 @@ type Config struct {
 	Server ServerConfig `yaml:"server"`
 	MySQL  MySQLConfig  `yaml:"mysql"`
 	Redis  RedisConfig  `yaml:"redis"`
+	JWT    JWTConfig    `yaml:"jwt"`
 }
 
 type AppConfig struct {
@@ -40,6 +42,12 @@ type RedisConfig struct {
 	Port     int    `yaml:"port"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
+}
+
+type JWTConfig struct {
+	Secret      string `yaml:"secret"`
+	Issuer      string `yaml:"issuer"`
+	ExpireHours int    `yaml:"expire_hours"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -80,4 +88,12 @@ func (c MySQLConfig) DSN() string {
 
 func (c RedisConfig) Address() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+}
+
+func (c JWTConfig) ExpireDuration() time.Duration {
+	if c.ExpireHours <= 0 {
+		return 24 * time.Hour
+	}
+
+	return time.Duration(c.ExpireHours) * time.Hour
 }
