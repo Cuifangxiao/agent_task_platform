@@ -27,6 +27,14 @@ func main() {
 
 	log.Printf("mysql connected: %s/%s", cfg.MySQL.Address(), cfg.MySQL.Database)
 
+	redisClient, err := bootstrap.NewRedis(cfg.Redis)
+	if err != nil {
+		log.Fatalf("connect redis failed: %v", err)
+	}
+	defer redisClient.Close()
+
+	log.Printf("redis connected: %s/%d", cfg.Redis.Address(), cfg.Redis.DB)
+
 	userRepo := user.NewRepository(db)
 	userService := user.NewService(userRepo)
 	userHandler := user.NewHandler(userService)
