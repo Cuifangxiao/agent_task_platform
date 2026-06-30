@@ -27,3 +27,7 @@ jwt:
   issuer: agent-task-platform
   access_expire_minutes: 30
   refresh_expire_hours: 168
+
+python_agent:
+  host: 127.0.0.1
+  port: 50051

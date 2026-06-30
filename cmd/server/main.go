@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+	"os/signal"
+	"syscall"
+
+	"agent-task-platform/internal/app"
 )
 
 func main() {
@@ -19,13 +24,14 @@ func parseConfigPath() string {
 }
 
 func run(confPath string) error {
-	app, err := newApplication(confPath)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	application, err := app.New(confPath)
 	if err != nil {
 		return err
 	}
-	defer app.Close()
+	defer application.Close()
 
-	log.Printf("server listening on %s", app.cfg.Server.Address())
-
-	return app.Run()
+	return application.Run(ctx)
 }

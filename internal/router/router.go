@@ -1,12 +1,12 @@
 package router
 
 import (
-	"net/http"
-
 	"agent-task-platform/internal/auth"
 	"agent-task-platform/internal/middleware"
 	"agent-task-platform/internal/modelconfig"
+	"agent-task-platform/internal/providercredential"
 	"agent-task-platform/internal/user"
+	"agent-task-platform/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,11 +15,12 @@ func Register(
 	r *gin.Engine,
 	userHandler *user.Handler,
 	modelConfigHandler *modelconfig.Handler,
+	providerCredentialHandler *providercredential.Handler,
 	jwtManager *auth.Manager,
 	sessionStore auth.SessionStore,
 ) {
 	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
+		response.OK(c, gin.H{
 			"status": "ok",
 		})
 	})
@@ -33,4 +34,5 @@ func Register(
 	authGroup.GET("/me", userHandler.Me)
 	authGroup.POST("/logout", userHandler.Logout)
 	authGroup.POST("/model-configs", modelConfigHandler.Create)
+	authGroup.POST("/provider-credentials/test", providerCredentialHandler.TestCredential)
 }

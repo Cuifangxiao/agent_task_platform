@@ -2,9 +2,9 @@ package modelconfig
 
 import (
 	"errors"
-	"net/http"
 
-	"agent-task-platform/internal/auth"
+	"agent-task-platform/internal/httpctx"
+	"agent-task-platform/pkg/response"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,21 +17,15 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) Create(c *gin.Context) {
-	claimsValue, _ := c.Get(auth.ContextKeyClaims)
-	claims, _ := claimsValue.(*auth.Claims)
-	if claims == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "missing auth claims",
-		})
+	claims, ok := httpctx.Claims(c)
+	if !ok {
+		response.Internal(c, "missing auth claims")
 		return
 	}
 
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "invalid request",
-			"error":   err.Error(),
-		})
+		response.BadRequest(c, "invalid request", err)
 		return
 	}
 
@@ -39,20 +33,14 @@ func (h *Handler) Create(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidRequest):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"message": err.Error(),
-			})
+			response.BadRequest(c, err.Error(), nil)
 		case errors.Is(err, ErrNameAlreadyExists):
-			c.JSON(http.StatusConflict, gin.H{
-				"message": err.Error(),
-			})
+			response.Conflict(c, err.Error())
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"message": "internal server error",
-			})
+			response.InternalServerError(c)
 		}
 		return
 	}
 
-	c.JSON(http.StatusCreated, resp)
+	response.Created(c, resp)
 }

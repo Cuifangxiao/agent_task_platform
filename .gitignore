@@ -17,6 +17,8 @@ ENV/
 # Build and packaging
 build/
 dist/
+bin/
+*.exe
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
@@ -39,3 +41,5 @@ htmlcov/
 # Local environment
 .env
 .env.local
+.tmp/
+configs/config.yaml

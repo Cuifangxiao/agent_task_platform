@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -9,11 +10,12 @@ import (
 )
 
 type Config struct {
-	App    AppConfig    `yaml:"app"`
-	Server ServerConfig `yaml:"server"`
-	MySQL  MySQLConfig  `yaml:"mysql"`
-	Redis  RedisConfig  `yaml:"redis"`
-	JWT    JWTConfig    `yaml:"jwt"`
+	App         AppConfig         `yaml:"app"`
+	Server      ServerConfig      `yaml:"server"`
+	MySQL       MySQLConfig       `yaml:"mysql"`
+	Redis       RedisConfig       `yaml:"redis"`
+	JWT         JWTConfig         `yaml:"jwt"`
+	PythonAgent PythonAgentConfig `yaml:"python_agent"`
 }
 
 type AppConfig struct {
@@ -52,6 +54,11 @@ type JWTConfig struct {
 	RefreshExpireHours  int    `yaml:"refresh_expire_hours"`
 }
 
+type PythonAgentConfig struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+}
+
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -62,8 +69,94 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	cfg.setDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
+}
+
+func (c *Config) setDefaults() {
+	if c.App.Name == "" {
+		c.App.Name = "agent-task-platform"
+	}
+	if c.App.Env == "" {
+		c.App.Env = "local"
+	}
+	if c.Server.Host == "" {
+		c.Server.Host = "0.0.0.0"
+	}
+	if c.Server.Port == 0 {
+		c.Server.Port = 8080
+	}
+	if c.MySQL.Host == "" {
+		c.MySQL.Host = "127.0.0.1"
+	}
+	if c.MySQL.Port == 0 {
+		c.MySQL.Port = 3306
+	}
+	if c.MySQL.Charset == "" {
+		c.MySQL.Charset = "utf8mb4"
+	}
+	if c.MySQL.Loc == "" {
+		c.MySQL.Loc = "Local"
+	}
+	if c.Redis.Host == "" {
+		c.Redis.Host = "127.0.0.1"
+	}
+	if c.Redis.Port == 0 {
+		c.Redis.Port = 6379
+	}
+	if c.JWT.Issuer == "" {
+		c.JWT.Issuer = c.App.Name
+	}
+	if c.JWT.AccessExpireMinutes == 0 && c.JWT.ExpireHours == 0 {
+		c.JWT.AccessExpireMinutes = 30
+	}
+	if c.JWT.RefreshExpireHours == 0 {
+		c.JWT.RefreshExpireHours = 168
+	}
+	if c.PythonAgent.Host == "" {
+		c.PythonAgent.Host = "127.0.0.1"
+	}
+	if c.PythonAgent.Port == 0 {
+		c.PythonAgent.Port = 50051
+	}
+}
+
+func (c Config) Validate() error {
+	if c.MySQL.Username == "" {
+		return fmt.Errorf("mysql.username is required")
+	}
+	if c.MySQL.Database == "" {
+		return fmt.Errorf("mysql.database is required")
+	}
+	if c.JWT.Secret == "" {
+		return fmt.Errorf("jwt.secret is required")
+	}
+	if err := validatePort("server.port", c.Server.Port); err != nil {
+		return err
+	}
+	if err := validatePort("mysql.port", c.MySQL.Port); err != nil {
+		return err
+	}
+	if err := validatePort("redis.port", c.Redis.Port); err != nil {
+		return err
+	}
+	if err := validatePort("python_agent.port", c.PythonAgent.Port); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validatePort(name string, port int) error {
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("%s must be between 1 and 65535", name)
+	}
+
+	return nil
 }
 
 func (c ServerConfig) Address() string {
@@ -84,11 +177,15 @@ func (c MySQLConfig) DSN() string {
 		c.Database,
 		c.Charset,
 		c.ParseTime,
-		c.Loc,
+		url.QueryEscape(c.Loc),
 	)
 }
 
 func (c RedisConfig) Address() string {
+	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+}
+
+func (c PythonAgentConfig) GRPCAddress() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 

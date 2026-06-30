@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
+
+	"agent-task-platform/pkg/validatex"
 )
 
 var ErrInvalidRequest = errors.New("invalid model config request")
@@ -43,12 +44,8 @@ func (s *Service) Create(ctx context.Context, userID int64, req CreateRequest) (
 	}
 
 	if baseURL != "" {
-		parsed, err := url.ParseRequestURI(baseURL)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return nil, fmt.Errorf("%w: base_url must be a valid http or https URL", ErrInvalidRequest)
-		}
-		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return nil, fmt.Errorf("%w: base_url must use http or https", ErrInvalidRequest)
+		if err := validatex.HTTPURL(baseURL); err != nil {
+			return nil, fmt.Errorf("%w: base_url %v", ErrInvalidRequest, err)
 		}
 	}
 
