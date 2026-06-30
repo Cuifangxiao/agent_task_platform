@@ -11,6 +11,7 @@ import (
 
 	"agent-task-platform/internal/auth"
 	"agent-task-platform/internal/bootstrap"
+	"agent-task-platform/internal/middleware"
 	"agent-task-platform/internal/modelconfig"
 	"agent-task-platform/internal/providercredential"
 	"agent-task-platform/internal/pythonruntime"
@@ -80,7 +81,11 @@ func New(confPath string) (*Application, error) {
 	logger.Info("python agent grpc target configured", "target", cfg.PythonAgent.GRPCAddress())
 
 	deps := buildHTTPDependencies(cfg, db, redisClient, grpcConn)
-	engine := gin.Default()
+	engine := gin.New()
+	engine.Use(
+		middleware.RequestLogger(logger),
+		middleware.Recovery(logger),
+	)
 	router.Register(
 		engine,
 		deps.userHandler,
