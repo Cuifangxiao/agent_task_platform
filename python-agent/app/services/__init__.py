@@ -1,1 +1,1 @@
-# Package marker for Python service implementations.
+"""业务服务层:纯 Python 逻辑,不依赖 gRPC 上下文,方便单测和复用。"""
