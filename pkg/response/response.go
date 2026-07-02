@@ -33,6 +33,10 @@ func Conflict(c *gin.Context, message string) {
 	Error(c, http.StatusConflict, message)
 }
 
+func NotFound(c *gin.Context, message string) {
+	Error(c, http.StatusNotFound, message)
+}
+
 func Internal(c *gin.Context, message string) {
 	Error(c, http.StatusInternalServerError, message)
 }

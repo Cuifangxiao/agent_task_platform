@@ -33,6 +33,10 @@ func Register(
 	authGroup.Use(middleware.Auth(jwtManager, sessionStore))
 	authGroup.GET("/me", userHandler.Me)
 	authGroup.POST("/logout", userHandler.Logout)
+	authGroup.GET("/model-configs", modelConfigHandler.List)
 	authGroup.POST("/model-configs", modelConfigHandler.Create)
+	authGroup.GET("/model-configs/:id", modelConfigHandler.Get)
+	authGroup.PUT("/model-configs/:id", modelConfigHandler.Update)
+	authGroup.DELETE("/model-configs/:id", modelConfigHandler.Delete)
 	authGroup.POST("/provider-credentials/test", providerCredentialHandler.TestCredential)
 }
