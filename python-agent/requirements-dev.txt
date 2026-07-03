@@ -1,0 +1,5 @@
+# proto 代码生成(配合根目录 make proto)
+grpcio-tools==1.78.0
+
+# 测试
+pytest

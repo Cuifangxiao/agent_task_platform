@@ -43,3 +43,5 @@ htmlcov/
 .env.local
 .tmp/
 configs/config.yaml
+python-agent/config.yaml
+python-agent/logs/

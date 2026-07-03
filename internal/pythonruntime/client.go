@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	providerv1 "agent-task-platform/api/provider/v1"
+	providerv1 "agent-task-platform/api/go/v1/provider"
 	"agent-task-platform/internal/providercredential"
 	"google.golang.org/grpc"
 )

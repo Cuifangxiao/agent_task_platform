@@ -1,2 +1,8 @@
+# gRPC
 grpcio==1.78.0
-protobuf==5.29.3
+protobuf==6.33.6
+
+# 配置
+pydantic==2.12.5
+PyYAML==6.0.3
+python-dotenv==1.2.1

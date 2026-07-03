@@ -6,51 +6,68 @@ Go 后端通过 gRPC 调用的 Python agent 运行时,负责模型调用、聊�
 
 ```
 python-agent/
-├── main.py                  # 入口:加载配置、初始化日志、启动 gRPC server
-├── requirements.txt
-├── .env.example             # 环境变量说明(复制为 .env 或直接导出)
+├── main.py                  # 进程入口: --conf 指定配置 -> load_dotenv -> init_config -> 日志 -> Application
+├── config.py                # Pydantic 配置模型 + init_config/get_config 全局单例
+├── config.example.yaml      # 配置模板(本地 cp 为 config.yaml, 已 gitignore)
+├── .env.example             # 密钥类环境变量说明(复制为 .env)
+├── requirements.txt         # 运行依赖
+├── requirements-dev.txt     # 开发依赖(grpcio-tools / pytest)
 ├── Dockerfile
-├── gen/                     # protoc 生成的代码(scripts/generate-proto.ps1 生成,勿手改)
-│   └── api/provider/v1/
-├── app/
-│   ├── config.py            # 环境变量配置
-│   ├── logger.py            # 日志初始化
-│   ├── server.py            # gRPC server 组装、依赖注入、优雅停机
-│   ├── grpc_api/            # gRPC 接入层:servicer,只做 proto <-> 内部类型转换
-│   │   └── provider_runtime.py
-│   ├── services/            # 业务服务层:纯 Python 逻辑,不依赖 gRPC
-│   │   └── provider_service.py
-│   ├── agents/              # agent 编排:组合 llm/rag/memory/tools
-│   │   ├── base.py          # BaseAgent / AgentContext
-│   │   └── chat_agent.py    # 基础聊天 agent
-│   ├── llm/                 # 模型接入层:各 provider 客户端(统一 BaseLLMClient 接口)
-│   ├── rag/                 # RAG:loader/splitter/embedding/vector_store/retriever
-│   ├── memory/              # 会话记忆
-│   └── tools/               # agent 工具
+├── api/                     # protoc 生成的 gRPC 桩代码(根目录 make proto 生成, 勿手改)
+├── app/                     # 生命周期层: 只管启动顺序与关停
+│   ├── application.py       #   信号处理 + run/shutdown 编排
+│   ├── bootstrap.py         #   资源初始化(DB/模型配置等, 不碰网络)
+│   └── transport_runtime.py #   协议层启停(失败回滚)
+├── server/                  # 协议接入层
+│   └── grpc.py              #   Servicer 薄壳(错误边界) + GrpcServer 生命周期
+├── handler/                 # 编排层: proto <-> core contract 的转换
+│   ├── container.py         #   AgentHandlers + build_agent_handlers(手写 DI)
+│   └── provider_handler.py
+├── core/                    # 领域内核: 零 proto/grpc 依赖, 可独立单测
+│   ├── provider/            #   contract.py(Input/Output DTO) + service.py(业务)
+│   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
+│   ├── llm/                 #   模型接入层: 各 provider 客户端(统一 BaseLLMClient 接口)
+│   ├── rag/  memory/  tools/
+├── utils/
+│   └── logger.py            # dictConfig 日志初始化
 └── tests/
 ```
 
 ## 分层约定
 
-请求链路:`Go(gRPC client) -> grpc_api(servicer) -> services(业务) -> agents/llm/rag(能力)`
+请求链路: `Go(gRPC client) -> server(servicer 薄壳) -> handler(转换/编排) -> core(领域逻辑)`
 
-- **grpc_api** 只做消息接收和转换,不写业务;
-- **services** 不 import grpc,方便单测;
-- 新增一个 RPC 的步骤:改 proto -> 重新生成代码 -> grpc_api 加 servicer 方法 -> services 加业务方法。
+- **server** 只做委托 + 错误边界(try/except -> StatusCode + 日志), 不写业务;
+- **handler** 负责 proto <-> core contract DTO 的双向转换, 不处理异常;
+- **core** 不 import grpc/proto, 方便单测;
+- 依赖方向单向: `server -> handler -> core`, 反向 import 视为违规。
+
+新增一个 RPC 的步骤: 改 `api/proto/` 下的 proto -> 根目录 `make proto` -> server/grpc.py 加薄壳方法 -> handler 加转换方法 -> core 加领域逻辑。
 
 ## 本地运行
 
 ```bash
 cd python-agent
-pip install -r requirements.txt
-python main.py    # 默认监听 0.0.0.0:50051
+python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+cp config.example.yaml config.yaml   # 按需改端口等
+cp .env.example .env                 # 按需填密钥
+.venv/bin/python main.py --conf config.yaml   # 默认监听 0.0.0.0:50051
 ```
 
-配置项见 `.env.example`,均可通过环境变量覆盖。
+或在仓库根目录 `make run-python`。
 
 ## 测试
 
 ```bash
-pip install pytest
-pytest tests/
+.venv/bin/python -m pytest tests/    # 或仓库根目录 make test-python
 ```
+
+## proto 代码生成
+
+proto 唯一真源在仓库根 `api/proto/v1/provider/provider.proto`, 在仓库根目录执行:
+
+```bash
+make proto        # 同时生成 Go(api/go/) 和 Python(python-agent/api/) 代码
+```
+
+生成物提交进 git, 构建/部署不依赖本机 protoc。

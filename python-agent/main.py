@@ -1,23 +1,31 @@
-from pathlib import Path
-import sys
+"""进程入口。统一从 python-agent 根目录启动:
 
+    python main.py --conf config.yaml
+"""
 
-# gen/ 下是 protoc 生成的代码,加进 sys.path 才能 import api.provider.v1
-ROOT = Path(__file__).resolve().parent
-GEN_DIR = ROOT / "gen"
-if str(GEN_DIR) not in sys.path:
-    sys.path.insert(0, str(GEN_DIR))
+import argparse
 
-
-from app.config import load_settings
-from app.logger import setup_logging
-from app.server import serve
+from dotenv import load_dotenv
 
 
 def main() -> None:
-    settings = load_settings()
-    setup_logging(settings.log_level)
-    serve(settings)
+    parser = argparse.ArgumentParser(description="python agent runtime")
+    parser.add_argument("--conf", default="config.yaml", help="path to config yaml")
+    args = parser.parse_args()
+
+    load_dotenv()
+
+    from config import init_config
+
+    config = init_config(args.conf)
+
+    from utils.logger import configure_logger
+
+    configure_logger(config.log)
+
+    from app.application import Application
+
+    Application(config).run()
 
 
 if __name__ == "__main__":
