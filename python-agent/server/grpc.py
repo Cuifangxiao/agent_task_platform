@@ -21,56 +21,56 @@ class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
     def __init__(self, handlers: AgentHandlers) -> None:
         self.handlers = handlers
 
-    def TestCredential(self, req, context):
+    def TestCredential(self, request, context):
         logger.info(
             "TestCredential Begin. user_id:%s username:%s provider:%s",
-            req.user.user_id,
-            req.user.username,
-            req.provider,
+            request.user.user_id,
+            request.user.username,
+            request.provider,
         )
         try:
-            resp = self.handlers.provider_handler.test_credential(req)
+            resp = self.handlers.provider_handler.test_credential(request)
             logger.info(
                 "TestCredential Success. provider:%s request_id:%s",
-                req.provider,
+                request.provider,
                 resp.request_id,
             )
             return resp
-        except Exception as e:
-            logger.error("TestCredential Failed. provider:%s err:%s", req.provider, e)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("TestCredential Failed. provider:%s err:%s", request.provider, e)
             logger.error(traceback.format_exc())
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(f"test credential failed: {e}")
             return provider_pb2.TestCredentialResponse()  # pylint: disable=no-member
 
-    def ListProviders(self, req, context):
-        del req
+    def ListProviders(self, request, context):
+        del request
         logger.info("ListProviders Begin")
         try:
             resp = self.handlers.provider_handler.list_providers()
             logger.info("ListProviders Success. count:%s", len(resp.providers))
             return resp
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("ListProviders Failed. err:%s", e)
             logger.error(traceback.format_exc())
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(f"list providers failed: {e}")
             return provider_pb2.ListProvidersResponse()  # pylint: disable=no-member
 
-    def StreamText(self, req, context):
+    def StreamText(self, request, context):
         logger.info(
             "StreamText Begin. user_id:%s username:%s provider:%s model:%s",
-            req.user.user_id,
-            req.user.username,
-            req.provider,
-            req.model,
+            request.user.user_id,
+            request.user.username,
+            request.provider,
+            request.model,
         )
         try:
-            for resp in self.handlers.provider_handler.stream_text(req):
+            for resp in self.handlers.provider_handler.stream_text(request):
                 yield resp
-            logger.info("StreamText Success. provider:%s model:%s", req.provider, req.model)
+            logger.info("StreamText Success. provider:%s model:%s", request.provider, request.model)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("StreamText Failed. provider:%s model:%s err:%s", req.provider, req.model, e)
+            logger.error("StreamText Failed. provider:%s model:%s err:%s", request.provider, request.model, e)
             logger.error(traceback.format_exc())
             yield provider_pb2.StreamTextResponse(error=str(e), done=True)  # pylint: disable=no-member
 
