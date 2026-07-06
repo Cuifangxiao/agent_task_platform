@@ -74,6 +74,28 @@ class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
             logger.error(traceback.format_exc())
             yield provider_pb2.StreamTextResponse(error=str(e), done=True)  # pylint: disable=no-member
 
+    def GenerateDeck(self, request, context):
+        logger.info(
+            "GenerateDeck Begin. user_id:%s username:%s provider:%s model:%s topic:%s",
+            request.user.user_id,
+            request.user.username,
+            request.provider,
+            request.model,
+            request.topic,
+        )
+        try:
+            for resp in self.handlers.deck_handler.generate_deck(request):
+                yield resp
+            logger.info("GenerateDeck Success. provider:%s model:%s", request.provider, request.model)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("GenerateDeck Failed. provider:%s model:%s err:%s", request.provider, request.model, e)
+            logger.error(traceback.format_exc())
+            yield provider_pb2.GenerateDeckResponse(  # pylint: disable=no-member
+                event_type="error",
+                error=str(e),
+                done=True,
+            )
+
 
 class GrpcServer:
     def __init__(self, cfg: GrpcServerConfig, handlers: AgentHandlers) -> None:

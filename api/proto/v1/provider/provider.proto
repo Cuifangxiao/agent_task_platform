@@ -8,6 +8,7 @@ service ProviderRuntimeService {
   rpc TestCredential(TestCredentialRequest) returns (TestCredentialResponse);
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
   rpc StreamText(StreamTextRequest) returns (stream StreamTextResponse);
+  rpc GenerateDeck(GenerateDeckRequest) returns (stream GenerateDeckResponse);
 }
 
 message UserContext {
@@ -52,6 +53,36 @@ message StreamTextResponse {
   bool done = 3;
   string error = 4;
   int32 sequence = 5;
+}
+
+message GenerateDeckRequest {
+  UserContext user = 1;
+  string provider = 2;
+  string model = 3;
+  string api_key = 4;
+  string base_url = 5;
+  string provider_options_json = 6;
+  double temperature = 7;
+  int32 max_tokens = 8;
+  string topic = 9;
+  string audience = 10;
+  string goal = 11;
+  int32 page_count = 12;
+  string language = 13;
+  string style = 14;
+  string source_text = 15;
+}
+
+message GenerateDeckResponse {
+  string request_id = 1;
+  string event_type = 2;
+  string stage = 3;
+  string message = 4;
+  string payload_json = 5;
+  string artifact_path = 6;
+  bool done = 7;
+  string error = 8;
+  int32 sequence = 9;
 }
 
 message ProviderModelParameter {

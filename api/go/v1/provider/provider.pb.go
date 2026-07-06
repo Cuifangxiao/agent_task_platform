@@ -453,6 +453,270 @@ func (x *StreamTextResponse) GetSequence() int32 {
 	return 0
 }
 
+type GenerateDeckRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	User                *UserContext           `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
+	Provider            string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	Model               string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	ApiKey              string                 `protobuf:"bytes,4,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	BaseUrl             string                 `protobuf:"bytes,5,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	ProviderOptionsJson string                 `protobuf:"bytes,6,opt,name=provider_options_json,json=providerOptionsJson,proto3" json:"provider_options_json,omitempty"`
+	Temperature         float64                `protobuf:"fixed64,7,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	MaxTokens           int32                  `protobuf:"varint,8,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	Topic               string                 `protobuf:"bytes,9,opt,name=topic,proto3" json:"topic,omitempty"`
+	Audience            string                 `protobuf:"bytes,10,opt,name=audience,proto3" json:"audience,omitempty"`
+	Goal                string                 `protobuf:"bytes,11,opt,name=goal,proto3" json:"goal,omitempty"`
+	PageCount           int32                  `protobuf:"varint,12,opt,name=page_count,json=pageCount,proto3" json:"page_count,omitempty"`
+	Language            string                 `protobuf:"bytes,13,opt,name=language,proto3" json:"language,omitempty"`
+	Style               string                 `protobuf:"bytes,14,opt,name=style,proto3" json:"style,omitempty"`
+	SourceText          string                 `protobuf:"bytes,15,opt,name=source_text,json=sourceText,proto3" json:"source_text,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *GenerateDeckRequest) Reset() {
+	*x = GenerateDeckRequest{}
+	mi := &file_provider_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenerateDeckRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenerateDeckRequest) ProtoMessage() {}
+
+func (x *GenerateDeckRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_provider_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenerateDeckRequest.ProtoReflect.Descriptor instead.
+func (*GenerateDeckRequest) Descriptor() ([]byte, []int) {
+	return file_provider_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GenerateDeckRequest) GetUser() *UserContext {
+	if x != nil {
+		return x.User
+	}
+	return nil
+}
+
+func (x *GenerateDeckRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetProviderOptionsJson() string {
+	if x != nil {
+		return x.ProviderOptionsJson
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetTemperature() float64 {
+	if x != nil {
+		return x.Temperature
+	}
+	return 0
+}
+
+func (x *GenerateDeckRequest) GetMaxTokens() int32 {
+	if x != nil {
+		return x.MaxTokens
+	}
+	return 0
+}
+
+func (x *GenerateDeckRequest) GetTopic() string {
+	if x != nil {
+		return x.Topic
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetAudience() string {
+	if x != nil {
+		return x.Audience
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetGoal() string {
+	if x != nil {
+		return x.Goal
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetPageCount() int32 {
+	if x != nil {
+		return x.PageCount
+	}
+	return 0
+}
+
+func (x *GenerateDeckRequest) GetLanguage() string {
+	if x != nil {
+		return x.Language
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetStyle() string {
+	if x != nil {
+		return x.Style
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetSourceText() string {
+	if x != nil {
+		return x.SourceText
+	}
+	return ""
+}
+
+type GenerateDeckResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	EventType     string                 `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
+	Stage         string                 `protobuf:"bytes,3,opt,name=stage,proto3" json:"stage,omitempty"`
+	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	PayloadJson   string                 `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	ArtifactPath  string                 `protobuf:"bytes,6,opt,name=artifact_path,json=artifactPath,proto3" json:"artifact_path,omitempty"`
+	Done          bool                   `protobuf:"varint,7,opt,name=done,proto3" json:"done,omitempty"`
+	Error         string                 `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
+	Sequence      int32                  `protobuf:"varint,9,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GenerateDeckResponse) Reset() {
+	*x = GenerateDeckResponse{}
+	mi := &file_provider_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenerateDeckResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenerateDeckResponse) ProtoMessage() {}
+
+func (x *GenerateDeckResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_provider_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenerateDeckResponse.ProtoReflect.Descriptor instead.
+func (*GenerateDeckResponse) Descriptor() ([]byte, []int) {
+	return file_provider_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GenerateDeckResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetEventType() string {
+	if x != nil {
+		return x.EventType
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetStage() string {
+	if x != nil {
+		return x.Stage
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetPayloadJson() string {
+	if x != nil {
+		return x.PayloadJson
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetArtifactPath() string {
+	if x != nil {
+		return x.ArtifactPath
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetDone() bool {
+	if x != nil {
+		return x.Done
+	}
+	return false
+}
+
+func (x *GenerateDeckResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetSequence() int32 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
 type ProviderModelParameter struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -470,7 +734,7 @@ type ProviderModelParameter struct {
 
 func (x *ProviderModelParameter) Reset() {
 	*x = ProviderModelParameter{}
-	mi := &file_provider_proto_msgTypes[6]
+	mi := &file_provider_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +746,7 @@ func (x *ProviderModelParameter) String() string {
 func (*ProviderModelParameter) ProtoMessage() {}
 
 func (x *ProviderModelParameter) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[6]
+	mi := &file_provider_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +759,7 @@ func (x *ProviderModelParameter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderModelParameter.ProtoReflect.Descriptor instead.
 func (*ProviderModelParameter) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{6}
+	return file_provider_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ProviderModelParameter) GetName() string {
@@ -575,7 +839,7 @@ type ProviderModel struct {
 
 func (x *ProviderModel) Reset() {
 	*x = ProviderModel{}
-	mi := &file_provider_proto_msgTypes[7]
+	mi := &file_provider_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -587,7 +851,7 @@ func (x *ProviderModel) String() string {
 func (*ProviderModel) ProtoMessage() {}
 
 func (x *ProviderModel) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[7]
+	mi := &file_provider_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -600,7 +864,7 @@ func (x *ProviderModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderModel.ProtoReflect.Descriptor instead.
 func (*ProviderModel) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{7}
+	return file_provider_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProviderModel) GetId() string {
@@ -662,7 +926,7 @@ type ProviderDescriptor struct {
 
 func (x *ProviderDescriptor) Reset() {
 	*x = ProviderDescriptor{}
-	mi := &file_provider_proto_msgTypes[8]
+	mi := &file_provider_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -674,7 +938,7 @@ func (x *ProviderDescriptor) String() string {
 func (*ProviderDescriptor) ProtoMessage() {}
 
 func (x *ProviderDescriptor) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[8]
+	mi := &file_provider_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -687,7 +951,7 @@ func (x *ProviderDescriptor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderDescriptor.ProtoReflect.Descriptor instead.
 func (*ProviderDescriptor) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{8}
+	return file_provider_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ProviderDescriptor) GetName() string {
@@ -762,7 +1026,7 @@ type ListProvidersResponse struct {
 
 func (x *ListProvidersResponse) Reset() {
 	*x = ListProvidersResponse{}
-	mi := &file_provider_proto_msgTypes[9]
+	mi := &file_provider_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -774,7 +1038,7 @@ func (x *ListProvidersResponse) String() string {
 func (*ListProvidersResponse) ProtoMessage() {}
 
 func (x *ListProvidersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[9]
+	mi := &file_provider_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -787,7 +1051,7 @@ func (x *ListProvidersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProvidersResponse.ProtoReflect.Descriptor instead.
 func (*ListProvidersResponse) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{9}
+	return file_provider_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListProvidersResponse) GetProviders() []*ProviderDescriptor {
@@ -839,7 +1103,39 @@ const file_provider_proto_rawDesc = "" +
 	"\x05delta\x18\x02 \x01(\tR\x05delta\x12\x12\n" +
 	"\x04done\x18\x03 \x01(\bR\x04done\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1a\n" +
-	"\bsequence\x18\x05 \x01(\x05R\bsequence\"\x9e\x02\n" +
+	"\bsequence\x18\x05 \x01(\x05R\bsequence\"\xd6\x03\n" +
+	"\x13GenerateDeckRequest\x12,\n" +
+	"\x04user\x18\x01 \x01(\v2\x18.provider.v1.UserContextR\x04user\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x14\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\x12\x17\n" +
+	"\aapi_key\x18\x04 \x01(\tR\x06apiKey\x12\x19\n" +
+	"\bbase_url\x18\x05 \x01(\tR\abaseUrl\x122\n" +
+	"\x15provider_options_json\x18\x06 \x01(\tR\x13providerOptionsJson\x12 \n" +
+	"\vtemperature\x18\a \x01(\x01R\vtemperature\x12\x1d\n" +
+	"\n" +
+	"max_tokens\x18\b \x01(\x05R\tmaxTokens\x12\x14\n" +
+	"\x05topic\x18\t \x01(\tR\x05topic\x12\x1a\n" +
+	"\baudience\x18\n" +
+	" \x01(\tR\baudience\x12\x12\n" +
+	"\x04goal\x18\v \x01(\tR\x04goal\x12\x1d\n" +
+	"\n" +
+	"page_count\x18\f \x01(\x05R\tpageCount\x12\x1a\n" +
+	"\blanguage\x18\r \x01(\tR\blanguage\x12\x14\n" +
+	"\x05style\x18\x0e \x01(\tR\x05style\x12\x1f\n" +
+	"\vsource_text\x18\x0f \x01(\tR\n" +
+	"sourceText\"\x92\x02\n" +
+	"\x14GenerateDeckResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n" +
+	"\n" +
+	"event_type\x18\x02 \x01(\tR\teventType\x12\x14\n" +
+	"\x05stage\x18\x03 \x01(\tR\x05stage\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12!\n" +
+	"\fpayload_json\x18\x05 \x01(\tR\vpayloadJson\x12#\n" +
+	"\rartifact_path\x18\x06 \x01(\tR\fartifactPath\x12\x12\n" +
+	"\x04done\x18\a \x01(\bR\x04done\x12\x14\n" +
+	"\x05error\x18\b \x01(\tR\x05error\x12\x1a\n" +
+	"\bsequence\x18\t \x01(\x05R\bsequence\"\x9e\x02\n" +
 	"\x16ProviderModelParameter\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +
@@ -873,12 +1169,13 @@ const file_provider_proto_rawDesc = "" +
 	"\x18supports_custom_base_url\x18\b \x01(\bR\x15supportsCustomBaseUrl\x122\n" +
 	"\x06models\x18\t \x03(\v2\x1a.provider.v1.ProviderModelR\x06models\"V\n" +
 	"\x15ListProvidersResponse\x12=\n" +
-	"\tproviders\x18\x01 \x03(\v2\x1f.provider.v1.ProviderDescriptorR\tproviders2\x9c\x02\n" +
+	"\tproviders\x18\x01 \x03(\v2\x1f.provider.v1.ProviderDescriptorR\tproviders2\xf3\x02\n" +
 	"\x16ProviderRuntimeService\x12Y\n" +
 	"\x0eTestCredential\x12\".provider.v1.TestCredentialRequest\x1a#.provider.v1.TestCredentialResponse\x12V\n" +
 	"\rListProviders\x12!.provider.v1.ListProvidersRequest\x1a\".provider.v1.ListProvidersResponse\x12O\n" +
 	"\n" +
-	"StreamText\x12\x1e.provider.v1.StreamTextRequest\x1a\x1f.provider.v1.StreamTextResponse0\x01B3Z1agent-task-platform/api/go/v1/provider;providerv1b\x06proto3"
+	"StreamText\x12\x1e.provider.v1.StreamTextRequest\x1a\x1f.provider.v1.StreamTextResponse0\x01\x12U\n" +
+	"\fGenerateDeck\x12 .provider.v1.GenerateDeckRequest\x1a!.provider.v1.GenerateDeckResponse0\x01B3Z1agent-task-platform/api/go/v1/provider;providerv1b\x06proto3"
 
 var (
 	file_provider_proto_rawDescOnce sync.Once
@@ -892,7 +1189,7 @@ func file_provider_proto_rawDescGZIP() []byte {
 	return file_provider_proto_rawDescData
 }
 
-var file_provider_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_provider_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_provider_proto_goTypes = []any{
 	(*UserContext)(nil),            // 0: provider.v1.UserContext
 	(*TestCredentialRequest)(nil),  // 1: provider.v1.TestCredentialRequest
@@ -900,28 +1197,33 @@ var file_provider_proto_goTypes = []any{
 	(*ListProvidersRequest)(nil),   // 3: provider.v1.ListProvidersRequest
 	(*StreamTextRequest)(nil),      // 4: provider.v1.StreamTextRequest
 	(*StreamTextResponse)(nil),     // 5: provider.v1.StreamTextResponse
-	(*ProviderModelParameter)(nil), // 6: provider.v1.ProviderModelParameter
-	(*ProviderModel)(nil),          // 7: provider.v1.ProviderModel
-	(*ProviderDescriptor)(nil),     // 8: provider.v1.ProviderDescriptor
-	(*ListProvidersResponse)(nil),  // 9: provider.v1.ListProvidersResponse
+	(*GenerateDeckRequest)(nil),    // 6: provider.v1.GenerateDeckRequest
+	(*GenerateDeckResponse)(nil),   // 7: provider.v1.GenerateDeckResponse
+	(*ProviderModelParameter)(nil), // 8: provider.v1.ProviderModelParameter
+	(*ProviderModel)(nil),          // 9: provider.v1.ProviderModel
+	(*ProviderDescriptor)(nil),     // 10: provider.v1.ProviderDescriptor
+	(*ListProvidersResponse)(nil),  // 11: provider.v1.ListProvidersResponse
 }
 var file_provider_proto_depIdxs = []int32{
-	0, // 0: provider.v1.TestCredentialRequest.user:type_name -> provider.v1.UserContext
-	0, // 1: provider.v1.StreamTextRequest.user:type_name -> provider.v1.UserContext
-	6, // 2: provider.v1.ProviderModel.parameters:type_name -> provider.v1.ProviderModelParameter
-	7, // 3: provider.v1.ProviderDescriptor.models:type_name -> provider.v1.ProviderModel
-	8, // 4: provider.v1.ListProvidersResponse.providers:type_name -> provider.v1.ProviderDescriptor
-	1, // 5: provider.v1.ProviderRuntimeService.TestCredential:input_type -> provider.v1.TestCredentialRequest
-	3, // 6: provider.v1.ProviderRuntimeService.ListProviders:input_type -> provider.v1.ListProvidersRequest
-	4, // 7: provider.v1.ProviderRuntimeService.StreamText:input_type -> provider.v1.StreamTextRequest
-	2, // 8: provider.v1.ProviderRuntimeService.TestCredential:output_type -> provider.v1.TestCredentialResponse
-	9, // 9: provider.v1.ProviderRuntimeService.ListProviders:output_type -> provider.v1.ListProvidersResponse
-	5, // 10: provider.v1.ProviderRuntimeService.StreamText:output_type -> provider.v1.StreamTextResponse
-	8, // [8:11] is the sub-list for method output_type
-	5, // [5:8] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	0,  // 0: provider.v1.TestCredentialRequest.user:type_name -> provider.v1.UserContext
+	0,  // 1: provider.v1.StreamTextRequest.user:type_name -> provider.v1.UserContext
+	0,  // 2: provider.v1.GenerateDeckRequest.user:type_name -> provider.v1.UserContext
+	8,  // 3: provider.v1.ProviderModel.parameters:type_name -> provider.v1.ProviderModelParameter
+	9,  // 4: provider.v1.ProviderDescriptor.models:type_name -> provider.v1.ProviderModel
+	10, // 5: provider.v1.ListProvidersResponse.providers:type_name -> provider.v1.ProviderDescriptor
+	1,  // 6: provider.v1.ProviderRuntimeService.TestCredential:input_type -> provider.v1.TestCredentialRequest
+	3,  // 7: provider.v1.ProviderRuntimeService.ListProviders:input_type -> provider.v1.ListProvidersRequest
+	4,  // 8: provider.v1.ProviderRuntimeService.StreamText:input_type -> provider.v1.StreamTextRequest
+	6,  // 9: provider.v1.ProviderRuntimeService.GenerateDeck:input_type -> provider.v1.GenerateDeckRequest
+	2,  // 10: provider.v1.ProviderRuntimeService.TestCredential:output_type -> provider.v1.TestCredentialResponse
+	11, // 11: provider.v1.ProviderRuntimeService.ListProviders:output_type -> provider.v1.ListProvidersResponse
+	5,  // 12: provider.v1.ProviderRuntimeService.StreamText:output_type -> provider.v1.StreamTextResponse
+	7,  // 13: provider.v1.ProviderRuntimeService.GenerateDeck:output_type -> provider.v1.GenerateDeckResponse
+	10, // [10:14] is the sub-list for method output_type
+	6,  // [6:10] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_provider_proto_init() }
@@ -929,14 +1231,14 @@ func file_provider_proto_init() {
 	if File_provider_proto != nil {
 		return
 	}
-	file_provider_proto_msgTypes[6].OneofWrappers = []any{}
+	file_provider_proto_msgTypes[8].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_provider_proto_rawDesc), len(file_provider_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -112,3 +112,15 @@ export interface StreamChunk {
   error?: string
   sequence?: number
 }
+
+export interface PptDeckChunk {
+  request_id?: string
+  event_type?: string
+  stage?: string
+  message?: string
+  payload?: unknown
+  artifact_url?: string
+  done?: boolean
+  error?: string
+  sequence?: number
+}

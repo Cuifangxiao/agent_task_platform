@@ -589,6 +589,27 @@ code,
   font-size: 13px;
 }
 
+.ppt-events {
+  display: grid;
+  gap: 8px;
+}
+
+.ppt-event {
+  display: grid;
+  grid-template-columns: auto auto minmax(80px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.ppt-event span:last-child {
+  color: var(--text-soft);
+}
+
 .inline-error {
   color: var(--danger);
   font-size: 13px;
@@ -637,6 +658,10 @@ code,
   }
 
   .status-band {
+    grid-template-columns: 1fr;
+  }
+
+  .ppt-event {
     grid-template-columns: 1fr;
   }
 

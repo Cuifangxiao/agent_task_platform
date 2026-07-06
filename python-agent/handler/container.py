@@ -5,16 +5,20 @@
 
 from dataclasses import dataclass
 
+from core.deck.service import DeckService
 from core.provider.service import ProviderService
+from handler.deck_handler import DeckHandler
 from handler.provider_handler import ProviderHandler
 
 
 @dataclass(frozen=True)
 class AgentHandlers:
     provider_handler: ProviderHandler
+    deck_handler: DeckHandler
 
 
 def build_agent_handlers() -> AgentHandlers:
     return AgentHandlers(
         provider_handler=ProviderHandler(ProviderService()),
+        deck_handler=DeckHandler(DeckService()),
     )

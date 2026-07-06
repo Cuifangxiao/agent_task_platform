@@ -25,6 +25,7 @@ import type {
   HealthResponse,
   MeResponse,
   ModelConfig,
+  PptDeckChunk,
   Provider,
   ProviderCredentialTestResponse,
   ProviderParameter,
@@ -52,6 +53,15 @@ interface ModelConfigDraft {
   max_tokens: number
   is_default: boolean
   status: 'active' | 'inactive'
+}
+
+interface PptEventLog {
+  id: number
+  event: string
+  stage: string
+  message: string
+  sequence: number
+  payload?: unknown
 }
 
 const STORAGE_KEYS = {
@@ -98,6 +108,17 @@ const chatForm = reactive({
   system_prompt: '你是一个简洁、可靠的助手。',
 })
 
+const pptForm = reactive({
+  model_config_id: '',
+  topic: 'Build a personal PPTAgent from the current agent platform',
+  audience: 'solo developer',
+  goal: 'explain the architecture, MVP scope, and next steps',
+  page_count: 8,
+  language: 'zh-CN',
+  style: 'concise business deck',
+  source_text: '',
+})
+
 const streamState = reactive({
   requestId: '',
   content: '',
@@ -106,7 +127,17 @@ const streamState = reactive({
   lastEvent: '',
 })
 
+const pptState = reactive({
+  requestId: '',
+  error: '',
+  done: false,
+  lastEvent: '',
+  artifactUrl: '',
+})
+
+const pptEvents = ref<PptEventLog[]>([])
 const chatAbortController = ref<AbortController | null>(null)
+const pptAbortController = ref<AbortController | null>(null)
 
 const busy = reactive({
   health: false,
@@ -122,6 +153,7 @@ const busy = reactive({
   detail: false,
   deleteId: 0,
   chat: false,
+  ppt: false,
 })
 
 const isAuthenticated = computed(() => Boolean(session.value?.access_token))
@@ -265,6 +297,7 @@ function resetProtectedState() {
   selectedChatModelConfigId.value = null
   resetModelConfigForm()
   stopChatStream()
+  stopPptStream()
 }
 
 function resetModelConfigForm() {
@@ -862,6 +895,119 @@ function stopChatStream() {
   busy.chat = false
 }
 
+function resetPptState() {
+  pptState.requestId = ''
+  pptState.error = ''
+  pptState.done = false
+  pptState.lastEvent = ''
+  pptState.artifactUrl = ''
+  pptEvents.value = []
+}
+
+async function generatePpt() {
+  if (!pptForm.topic.trim()) {
+    setBanner('Please enter a PPT topic.', 'error')
+    return
+  }
+
+  busy.ppt = true
+  clearBanner()
+  resetPptState()
+  const controller = new AbortController()
+  pptAbortController.value = controller
+
+  const body: Record<string, unknown> = {
+    topic: pptForm.topic.trim(),
+    audience: pptForm.audience.trim(),
+    goal: pptForm.goal.trim(),
+    page_count: Number(pptForm.page_count),
+    language: pptForm.language.trim(),
+    style: pptForm.style.trim(),
+    source_text: pptForm.source_text.trim(),
+  }
+  const modelConfigId = Number.parseInt(pptForm.model_config_id, 10)
+  if (Number.isFinite(modelConfigId) && modelConfigId > 0) {
+    body.model_config_id = modelConfigId
+  }
+
+  try {
+    await api.stream('/ppt-agent/generate', {
+      auth: true,
+      body,
+      signal: controller.signal,
+      onEvent(event) {
+        pptState.lastEvent = event.event
+
+        if (typeof event.data !== 'object' || event.data === null) {
+          return
+        }
+
+        const chunk = event.data as PptDeckChunk
+        if (chunk.request_id) {
+          pptState.requestId = chunk.request_id
+        }
+        if (chunk.artifact_url) {
+          pptState.artifactUrl = buildApiHref(chunk.artifact_url)
+        }
+        if (event.event === 'error') {
+          pptState.error = chunk.error ?? 'PPT stream error'
+          pptState.done = Boolean(chunk.done)
+        }
+        if (event.event === 'done') {
+          pptState.done = true
+        }
+
+        pptEvents.value.push({
+          id: Date.now() + pptEvents.value.length,
+          event: event.event,
+          stage: chunk.stage ?? '',
+          message: chunk.message ?? '',
+          sequence: chunk.sequence ?? pptEvents.value.length + 1,
+          payload: chunk.payload,
+        })
+      },
+    })
+
+    if (!pptState.error) {
+      setBanner('PPTAgent generation complete.', 'success')
+    } else {
+      setBanner(pptState.error, 'error')
+    }
+  } catch (error) {
+    const message = normalizeError(error)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      setBanner('PPTAgent stream stopped.', 'info')
+    } else {
+      pptState.error = message
+      setBanner(message, 'error')
+    }
+  } finally {
+    busy.ppt = false
+    pptAbortController.value = null
+  }
+}
+
+function stopPptStream() {
+  pptAbortController.value?.abort()
+  pptAbortController.value = null
+  busy.ppt = false
+}
+
+function buildApiHref(path: string) {
+  const base = apiBase.value.trim()
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  if (!base || base === '/') {
+    return normalizedPath
+  }
+  if (/^https?:\/\//i.test(base)) {
+    return `${base.replace(/\/+$/, '')}${normalizedPath}`
+  }
+
+  const relativeBase = base.startsWith('/') ? base : `/${base}`
+  return `${relativeBase.replace(/\/+$/, '')}${normalizedPath}`.replace(/\/{2,}/g, '/')
+}
+
 async function copyText(value: string, successText: string) {
   if (!value.trim()) {
     setBanner('没有可复制的内容。', 'info')
@@ -1434,6 +1580,97 @@ function clearLogs() {
             </div>
             <pre class="chat-text">{{ streamState.content || '这里会实时展示 delta 拼接后的文本。' }}</pre>
             <p v-if="streamState.error" class="inline-error">{{ streamState.error }}</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading">
+            <div class="section-title">
+              <Bot class="section-icon" />
+              <div>
+                <h2>PPTAgent Deck</h2>
+                <p>Generate a PPTX through Go SSE, Python gRPC, and a LangGraph deck workflow.</p>
+              </div>
+            </div>
+          </div>
+
+          <form class="form-block" @submit.prevent="generatePpt">
+            <div class="field-grid">
+              <label class="field">
+                <span>Model Config</span>
+                <select v-model="pptForm.model_config_id">
+                  <option value="">Use default active config</option>
+                  <option v-for="config in modelConfigs" :key="config.id" :value="String(config.id)">
+                    #{{ config.id }} {{ config.name }}
+                  </option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Request ID</span>
+                <input :value="pptState.requestId" type="text" readonly placeholder="Created after start" />
+              </label>
+              <label class="field">
+                <span>Topic</span>
+                <input v-model="pptForm.topic" type="text" placeholder="What should the deck explain?" />
+              </label>
+              <label class="field">
+                <span>Audience</span>
+                <input v-model="pptForm.audience" type="text" placeholder="Who will read it?" />
+              </label>
+              <label class="field">
+                <span>Goal</span>
+                <input v-model="pptForm.goal" type="text" placeholder="What should the deck achieve?" />
+              </label>
+              <label class="field">
+                <span>Page Count</span>
+                <input v-model.number="pptForm.page_count" type="number" min="1" max="30" step="1" />
+              </label>
+              <label class="field">
+                <span>Language</span>
+                <input v-model="pptForm.language" type="text" placeholder="zh-CN" />
+              </label>
+              <label class="field">
+                <span>Style</span>
+                <input v-model="pptForm.style" type="text" placeholder="concise business deck" />
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Source Text</span>
+              <textarea v-model="pptForm.source_text" rows="4" placeholder="Optional notes or source material" />
+            </label>
+
+            <div class="button-row">
+              <button class="button primary" :disabled="!isAuthenticated || busy.ppt">
+                <Send class="icon" />
+                <span>{{ busy.ppt ? 'Generating' : 'Generate PPTX' }}</span>
+              </button>
+              <button type="button" class="button danger" :disabled="!busy.ppt" @click="stopPptStream">
+                <XCircle class="icon" />
+                <span>Stop</span>
+              </button>
+              <a v-if="pptState.artifactUrl" class="button secondary" :href="pptState.artifactUrl" target="_blank" rel="noreferrer">
+                <Save class="icon" />
+                <span>Download PPTX</span>
+              </a>
+            </div>
+          </form>
+
+          <div class="chat-output">
+            <div class="chat-meta">
+              <span>Last event: {{ pptState.lastEvent || '-' }}</span>
+              <span>Status: {{ pptState.done ? 'done' : busy.ppt ? 'streaming' : 'idle' }}</span>
+            </div>
+            <div class="ppt-events">
+              <div v-for="item in pptEvents" :key="item.id" class="ppt-event">
+                <span class="badge">{{ item.sequence }}</span>
+                <strong>{{ item.event }}</strong>
+                <span>{{ item.stage }}</span>
+                <span>{{ item.message }}</span>
+              </div>
+            </div>
+            <pre class="json-view">{{ toPrettyJson(pptEvents[pptEvents.length - 1]?.payload ?? 'No PPT events yet.') }}</pre>
+            <p v-if="pptState.error" class="inline-error">{{ pptState.error }}</p>
           </div>
         </section>
 

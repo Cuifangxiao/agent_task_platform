@@ -34,3 +34,6 @@ redis:7.2-alpine，已存在，正被项目使用
 补一句
 你现在其实可以直接启动 Go 和 Python，因为 MySQL / Redis 容器已经是健康状态了，不一定要重新 up 一次。
 如果你愿意，我下一步可以再给你一份“最小联调顺序”，比如先起哪个、怎么验证 8080 / 50051 / 3307 / 6379 都通。
+
+
+cd F:\Go_Projects\agent-task-platform\frontend; npm run dev

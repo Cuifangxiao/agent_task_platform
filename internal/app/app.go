@@ -14,6 +14,7 @@ import (
 	"agent-task-platform/internal/bootstrap"
 	"agent-task-platform/internal/middleware"
 	"agent-task-platform/internal/modelconfig"
+	"agent-task-platform/internal/pptagent"
 	"agent-task-platform/internal/providercatalog"
 	"agent-task-platform/internal/providercredential"
 	"agent-task-platform/internal/pythonruntime"
@@ -39,6 +40,7 @@ type Application struct {
 type httpDependencies struct {
 	userHandler               *user.Handler
 	agentHandler              *agent.Handler
+	pptAgentHandler           *pptagent.Handler
 	modelConfigHandler        *modelconfig.Handler
 	providerCatalogHandler    *providercatalog.Handler
 	providerCredentialHandler *providercredential.Handler
@@ -94,6 +96,7 @@ func New(confPath string) (*Application, error) {
 		engine,
 		deps.userHandler,
 		deps.agentHandler,
+		deps.pptAgentHandler,
 		deps.modelConfigHandler,
 		deps.providerCatalogHandler,
 		deps.providerCredentialHandler,
@@ -141,10 +144,12 @@ func buildHTTPDependencies(
 		providerCatalogService,
 	)
 	agentService := agent.NewService(modelConfigRepo, pythonRuntimeClient)
+	pptAgentService := pptagent.NewService(modelConfigRepo, pythonRuntimeClient, "")
 
 	return httpDependencies{
 		userHandler:               user.NewHandler(userService),
 		agentHandler:              agent.NewHandler(agentService),
+		pptAgentHandler:           pptagent.NewHandler(pptAgentService),
 		modelConfigHandler:        modelconfig.NewHandler(modelConfigService),
 		providerCatalogHandler:    providercatalog.NewHandler(providerCatalogService),
 		providerCredentialHandler: providercredential.NewHandler(providerCredentialService),

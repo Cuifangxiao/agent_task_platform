@@ -5,6 +5,7 @@ import (
 	"agent-task-platform/internal/auth"
 	"agent-task-platform/internal/middleware"
 	"agent-task-platform/internal/modelconfig"
+	"agent-task-platform/internal/pptagent"
 	"agent-task-platform/internal/providercatalog"
 	"agent-task-platform/internal/providercredential"
 	"agent-task-platform/internal/user"
@@ -17,6 +18,7 @@ func Register(
 	r *gin.Engine,
 	userHandler *user.Handler,
 	agentHandler *agent.Handler,
+	pptAgentHandler *pptagent.Handler,
 	modelConfigHandler *modelconfig.Handler,
 	providerCatalogHandler *providercatalog.Handler,
 	providerCredentialHandler *providercredential.Handler,
@@ -45,4 +47,6 @@ func Register(
 	authGroup.DELETE("/model-configs/:id", modelConfigHandler.Delete)
 	authGroup.POST("/provider-credentials/test", providerCredentialHandler.TestCredential)
 	authGroup.POST("/agent/stream-text", agentHandler.StreamText)
+	authGroup.POST("/ppt-agent/generate", pptAgentHandler.GenerateDeck)
+	authGroup.GET("/ppt-agent/artifacts/:request_id", pptAgentHandler.DownloadArtifact)
 }

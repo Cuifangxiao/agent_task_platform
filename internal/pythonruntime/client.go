@@ -2,11 +2,13 @@ package pythonruntime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	providerv1 "agent-task-platform/api/go/v1/provider"
 	"agent-task-platform/internal/agent"
+	"agent-task-platform/internal/pptagent"
 	"agent-task-platform/internal/providercatalog"
 	"agent-task-platform/internal/providercredential"
 	"google.golang.org/grpc"
@@ -144,6 +146,46 @@ func (c *Client) StreamText(
 	}, nil
 }
 
+func (c *Client) GenerateDeck(
+	ctx context.Context,
+	user providercredential.UserContext,
+	req pptagent.RuntimeGenerateDeckRequest,
+) (pptagent.DeckStream, error) {
+	callCtx, cancel := context.WithCancel(ctx)
+
+	stream, err := c.grpcClient.GenerateDeck(callCtx, &providerv1.GenerateDeckRequest{
+		User: &providerv1.UserContext{
+			UserId:    user.UserID,
+			Username:  user.Username,
+			SessionId: user.SessionID,
+			Device:    user.Device,
+		},
+		Provider:            req.Provider,
+		Model:               req.Model,
+		ApiKey:              req.APIKey,
+		BaseUrl:             req.BaseURL,
+		ProviderOptionsJson: req.ProviderOptionsJSON,
+		Temperature:         req.Temperature,
+		MaxTokens:           int32(req.MaxTokens),
+		Topic:               req.Topic,
+		Audience:            req.Audience,
+		Goal:                req.Goal,
+		PageCount:           int32(req.PageCount),
+		Language:            req.Language,
+		Style:               req.Style,
+		SourceText:          req.SourceText,
+	})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("call python runtime generate deck failed: %w", err)
+	}
+
+	return &deckStream{
+		stream: stream,
+		cancel: cancel,
+	}, nil
+}
+
 type textStream struct {
 	stream providerv1.ProviderRuntimeService_StreamTextClient
 	cancel context.CancelFunc
@@ -169,4 +211,49 @@ func (s *textStream) Close() error {
 		s.cancel()
 	}
 	return nil
+}
+
+type deckStream struct {
+	stream providerv1.ProviderRuntimeService_GenerateDeckClient
+	cancel context.CancelFunc
+}
+
+func (s *deckStream) Recv() (*pptagent.DeckStreamChunk, error) {
+	resp, err := s.stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+
+	return &pptagent.DeckStreamChunk{
+		RequestID: resp.GetRequestId(),
+		EventType: resp.GetEventType(),
+		Stage:     resp.GetStage(),
+		Message:   resp.GetMessage(),
+		Payload:   parsePayload(resp.GetPayloadJson()),
+		Done:      resp.GetDone(),
+		Error:     resp.GetError(),
+		Sequence:  resp.GetSequence(),
+	}, nil
+}
+
+func (s *deckStream) Close() error {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return nil
+}
+
+func parsePayload(raw string) json.RawMessage {
+	if raw == "" {
+		return nil
+	}
+	if json.Valid([]byte(raw)) {
+		return json.RawMessage(raw)
+	}
+
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }

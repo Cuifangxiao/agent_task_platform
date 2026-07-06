@@ -45,3 +45,4 @@ htmlcov/
 configs/config.yaml
 python-agent/config.yaml
 python-agent/logs/
+python-agent/artifacts/
