@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"time"
 
+	"agent-task-platform/internal/agent"
 	"agent-task-platform/internal/auth"
 	"agent-task-platform/internal/bootstrap"
 	"agent-task-platform/internal/middleware"
 	"agent-task-platform/internal/modelconfig"
+	"agent-task-platform/internal/providercatalog"
 	"agent-task-platform/internal/providercredential"
 	"agent-task-platform/internal/pythonruntime"
 	"agent-task-platform/internal/router"
@@ -36,7 +38,9 @@ type Application struct {
 
 type httpDependencies struct {
 	userHandler               *user.Handler
+	agentHandler              *agent.Handler
 	modelConfigHandler        *modelconfig.Handler
+	providerCatalogHandler    *providercatalog.Handler
 	providerCredentialHandler *providercredential.Handler
 	jwtManager                *auth.Manager
 	sessionStore              auth.SessionStore
@@ -89,7 +93,9 @@ func New(confPath string) (*Application, error) {
 	router.Register(
 		engine,
 		deps.userHandler,
+		deps.agentHandler,
 		deps.modelConfigHandler,
+		deps.providerCatalogHandler,
 		deps.providerCredentialHandler,
 		deps.jwtManager,
 		deps.sessionStore,
@@ -127,12 +133,20 @@ func buildHTTPDependencies(
 	sessionStore := auth.NewRedisSessionStore(redisClient)
 
 	userService := user.NewService(userRepo, jwtManager, sessionStore)
-	modelConfigService := modelconfig.NewService(modelConfigRepo)
+	providerCatalogService := providercatalog.NewService(pythonRuntimeClient)
 	providerCredentialService := providercredential.NewService(pythonRuntimeClient)
+	modelConfigService := modelconfig.NewService(
+		modelConfigRepo,
+		providerCredentialService,
+		providerCatalogService,
+	)
+	agentService := agent.NewService(modelConfigRepo, pythonRuntimeClient)
 
 	return httpDependencies{
 		userHandler:               user.NewHandler(userService),
+		agentHandler:              agent.NewHandler(agentService),
 		modelConfigHandler:        modelconfig.NewHandler(modelConfigService),
+		providerCatalogHandler:    providercatalog.NewHandler(providerCatalogService),
 		providerCredentialHandler: providercredential.NewHandler(providerCredentialService),
 		jwtManager:                jwtManager,
 		sessionStore:              sessionStore,

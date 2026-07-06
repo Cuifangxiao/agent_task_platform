@@ -1,130 +1,36 @@
-# Agent Task Platform 启动说明
+当前情况
+我刚检查过你本机 Docker：
+Docker Desktop 正常，当前是 Linux 容器上下文 desktop-linux
+mysql:8.4 镜像已存在
+redis:7.2-alpine 镜像已存在
+这两个容器现在其实已经在跑，而且都是 healthy
+端口映射是：MySQL: 127.0.0.1:3307 -> 3306
+Redis: 127.0.0.1:6379 -> 6379
 
-当前开发方式：
-
-- `MySQL` 和 `Redis` 运行在 Docker 容器里
-- `Go` 后端和 `Python gRPC` 服务直接跑在本机（macOS）
-- 前端如果要跑，也先运行在本机
-
-## 当前端口
-
-- Go HTTP API：`127.0.0.1:8080`
-- MySQL：`127.0.0.1:3307`
-- Redis：`127.0.0.1:6379`
-- Python gRPC：`127.0.0.1:50051`
-- 前端 Vite：`127.0.0.1:5173`
-
-配置文件：
-
-- Go：`configs/config.yaml`（模板 `configs/config.example.yaml`）
-- Python：`python-agent/config.yaml`（模板 `python-agent/config.example.yaml`）
-
-两者都已 gitignore，首次使用先从模板复制。
-
-## 最简启动步骤
-
-项目根目录为 `~/Desktop/Project/agent_task_platform`，下面命令均从根目录开始。
-
-### 1. 启动 MySQL / Redis 容器
-
-```bash
-cd deployments
+你项目里的配置也已经对上了：
+Compose: [docker-compose.yml (line 2)](/F:/Go_Projects/agent-task-platform/deployments/docker-compose.yml:2)
+Go 配置: [config.yaml (line 9)](/F:/Go_Projects/agent-task-platform/configs/config.yaml:9)
+启动命令
+WSL 里启动 MySQL 和 Redis：
+cd /mnt/f/Go_Projects/agent-task-platform/deployments
 docker compose up -d mysql redis
-docker compose ps          # 查看状态，确认 running
-```
-
-说明：`up -d` 是启动，`ps` 只是查看。两个容器配置了 `restart: unless-stopped`，Docker Desktop 启动后它们通常会自动恢复。不想让它们长期挂着就 `docker compose stop mysql redis`，下次 `start` 恢复。
-
-### 2. 启动 Go 后端
-
-```bash
-make run-go
-# 等价于: go run ./cmd/server --conf configs/config.yaml
-```
-
-### 3. 启动 Python gRPC 服务（另开一个终端）
-
-首次需要准备环境：
-
-```bash
-cd python-agent
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
-cp config.example.yaml config.yaml
-```
-
-之后每次启动（回到仓库根目录）：
-
-```bash
-make run-python
-# 等价于: cd python-agent && .venv/bin/python main.py --conf config.yaml
-```
-
-### 4. 启动前端（可选，另开一个终端）
-
-```bash
-cd ../agent-task-platform-fronted
-npm install     # 首次
-npm run dev     # http://127.0.0.1:5173, /api/* 代理到 127.0.0.1:8080
-```
-
-注意：Go、Python、前端要分别在不同终端里跑，都会占住当前窗口。
-
-## proto 代码生成
-
-proto 唯一真源在 `api/proto/v1/provider/provider.proto`，改动后执行：
-
-```bash
-make proto     # 同时生成 Go(api/go/) 与 Python(python-agent/api/) 代码
-```
-
-依赖：`protoc` + `protoc-gen-go` + `protoc-gen-go-grpc`（Go 侧），python-agent 的 venv 里装有 `grpcio-tools`（Python 侧）。生成物提交进 git，日常构建不需要 protoc。
-
-## 容器管理常用命令
-
-```bash
-cd deployments
-docker compose up -d mysql redis    # 第一次创建并启动
-docker compose stop mysql redis     # 暂停
-docker compose start mysql redis    # 恢复
-docker compose down                 # 删除容器和网络
-```
-
-平时更推荐 stop/start，比反复 down/up 省事。
-
-## Redis 端口冲突说明
-
-如果本机已有别的 Redis/Valkey 占着 `6379`（比如其他项目的容器），compose 里的 redis 会启动失败。二选一：
-
-- 停掉占用者，用本项目的 redis 容器
-- 直接复用已有的 Redis（它兼容即可），不启动本项目的 redis 服务
-
-检查端口占用：
-
-```bash
-lsof -i :6379
-docker ps --format "{{.Names}}\t{{.Ports}}" | grep 6379
-```
-
-## 启动成功后应该看到什么
-
-- `docker compose ps`：`agent-task-platform-mysql`（和 redis）状态 running
-- Go 后端：`curl http://127.0.0.1:8080/healthz` 正常返回
-- Python gRPC：日志出现 `gRPC server listening on 0.0.0.0:50051`
-
-检查端口监听：
-
-```bash
-lsof -iTCP:3307,6379,8080,50051 -sTCP:LISTEN
-```
-
-## 当前模型相关接口
-
-- `POST /model-configs`
-- `GET /model-configs`
-- `GET /model-configs/:id`
-- `PUT /model-configs/:id`
-- `DELETE /model-configs/:id`
-- `POST /provider-credentials/test`（这条会走 gRPC 打到 python-agent）
-
-这些接口都需要登录后的 `Bearer Token`。
+docker compose ps
+看日志：
+docker compose logs -f mysql redis
+停止：
+docker compose down
+Windows 里用 Cursor 启动 Go：
+cd F:\Go_Projects\agent-task-platform
+go run ./cmd/server --conf configs/config.yaml
+Windows 里用 Cursor 启动 Python：
+cd F:\Go_Projects\agent-task-platform\python-agent
+Copy-Item config.example.yaml config.yaml
+.venv\Scripts\python.exe main.py --conf config.yaml
+镜像情况
+当前本机相关镜像是：
+mysql:8.4，已存在，正被项目使用
+redis:7.2-alpine，已存在，正被项目使用
+另外还有一个 redis:7，但当前项目没用到
+补一句
+你现在其实可以直接启动 Go 和 Python，因为 MySQL / Redis 容器已经是健康状态了，不一定要重新 up 一次。
+如果你愿意，我下一步可以再给你一份“最小联调顺序”，比如先起哪个、怎么验证 8080 / 50051 / 3307 / 6379 都通。

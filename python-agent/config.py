@@ -38,11 +38,20 @@ class ServerConfig(BaseModel):
     grpc: GrpcServerConfig = Field(default_factory=GrpcServerConfig)
 
 
+class ProviderCatalogConfig(BaseModel):
+    dir: str = "./providers/catalog"
+
+
 class Config(BaseModel):
     name: str = "python-agent"
     environment: str = "dev"
     log: LogConfig = Field(default_factory=LogConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    provider_catalog: ProviderCatalogConfig = Field(default_factory=ProviderCatalogConfig)
+
+    def get_provider_catalog_dir(self) -> str:
+        provider_catalog = getattr(self, "provider_catalog", ProviderCatalogConfig())
+        return provider_catalog.dir
 
 
 _config: Optional[Config] = None

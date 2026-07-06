@@ -6,6 +6,8 @@ option go_package = "agent-task-platform/api/go/v1/provider;providerv1";
 
 service ProviderRuntimeService {
   rpc TestCredential(TestCredentialRequest) returns (TestCredentialResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc StreamText(StreamTextRequest) returns (stream StreamTextResponse);
 }
 
 message UserContext {
@@ -27,4 +29,64 @@ message TestCredentialResponse {
   string provider = 2;
   string status = 3;
   string message = 4;
+}
+
+message ListProvidersRequest {}
+
+message StreamTextRequest {
+  UserContext user = 1;
+  string provider = 2;
+  string model = 3;
+  string api_key = 4;
+  string base_url = 5;
+  string prompt = 6;
+  string system_prompt = 7;
+  double temperature = 8;
+  int32 max_tokens = 9;
+  string provider_options_json = 10;
+}
+
+message StreamTextResponse {
+  string request_id = 1;
+  string delta = 2;
+  bool done = 3;
+  string error = 4;
+  int32 sequence = 5;
+}
+
+message ProviderModelParameter {
+  string name = 1;
+  string display_name = 2;
+  string type = 3;
+  string description = 4;
+  string default_value = 5;
+  repeated string options = 6;
+  bool required = 7;
+  optional double min = 8;
+  optional double max = 9;
+}
+
+message ProviderModel {
+  string id = 1;
+  string model_name = 2;
+  string display_name = 3;
+  string type = 4;
+  bool reasoning_supported = 5;
+  repeated ProviderModelParameter parameters = 6;
+}
+
+message ProviderDescriptor {
+  string name = 1;
+  string display_name = 2;
+  string description = 3;
+  string manager = 4;
+  string sdk = 5;
+  string default_base_url = 6;
+  bool supports_credential_test = 7;
+  bool supports_custom_base_url = 8;
+  repeated ProviderModel models = 9;
+}
+
+message ListProvidersResponse {
+  repeated ProviderDescriptor providers = 1;
 }

@@ -1,0 +1,55 @@
+name: deepseek
+display_name: DeepSeek
+description: DeepSeek OpenAI-compatible chat API.
+manager: deepseek
+sdk: langchain_openai
+default_base_url: https://api.deepseek.com
+supports_custom_base_url: true
+credential_test:
+  enabled: true
+  model: deepseek-v4-flash
+  prompt: Reply with OK.
+  max_tokens: 8
+models:
+  - id: deepseek-v4-flash
+    model_name: deepseek-v4-flash
+    display_name: DeepSeek V4 Flash
+    type: chat
+    parameters:
+      - name: thinking
+        display_name: Thinking mode
+        type: enum
+        default: disabled
+        options: [enabled, disabled]
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        default: high
+        options: [high, max]
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 384000
+  - id: deepseek-v4-pro
+    model_name: deepseek-v4-pro
+    display_name: DeepSeek V4 Pro
+    type: chat
+    parameters:
+      - name: thinking
+        display_name: Thinking mode
+        type: enum
+        default: enabled
+        options: [enabled, disabled]
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        default: high
+        options: [high, max]
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 384000

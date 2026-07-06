@@ -39,12 +39,34 @@ class ProviderRuntimeServiceStub(object):
                 request_serializer=provider__pb2.TestCredentialRequest.SerializeToString,
                 response_deserializer=provider__pb2.TestCredentialResponse.FromString,
                 _registered_method=True)
+        self.ListProviders = channel.unary_unary(
+                '/provider.v1.ProviderRuntimeService/ListProviders',
+                request_serializer=provider__pb2.ListProvidersRequest.SerializeToString,
+                response_deserializer=provider__pb2.ListProvidersResponse.FromString,
+                _registered_method=True)
+        self.StreamText = channel.unary_stream(
+                '/provider.v1.ProviderRuntimeService/StreamText',
+                request_serializer=provider__pb2.StreamTextRequest.SerializeToString,
+                response_deserializer=provider__pb2.StreamTextResponse.FromString,
+                _registered_method=True)
 
 
 class ProviderRuntimeServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def TestCredential(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListProviders(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamText(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -57,6 +79,16 @@ def add_ProviderRuntimeServiceServicer_to_server(servicer, server):
                     servicer.TestCredential,
                     request_deserializer=provider__pb2.TestCredentialRequest.FromString,
                     response_serializer=provider__pb2.TestCredentialResponse.SerializeToString,
+            ),
+            'ListProviders': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListProviders,
+                    request_deserializer=provider__pb2.ListProvidersRequest.FromString,
+                    response_serializer=provider__pb2.ListProvidersResponse.SerializeToString,
+            ),
+            'StreamText': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamText,
+                    request_deserializer=provider__pb2.StreamTextRequest.FromString,
+                    response_serializer=provider__pb2.StreamTextResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -86,6 +118,60 @@ class ProviderRuntimeService(object):
             '/provider.v1.ProviderRuntimeService/TestCredential',
             provider__pb2.TestCredentialRequest.SerializeToString,
             provider__pb2.TestCredentialResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListProviders(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/provider.v1.ProviderRuntimeService/ListProviders',
+            provider__pb2.ListProvidersRequest.SerializeToString,
+            provider__pb2.ListProvidersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/provider.v1.ProviderRuntimeService/StreamText',
+            provider__pb2.StreamTextRequest.SerializeToString,
+            provider__pb2.StreamTextResponse.FromString,
             options,
             channel_credentials,
             insecure,

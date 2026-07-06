@@ -1,0 +1,70 @@
+name: qwen
+display_name: Qwen
+description: Alibaba Cloud Model Studio OpenAI-compatible Qwen API.
+manager: qwen
+sdk: langchain_openai
+default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+supports_custom_base_url: true
+credential_test:
+  enabled: true
+  model: qwen-plus
+  prompt: Reply with OK.
+  max_tokens: 8
+models:
+  - id: qwen-plus
+    model_name: qwen-plus
+    display_name: Qwen Plus
+    type: chat
+    parameters:
+      - name: enable_thinking
+        display_name: Thinking mode
+        type: boolean
+        default: false
+      - name: temperature
+        display_name: Temperature
+        type: number
+        default: 0.7
+        min: 0
+        max: 2
+      - name: top_p
+        display_name: Top P
+        type: number
+        default: 0.8
+        min: 0
+        max: 1
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 32768
+  - id: qwen3.7-plus
+    model_name: qwen3.7-plus
+    display_name: Qwen3.7 Plus
+    type: chat
+    parameters:
+      - name: enable_thinking
+        display_name: Thinking mode
+        type: boolean
+        default: true
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 32768
+  - id: qwen3.7-max
+    model_name: qwen3.7-max
+    display_name: Qwen3.7 Max
+    type: chat
+    parameters:
+      - name: enable_thinking
+        display_name: Thinking mode
+        type: boolean
+        default: true
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 32768

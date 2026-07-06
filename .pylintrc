@@ -1,0 +1,12 @@
+[MASTER]
+init-hook='import sys; sys.path.insert(0, "python-agent")'
+
+[TYPECHECK]
+generated-members=api.provider_pb2.*,provider_pb2.*
+
+[MESSAGES CONTROL]
+disable=
+    missing-class-docstring,
+    missing-function-docstring,
+    too-few-public-methods,
+    wrong-import-order

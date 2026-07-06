@@ -1,0 +1,62 @@
+name: openai
+display_name: OpenAI
+description: Official OpenAI API provider.
+manager: openai
+sdk: langchain_openai
+default_base_url: https://api.openai.com/v1
+supports_custom_base_url: true
+credential_test:
+  enabled: true
+  model: gpt-4o-mini
+  prompt: Reply with OK.
+  max_tokens: 8
+models:
+  - id: gpt-5.5
+    model_name: gpt-5.5
+    display_name: GPT-5.5
+    type: chat
+    parameters:
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        default: medium
+        options: [none, low, medium, high, xhigh]
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 128000
+  - id: gpt-5.4-mini
+    model_name: gpt-5.4-mini
+    display_name: GPT-5.4 mini
+    type: chat
+    parameters:
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        default: low
+        options: [none, low, medium, high, xhigh]
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 128000
+  - id: gpt-4o-mini
+    model_name: gpt-4o-mini
+    display_name: GPT-4o mini
+    type: chat
+    parameters:
+      - name: temperature
+        display_name: Temperature
+        type: number
+        default: 1
+        min: 0
+        max: 2
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 16384

@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"agent-task-platform/internal/httpctx"
+	"agent-task-platform/internal/providercredential"
 	"agent-task-platform/pkg/response"
 	"github.com/gin-gonic/gin"
 )
@@ -29,7 +30,12 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.service.Create(c.Request.Context(), claims.UserID, req)
+	resp, err := h.service.Create(c.Request.Context(), providercredential.UserContext{
+		UserID:    claims.UserID,
+		Username:  claims.Username,
+		SessionID: claims.SessionID,
+		Device:    claims.Device,
+	}, req)
 	if err != nil {
 		h.respondError(c, err)
 		return
@@ -95,7 +101,12 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.service.Update(c.Request.Context(), claims.UserID, pathReq.ID, req)
+	resp, err := h.service.Update(c.Request.Context(), providercredential.UserContext{
+		UserID:    claims.UserID,
+		Username:  claims.Username,
+		SessionID: claims.SessionID,
+		Device:    claims.Device,
+	}, pathReq.ID, req)
 	if err != nil {
 		h.respondError(c, err)
 		return

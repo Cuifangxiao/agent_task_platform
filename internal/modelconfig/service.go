@@ -1,46 +1,71 @@
 package modelconfig
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	"agent-task-platform/internal/providercatalog"
+	"agent-task-platform/internal/providercredential"
 	"agent-task-platform/pkg/validatex"
 )
 
 var ErrInvalidRequest = errors.New("invalid model config request")
 var ErrNotFound = errors.New("model config not found")
 
+type CredentialService interface {
+	TestCredential(ctx context.Context, user providercredential.UserContext, req providercredential.TestCredentialRequest) (*providercredential.TestCredentialResponse, error)
+}
+
+type ProviderCatalogService interface {
+	List(ctx context.Context) (*providercatalog.ListResponse, error)
+}
+
 type Service struct {
-	repo Repository
+	repo                   Repository
+	credentialService      CredentialService
+	providerCatalogService ProviderCatalogService
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo Repository, credentialService CredentialService, providerCatalogService ProviderCatalogService) *Service {
+	return &Service{
+		repo:                   repo,
+		credentialService:      credentialService,
+		providerCatalogService: providerCatalogService,
+	}
 }
 
-func (s *Service) Create(ctx context.Context, userID int64, req CreateRequest) (*Response, error) {
-	if err := validateUserID(userID); err != nil {
+func (s *Service) Create(ctx context.Context, user providercredential.UserContext, req CreateRequest) (*Response, error) {
+	if err := validateUserID(user.UserID); err != nil {
 		return nil, err
 	}
 
 	config, err := normalizeInput(modelConfigInput{
-		Name:        req.Name,
-		Provider:    req.Provider,
-		ModelName:   req.ModelName,
-		BaseURL:     req.BaseURL,
-		APIKey:      req.APIKey,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-		IsDefault:   req.IsDefault,
-		Status:      req.Status,
+		Name:            req.Name,
+		Provider:        req.Provider,
+		ModelName:       req.ModelName,
+		BaseURL:         req.BaseURL,
+		APIKey:          req.APIKey,
+		ProviderOptions: req.ProviderOptions,
+		Temperature:     req.Temperature,
+		MaxTokens:       req.MaxTokens,
+		IsDefault:       req.IsDefault,
+		Status:          req.Status,
 	})
 	if err != nil {
 		return nil, err
 	}
-	config.UserID = userID
+	if err := s.validateProviderModel(ctx, &config); err != nil {
+		return nil, err
+	}
+	if err := s.runCredentialTest(ctx, user, config); err != nil {
+		return nil, err
+	}
 
+	config.UserID = user.UserID
 	created, err := s.repo.Create(ctx, config)
 	if err != nil {
 		return nil, err
@@ -78,29 +103,30 @@ func (s *Service) Get(ctx context.Context, userID int64, id int64) (*Response, e
 	return toResponse(config), nil
 }
 
-func (s *Service) Update(ctx context.Context, userID int64, id int64, req UpdateRequest) (*Response, error) {
-	if err := validateUserID(userID); err != nil {
+func (s *Service) Update(ctx context.Context, user providercredential.UserContext, id int64, req UpdateRequest) (*Response, error) {
+	if err := validateUserID(user.UserID); err != nil {
 		return nil, err
 	}
 	if err := validateModelConfigID(id); err != nil {
 		return nil, err
 	}
 
-	existing, err := s.repo.GetByID(ctx, userID, id)
+	existing, err := s.repo.GetByID(ctx, user.UserID, id)
 	if err != nil {
 		return nil, err
 	}
 
 	input := modelConfigInput{
-		Name:        existing.Name,
-		Provider:    existing.Provider,
-		ModelName:   existing.ModelName,
-		BaseURL:     existing.BaseURL,
-		APIKey:      existing.APIKey,
-		Temperature: &existing.Temperature,
-		MaxTokens:   &existing.MaxTokens,
-		IsDefault:   existing.IsDefault,
-		Status:      string(existing.Status),
+		Name:            existing.Name,
+		Provider:        existing.Provider,
+		ModelName:       existing.ModelName,
+		BaseURL:         existing.BaseURL,
+		APIKey:          existing.APIKey,
+		ProviderOptions: json.RawMessage(existing.ProviderOptions),
+		Temperature:     &existing.Temperature,
+		MaxTokens:       &existing.MaxTokens,
+		IsDefault:       existing.IsDefault,
+		Status:          string(existing.Status),
 	}
 
 	if req.Name != nil {
@@ -117,6 +143,9 @@ func (s *Service) Update(ctx context.Context, userID int64, id int64, req Update
 	}
 	if req.APIKey != nil {
 		input.APIKey = *req.APIKey
+	}
+	if req.ProviderOptions != nil {
+		input.ProviderOptions = *req.ProviderOptions
 	}
 	if req.Temperature != nil {
 		input.Temperature = req.Temperature
@@ -135,9 +164,17 @@ func (s *Service) Update(ctx context.Context, userID int64, id int64, req Update
 	if err != nil {
 		return nil, err
 	}
-	config.ID = id
-	config.UserID = userID
+	if err := s.validateProviderModel(ctx, &config); err != nil {
+		return nil, err
+	}
+	if shouldRetestCredential(existing, config) {
+		if err := s.runCredentialTest(ctx, user, config); err != nil {
+			return nil, err
+		}
+	}
 
+	config.ID = id
+	config.UserID = user.UserID
 	updated, err := s.repo.Update(ctx, config)
 	if err != nil {
 		return nil, err
@@ -157,21 +194,85 @@ func (s *Service) Delete(ctx context.Context, userID int64, id int64) error {
 	return s.repo.Delete(ctx, userID, id)
 }
 
+func (s *Service) validateProviderModel(ctx context.Context, config *ModelConfig) error {
+	if s.providerCatalogService == nil {
+		return fmt.Errorf("provider catalog service is not configured")
+	}
+
+	resp, err := s.providerCatalogService.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list providers failed: %w", err)
+	}
+
+	for _, provider := range resp.Providers {
+		if !strings.EqualFold(provider.Name, config.Provider) {
+			continue
+		}
+
+		for _, model := range provider.Models {
+			if strings.EqualFold(model.ModelName, config.ModelName) || strings.EqualFold(model.ID, config.ModelName) {
+				config.ModelName = model.ModelName
+				return nil
+			}
+		}
+
+		return fmt.Errorf("%w: model_name '%s' is not supported for provider '%s'", ErrInvalidRequest, config.ModelName, config.Provider)
+	}
+
+	return fmt.Errorf("%w: provider '%s' is not supported", ErrInvalidRequest, config.Provider)
+}
+
+func (s *Service) runCredentialTest(ctx context.Context, user providercredential.UserContext, config ModelConfig) error {
+	if s.credentialService == nil {
+		return fmt.Errorf("credential service is not configured")
+	}
+
+	resp, err := s.credentialService.TestCredential(ctx, user, providercredential.TestCredentialRequest{
+		Provider: config.Provider,
+		APIKey:   config.APIKey,
+		BaseURL:  config.BaseURL,
+	})
+	if err != nil {
+		return fmt.Errorf("test provider credential failed: %w", err)
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(resp.Status), "ok") {
+		message := strings.TrimSpace(resp.Message)
+		if message == "" {
+			message = "credential test failed"
+		}
+		return fmt.Errorf("%w: %s", ErrInvalidRequest, message)
+	}
+
+	return nil
+}
+
+func shouldRetestCredential(existing *ModelConfig, next ModelConfig) bool {
+	if existing == nil {
+		return true
+	}
+
+	return existing.Provider != next.Provider ||
+		existing.APIKey != next.APIKey ||
+		existing.BaseURL != next.BaseURL
+}
+
 func toResponse(config *ModelConfig) *Response {
 	return &Response{
-		ID:           config.ID,
-		Name:         config.Name,
-		Provider:     config.Provider,
-		ModelName:    config.ModelName,
-		BaseURL:      config.BaseURL,
-		APIKeyMasked: maskAPIKey(config.APIKey),
-		HasAPIKey:    config.APIKey != "",
-		Temperature:  config.Temperature,
-		MaxTokens:    config.MaxTokens,
-		IsDefault:    config.IsDefault,
-		Status:       string(config.Status),
-		CreatedAt:    config.CreatedAt,
-		UpdatedAt:    config.UpdatedAt,
+		ID:              config.ID,
+		Name:            config.Name,
+		Provider:        config.Provider,
+		ModelName:       config.ModelName,
+		BaseURL:         config.BaseURL,
+		APIKeyMasked:    maskAPIKey(config.APIKey),
+		HasAPIKey:       config.APIKey != "",
+		ProviderOptions: decodeProviderOptions(config.ProviderOptions),
+		Temperature:     config.Temperature,
+		MaxTokens:       config.MaxTokens,
+		IsDefault:       config.IsDefault,
+		Status:          string(config.Status),
+		CreatedAt:       config.CreatedAt,
+		UpdatedAt:       config.UpdatedAt,
 	}
 }
 
@@ -188,15 +289,16 @@ func toResponses(configs []*ModelConfig) []Response {
 }
 
 type modelConfigInput struct {
-	Name        string
-	Provider    string
-	ModelName   string
-	BaseURL     string
-	APIKey      string
-	Temperature *float64
-	MaxTokens   *int
-	IsDefault   bool
-	Status      string
+	Name            string
+	Provider        string
+	ModelName       string
+	BaseURL         string
+	APIKey          string
+	ProviderOptions json.RawMessage
+	Temperature     *float64
+	MaxTokens       *int
+	IsDefault       bool
+	Status          string
 }
 
 func normalizeInput(input modelConfigInput) (ModelConfig, error) {
@@ -205,6 +307,10 @@ func normalizeInput(input modelConfigInput) (ModelConfig, error) {
 	modelName := strings.TrimSpace(input.ModelName)
 	baseURL := strings.TrimSpace(input.BaseURL)
 	apiKey := strings.TrimSpace(input.APIKey)
+	providerOptions, err := normalizeProviderOptions(input.ProviderOptions)
+	if err != nil {
+		return ModelConfig{}, err
+	}
 
 	if name == "" {
 		return ModelConfig{}, fmt.Errorf("%w: name is required", ErrInvalidRequest)
@@ -250,15 +356,16 @@ func normalizeInput(input modelConfigInput) (ModelConfig, error) {
 	}
 
 	return ModelConfig{
-		Name:        name,
-		Provider:    provider,
-		ModelName:   modelName,
-		BaseURL:     baseURL,
-		APIKey:      apiKey,
-		Temperature: temperature,
-		MaxTokens:   maxTokens,
-		IsDefault:   input.IsDefault,
-		Status:      status,
+		Name:            name,
+		Provider:        provider,
+		ModelName:       modelName,
+		BaseURL:         baseURL,
+		APIKey:          apiKey,
+		ProviderOptions: providerOptions,
+		Temperature:     temperature,
+		MaxTokens:       maxTokens,
+		IsDefault:       input.IsDefault,
+		Status:          status,
 	}, nil
 }
 
@@ -288,4 +395,40 @@ func maskAPIKey(apiKey string) string {
 	}
 
 	return strings.Repeat("*", len(apiKey)-4) + apiKey[len(apiKey)-4:]
+}
+
+func normalizeProviderOptions(raw json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "{}", nil
+	}
+
+	var providerOptions map[string]any
+	if err := json.Unmarshal(trimmed, &providerOptions); err != nil {
+		return "", fmt.Errorf("%w: provider_options must be a valid JSON object", ErrInvalidRequest)
+	}
+
+	normalized, err := json.Marshal(providerOptions)
+	if err != nil {
+		return "", fmt.Errorf("%w: normalize provider_options failed", ErrInvalidRequest)
+	}
+
+	return string(normalized), nil
+}
+
+func decodeProviderOptions(raw string) map[string]any {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return map[string]any{}
+	}
+
+	var providerOptions map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &providerOptions); err != nil {
+		return map[string]any{}
+	}
+	if providerOptions == nil {
+		return map[string]any{}
+	}
+
+	return providerOptions
 }

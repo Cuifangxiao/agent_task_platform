@@ -13,7 +13,7 @@ var ErrNameAlreadyExists = errors.New("model config name already exists")
 
 const selectModelConfigColumns = `
 	SELECT
-		id, user_id, name, provider, model_name, base_url, api_key,
+		id, user_id, name, provider, model_name, base_url, api_key, provider_options,
 		temperature, max_tokens, is_default, status, created_at, updated_at
 	FROM model_configs
 `
@@ -58,10 +58,10 @@ func (r *MySQLRepository) Create(ctx context.Context, config ModelConfig) (*Mode
 		ctx,
 		`
 			INSERT INTO model_configs (
-				user_id, name, provider, model_name, base_url, api_key,
+				user_id, name, provider, model_name, base_url, api_key, provider_options,
 				temperature, max_tokens, is_default, status
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 		config.UserID,
 		config.Name,
@@ -69,6 +69,7 @@ func (r *MySQLRepository) Create(ctx context.Context, config ModelConfig) (*Mode
 		config.ModelName,
 		config.BaseURL,
 		config.APIKey,
+		config.ProviderOptions,
 		config.Temperature,
 		config.MaxTokens,
 		config.IsDefault,
@@ -172,6 +173,7 @@ func (r *MySQLRepository) Update(ctx context.Context, config ModelConfig) (*Mode
 				model_name = ?,
 				base_url = ?,
 				api_key = ?,
+				provider_options = ?,
 				temperature = ?,
 				max_tokens = ?,
 				is_default = ?,
@@ -183,6 +185,7 @@ func (r *MySQLRepository) Update(ctx context.Context, config ModelConfig) (*Mode
 		config.ModelName,
 		config.BaseURL,
 		config.APIKey,
+		config.ProviderOptions,
 		config.Temperature,
 		config.MaxTokens,
 		config.IsDefault,
@@ -275,6 +278,7 @@ func clearDefaultTx(ctx context.Context, tx *sql.Tx, userID int64, excludeID int
 
 func scanModelConfig(src scanner) (*ModelConfig, error) {
 	var config ModelConfig
+	var providerOptions []byte
 	if err := src.Scan(
 		&config.ID,
 		&config.UserID,
@@ -283,6 +287,7 @@ func scanModelConfig(src scanner) (*ModelConfig, error) {
 		&config.ModelName,
 		&config.BaseURL,
 		&config.APIKey,
+		&providerOptions,
 		&config.Temperature,
 		&config.MaxTokens,
 		&config.IsDefault,
@@ -292,6 +297,7 @@ func scanModelConfig(src scanner) (*ModelConfig, error) {
 	); err != nil {
 		return nil, err
 	}
+	config.ProviderOptions = string(providerOptions)
 
 	return &config, nil
 }

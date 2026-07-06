@@ -15,3 +15,6 @@ server:
     port: 50051
     max_workers: 10
     shutdown_grace: 5
+
+provider_catalog:
+  dir: ./providers/catalog

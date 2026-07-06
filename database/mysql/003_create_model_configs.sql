@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS model_configs (
     model_name VARCHAR(128) NOT NULL,
     base_url VARCHAR(255) NOT NULL DEFAULT '',
     api_key VARCHAR(512) NOT NULL,
+    provider_options JSON NULL,
     temperature DECIMAL(4,2) NOT NULL DEFAULT 1.00,
     max_tokens INT NOT NULL DEFAULT 4096,
     is_default TINYINT(1) NOT NULL DEFAULT 0,

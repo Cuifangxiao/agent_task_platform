@@ -41,7 +41,38 @@ class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
             logger.error(traceback.format_exc())
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(f"test credential failed: {e}")
-            return provider_pb2.TestCredentialResponse()
+            return provider_pb2.TestCredentialResponse()  # pylint: disable=no-member
+
+    def ListProviders(self, req, context):
+        del req
+        logger.info("ListProviders Begin")
+        try:
+            resp = self.handlers.provider_handler.list_providers()
+            logger.info("ListProviders Success. count:%s", len(resp.providers))
+            return resp
+        except Exception as e:
+            logger.error("ListProviders Failed. err:%s", e)
+            logger.error(traceback.format_exc())
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"list providers failed: {e}")
+            return provider_pb2.ListProvidersResponse()  # pylint: disable=no-member
+
+    def StreamText(self, req, context):
+        logger.info(
+            "StreamText Begin. user_id:%s username:%s provider:%s model:%s",
+            req.user.user_id,
+            req.user.username,
+            req.provider,
+            req.model,
+        )
+        try:
+            for resp in self.handlers.provider_handler.stream_text(req):
+                yield resp
+            logger.info("StreamText Success. provider:%s model:%s", req.provider, req.model)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("StreamText Failed. provider:%s model:%s err:%s", req.provider, req.model, e)
+            logger.error(traceback.format_exc())
+            yield provider_pb2.StreamTextResponse(error=str(e), done=True)  # pylint: disable=no-member
 
 
 class GrpcServer:
