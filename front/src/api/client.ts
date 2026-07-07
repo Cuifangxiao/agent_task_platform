@@ -8,6 +8,8 @@ import type {
   ModelConfig,
   ModelConfigPayload,
   ParsedSseEvent,
+  PptConversationDetail,
+  PptConversationSummary,
   PptGeneratePayload,
   PptResumePayload,
   Provider,
@@ -22,6 +24,11 @@ export interface ApiClientOptions {
   setSession: (session: SessionState | null) => void
   onUnauthorized: () => void
   onLog: (entry: Omit<RequestLogEntry, 'id' | 'time'>) => void
+}
+
+export interface DownloadResult {
+  blob: Blob
+  filename: string
 }
 
 interface RequestOptions {
@@ -77,6 +84,48 @@ export function createApiClient(options: ApiClientOptions) {
     }
 
     return payload as T
+  }
+
+  async function download(path: string, requestOptions: RequestOptions = {}): Promise<DownloadResult> {
+    const method = requestOptions.method ?? 'GET'
+    const headers = new Headers()
+
+    if (requestOptions.auth) {
+      const token = options.getSession()?.access_token
+      if (!token) {
+        options.onUnauthorized()
+        throw new Error('Login session expired, please sign in again.')
+      }
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+
+    const response = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      signal: requestOptions.signal,
+    })
+
+    if (requestOptions.auth && response.status === 401 && requestOptions.retry !== false) {
+      const refreshed = await refreshAccessToken()
+      if (refreshed) {
+        return download(path, { ...requestOptions, retry: false })
+      }
+    }
+
+    options.onLog({ method, path, status: response.status })
+
+    if (!response.ok) {
+      const payload = await readPayload(response)
+      if (response.status === 401) {
+        options.onUnauthorized()
+      }
+      throw new Error(getErrorMessage(payload, `${method} ${path} request failed`))
+    }
+
+    return {
+      blob: await response.blob(),
+      filename: parseDownloadFilename(response.headers.get('Content-Disposition')) ?? 'download.bin',
+    }
   }
 
   async function refreshAccessToken() {
@@ -217,6 +266,10 @@ export function createApiClient(options: ApiClientOptions) {
       request<AgentConfig>(`/agent-configs/${id}`, { method: 'PUT', auth: true, body: payload }),
     deleteAgentConfig: (id: number) =>
       request<{ message: string }>(`/agent-configs/${id}`, { method: 'DELETE', auth: true }),
+    pptConversations: () => request<PptConversationSummary[]>('/ppt-agent/conversations', { auth: true }),
+    pptConversation: (id: number) => request<PptConversationDetail>(`/ppt-agent/conversations/${id}`, { auth: true }),
+    downloadPptArtifact: (requestId: string) =>
+      download(`/ppt-agent/artifacts/${encodeURIComponent(requestId)}`, { auth: true }),
     streamPpt,
     resumePpt,
   }
@@ -264,14 +317,10 @@ function getErrorMessage(payload: unknown, fallback: string) {
 
 function toPptGenerateFormData(body: PptGeneratePayload) {
   const formData = new FormData()
-  formData.append('agent_config_id', String(body.agent_config_id))
+  if (body.agent_config_id !== undefined) {
+    formData.append('agent_config_id', String(body.agent_config_id))
+  }
   formData.append('description', body.description)
-  formData.append('audience', body.audience)
-  formData.append('goal', body.goal)
-  formData.append('page_count', String(body.page_count))
-  formData.append('language', body.language)
-  formData.append('style', body.style)
-  formData.append('source_text', body.source_text)
   if (body.source_file) {
     formData.append('source_file', body.source_file)
   }
@@ -337,4 +386,26 @@ function parseEventBlock(block: string): ParsedSseEvent | null {
   } catch {
     return { event, data: raw }
   }
+}
+
+function parseDownloadFilename(contentDisposition: string | null) {
+  if (!contentDisposition) {
+    return null
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+
+  const plainMatch = contentDisposition.match(/filename="?([^"]+)"?/i)
+  if (plainMatch?.[1]) {
+    return plainMatch[1]
+  }
+
+  return null
 }

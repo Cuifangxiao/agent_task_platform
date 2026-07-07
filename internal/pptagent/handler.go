@@ -84,6 +84,46 @@ func (h *Handler) ResumeDeck(c *gin.Context) {
 	h.writeDeckStream(c, stream)
 }
 
+func (h *Handler) ListConversations(c *gin.Context) {
+	claims, ok := httpctx.Claims(c)
+	if !ok {
+		response.Internal(c, "missing auth claims")
+		return
+	}
+
+	resp, err := h.service.ListConversations(c.Request.Context(), claims.UserID)
+	if err != nil {
+		h.respondError(c, err)
+		return
+	}
+
+	response.OK(c, resp)
+}
+
+func (h *Handler) GetConversation(c *gin.Context) {
+	claims, ok := httpctx.Claims(c)
+	if !ok {
+		response.Internal(c, "missing auth claims")
+		return
+	}
+
+	var req struct {
+		ID int64 `uri:"id" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindUri(&req); err != nil {
+		response.BadRequest(c, "invalid path", err)
+		return
+	}
+
+	resp, err := h.service.GetConversation(c.Request.Context(), claims.UserID, req.ID)
+	if err != nil {
+		h.respondError(c, err)
+		return
+	}
+
+	response.OK(c, resp)
+}
+
 func (h *Handler) writeDeckStream(c *gin.Context, stream DeckStream) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -158,24 +198,9 @@ func bindGenerateDeckMultipart(c *gin.Context) (GenerateDeckRequest, error) {
 		return GenerateDeckRequest{}, err
 	}
 
-	agentConfigID, err := parseRequiredInt64Form(c, "agent_config_id")
-	if err != nil {
-		return GenerateDeckRequest{}, err
-	}
-	pageCount, err := parseOptionalIntForm(c, "page_count")
-	if err != nil {
-		return GenerateDeckRequest{}, err
-	}
-
 	req := GenerateDeckRequest{
-		AgentConfigID: agentConfigID,
 		Description:   c.PostForm("description"),
-		Audience:      c.PostForm("audience"),
-		Goal:          c.PostForm("goal"),
-		PageCount:     pageCount,
-		Language:      c.PostForm("language"),
-		Style:         c.PostForm("style"),
-		SourceText:    c.PostForm("source_text"),
+		AgentConfigID: parseOptionalInt64Form(c, "agent_config_id"),
 	}
 
 	file, header, err := sourceFileFormFile(c)
@@ -196,28 +221,16 @@ func bindGenerateDeckMultipart(c *gin.Context) (GenerateDeckRequest, error) {
 	return req, nil
 }
 
-func parseRequiredInt64Form(c *gin.Context, key string) (int64, error) {
+func parseOptionalInt64Form(c *gin.Context, key string) int64 {
 	raw := strings.TrimSpace(c.PostForm(key))
 	if raw == "" {
-		return 0, fmt.Errorf("%s is required", key)
+		return 0
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", key)
+		return 0
 	}
-	return value, nil
-}
-
-func parseOptionalIntForm(c *gin.Context, key string) (int, error) {
-	raw := strings.TrimSpace(c.PostForm(key))
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", key)
-	}
-	return value, nil
+	return value
 }
 
 func sourceFileFormFile(c *gin.Context) (multipart.File, *multipart.FileHeader, error) {
@@ -260,6 +273,8 @@ func (h *Handler) respondError(c *gin.Context, err error) {
 	case errors.Is(err, ErrInvalidRequest):
 		response.BadRequest(c, err.Error(), nil)
 	case errors.Is(err, ErrAgentConfigNotFound):
+		response.NotFound(c, err.Error())
+	case errors.Is(err, ErrConversationNotFound):
 		response.NotFound(c, err.Error())
 	case errors.Is(err, ErrModelConfigNotFound):
 		response.NotFound(c, err.Error())

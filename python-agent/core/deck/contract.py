@@ -20,12 +20,6 @@ class GenerateDeckInput:
     user_id: int
     username: str
     user_description: str
-    audience: str
-    goal: str
-    page_count: int
-    language: str
-    style: str
-    source_text: str
     source_file_filename: str = ""
     source_file: bytes = b""
     node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
@@ -36,7 +30,6 @@ class ResumeDeckInput:
     user_id: int
     username: str
     request_id: str
-    action: str = "continue"
     outline_json: str = ""
     node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
 

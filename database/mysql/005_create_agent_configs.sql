@@ -24,20 +24,20 @@ INSERT IGNORE INTO agents (
     JSON_ARRAY(
         JSON_OBJECT(
             'key', 'outline',
-            'display_name', '大纲规划',
-            'description', '生成叙事结构、章节顺序和每页核心信息。',
+            'display_name', 'Outline Planning',
+            'description', 'Build the presentation storyline, section order, and slide-level key points.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'slides',
-            'display_name', '页面内容',
-            'description', '把大纲扩写成每页标题、要点、视觉建议和讲稿备注。',
+            'display_name', 'Slide Content',
+            'description', 'Expand the outline into slide titles, bullets, visual hints, and speaker notes.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'review',
-            'display_name', '质量审核',
-            'description', '检查页数、重复标题、信息完整性和改进建议。',
+            'display_name', 'Quality Review',
+            'description', 'Check slide count, repeated titles, completeness, and improvement suggestions.',
             'requires_model', true
         )
     ),

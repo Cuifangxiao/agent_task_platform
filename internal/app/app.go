@@ -68,6 +68,18 @@ func New(confPath string) (*Application, error) {
 		return nil, fmt.Errorf("connect mysql failed: %w", err)
 	}
 
+	migrationCtx, cancelMigrations := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelMigrations()
+
+	appliedMigrations, err := bootstrap.ApplyMySQLMigrations(migrationCtx, db, confPath)
+	if err != nil {
+		closeWithLog(logger, "mysql", db.Close)
+		return nil, fmt.Errorf("apply mysql migrations failed: %w", err)
+	}
+	if len(appliedMigrations) > 0 {
+		logger.Info("mysql migrations applied", "migrations", appliedMigrations)
+	}
+
 	grpcConn, err := grpc.NewClient(
 		cfg.PythonAgent.GRPCAddress(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -129,6 +141,7 @@ func buildHTTPDependencies(
 	userRepo := user.NewRepository(db)
 	modelConfigRepo := modelconfig.NewRepository(db)
 	agentConfigRepo := agentconfig.NewRepository(db)
+	pptHistoryRepo := pptagent.NewHistoryRepository(db)
 	pythonRuntimeClient := pythonruntime.NewClient(grpcConn)
 
 	jwtManager := auth.NewManager(
@@ -149,7 +162,7 @@ func buildHTTPDependencies(
 	)
 	agentConfigService := agentconfig.NewService(agentConfigRepo, modelConfigRepo)
 	agentService := agent.NewService(modelConfigRepo, pythonRuntimeClient)
-	pptAgentService := pptagent.NewService(modelConfigRepo, agentConfigRepo, pythonRuntimeClient, "")
+	pptAgentService := pptagent.NewService(modelConfigRepo, agentConfigRepo, pptHistoryRepo, pythonRuntimeClient, "")
 
 	return httpDependencies{
 		userHandler:               user.NewHandler(userService),

@@ -143,45 +143,56 @@ function normalizeError(error: unknown) {
       {{ store.banner.value.text }}
     </div>
 
-    <DashboardPage
-      v-if="activePage === 'dashboard'"
-      :models="store.modelConfigs.value"
-      :agents="store.agents.value"
-      :agent-configs="store.agentConfigs.value"
-      :ppt-configs="store.pptAgentConfigs.value"
-      @navigate="activePage = $event"
-    />
+    <KeepAlive>
+      <DashboardPage
+        v-if="activePage === 'dashboard'"
+        :models="store.modelConfigs.value"
+        :agents="store.agents.value"
+        :agent-configs="store.agentConfigs.value"
+        :ppt-configs="store.pptAgentConfigs.value"
+        @navigate="activePage = $event"
+      />
+    </KeepAlive>
 
-    <ModelConfigPage
-      v-else-if="activePage === 'models'"
-      :providers="store.providers.value"
-      :models="store.modelConfigs.value"
-      :saving="saving"
-      @save="saveModelConfig"
-      @delete="deleteModelConfig"
-      @test-credential="testCredential"
-    />
+    <KeepAlive>
+      <ModelConfigPage
+        v-if="activePage === 'models'"
+        :providers="store.providers.value"
+        :models="store.modelConfigs.value"
+        :saving="saving"
+        @save="saveModelConfig"
+        @delete="deleteModelConfig"
+        @test-credential="testCredential"
+      />
+    </KeepAlive>
 
-    <AgentListPage
-      v-else-if="activePage === 'agents'"
-      :agents="store.agents.value"
-      :models="store.modelConfigs.value"
-      :agent-configs="store.agentConfigs.value"
-      :saving="saving"
-      @save="saveAgentConfig"
-      @delete="deleteAgentConfig"
-      @go-ppt="activePage = 'ppt'"
-    />
+    <KeepAlive>
+      <AgentListPage
+        v-if="activePage === 'agents'"
+        :agents="store.agents.value"
+        :models="store.modelConfigs.value"
+        :agent-configs="store.agentConfigs.value"
+        :saving="saving"
+        @save="saveAgentConfig"
+        @delete="deleteAgentConfig"
+        @go-ppt="activePage = 'ppt'"
+      />
+    </KeepAlive>
 
+    <KeepAlive>
     <PptAgentPage
-      v-else-if="activePage === 'ppt'"
+      v-if="activePage === 'ppt'"
       :configs="store.pptAgentConfigs.value"
-      :agents="store.agents.value"
-      :models="store.modelConfigs.value"
+      :list-conversations="store.api.pptConversations"
+      :load-conversation="store.api.pptConversation"
+      :download-artifact="store.api.downloadPptArtifact"
       :stream-ppt="store.api.streamPpt"
       :resume-ppt="store.api.resumePpt"
     />
+    </KeepAlive>
 
-    <RequestLogsPage v-else :logs="store.logs.value" />
+    <KeepAlive>
+      <RequestLogsPage v-if="activePage === 'logs'" :logs="store.logs.value" />
+    </KeepAlive>
   </AppShell>
 </template>

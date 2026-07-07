@@ -36,24 +36,22 @@ class DeckService:
 
             llms = _build_deck_llms(inp)
             graph = build_deck_graph(llms, _artifact_dir(), self._checkpointer)
-            source_text = (inp.source_text or "").strip()
             uploaded_file_text = _parse_uploaded_file(inp)
             deck_title = _derive_deck_title(
                 description,
                 inp.source_file_filename,
-                source_text,
                 uploaded_file_text,
             )
 
             initial_state = {
                 "request_id": request_id,
                 "deck_title": deck_title,
-                "audience": inp.audience,
-                "goal": inp.goal,
-                "page_count": inp.page_count,
-                "language": inp.language,
-                "style": inp.style,
-                "source_text": source_text,
+                "audience": "general audience",
+                "goal": "create a presentation that follows the user description",
+                "page_count": 8,
+                "language": "zh-CN",
+                "style": "concise business deck",
+                "source_text": "",
                 "uploaded_file_name": inp.source_file_filename,
                 "uploaded_file_text": uploaded_file_text,
                 "user_description": description,
@@ -93,7 +91,7 @@ class DeckService:
             llms = _build_deck_llms(inp)
             graph = build_deck_graph(llms, _artifact_dir(), self._checkpointer)
             resume_payload = {
-                "action": inp.action or "continue",
+                "action": "continue",
                 "outline": _decode_outline_json(inp.outline_json),
             }
 
@@ -242,8 +240,8 @@ def _parse_uploaded_file(inp: GenerateDeckInput) -> str:
     return parse_uploaded_document(inp.source_file_filename, inp.source_file)
 
 
-def _derive_deck_title(description: str, file_name: str, source_text: str, uploaded_file_text: str) -> str:
-    for candidate in (description, file_name, source_text, uploaded_file_text):
+def _derive_deck_title(description: str, file_name: str, uploaded_file_text: str) -> str:
+    for candidate in (description, file_name, uploaded_file_text):
         candidate = (candidate or "").strip()
         if candidate:
             return _compact_title(candidate)

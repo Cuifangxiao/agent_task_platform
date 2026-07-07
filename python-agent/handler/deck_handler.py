@@ -15,12 +15,6 @@ class DeckHandler:
                 user_id=req.user.user_id,
                 username=req.user.username,
                 user_description=req.user_description,
-                audience=req.audience,
-                goal=req.goal,
-                page_count=req.page_count,
-                language=req.language,
-                style=req.style,
-                source_text=req.source_text,
                 source_file_filename=req.source_file_filename,
                 source_file=req.source_file,
                 node_model_configs=[
@@ -46,7 +40,6 @@ class DeckHandler:
                 user_id=req.user.user_id,
                 username=req.user.username,
                 request_id=req.request_id,
-                action=req.action,
                 outline_json=req.outline_json,
                 node_model_configs=[
                     DeckNodeModelConfig(

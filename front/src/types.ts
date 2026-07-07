@@ -141,21 +141,13 @@ export interface CredentialTestResponse {
 }
 
 export interface PptGeneratePayload {
-  agent_config_id: number
+  agent_config_id?: number
   description: string
-  audience: string
-  goal: string
-  page_count: number
-  language: string
-  style: string
-  source_text: string
   source_file?: File | null
 }
 
 export interface PptResumePayload {
-  agent_config_id: number
   request_id: string
-  action: string
   outline: unknown
 }
 
@@ -165,6 +157,7 @@ export interface ParsedSseEvent {
 }
 
 export interface PptStreamChunk {
+  conversation_id?: number
   request_id?: string
   event_type?: string
   stage?: string
@@ -174,6 +167,21 @@ export interface PptStreamChunk {
   done?: boolean
   error?: string
   sequence?: number
+}
+
+export interface PptConversationSummary {
+  id: number
+  agent_config_id: number
+  agent_config_name: string
+  title: string
+  status: 'running' | 'waiting' | 'done' | 'error' | string
+  latest_request_id?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PptConversationDetail extends PptConversationSummary {
+  messages: Record<string, unknown>[]
 }
 
 export interface RequestLogEntry {

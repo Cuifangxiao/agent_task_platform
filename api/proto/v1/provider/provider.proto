@@ -70,23 +70,16 @@ message DeckNodeModelConfig {
 message GenerateDeckRequest {
   UserContext user = 1;
   string user_description = 2;
-  string audience = 3;
-  string goal = 4;
-  int32 page_count = 5;
-  string language = 6;
-  string style = 7;
-  string source_text = 8;
-  string source_file_filename = 9;
-  bytes source_file = 10;
-  repeated DeckNodeModelConfig node_model_configs = 11;
+  string source_file_filename = 3;
+  bytes source_file = 4;
+  repeated DeckNodeModelConfig node_model_configs = 5;
 }
 
 message ResumeDeckRequest {
   UserContext user = 1;
   string request_id = 2;
-  string action = 3;
-  string outline_json = 4;
-  repeated DeckNodeModelConfig node_model_configs = 5;
+  string outline_json = 3;
+  repeated DeckNodeModelConfig node_model_configs = 4;
 }
 
 message GenerateDeckResponse {

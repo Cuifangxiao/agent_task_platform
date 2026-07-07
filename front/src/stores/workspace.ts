@@ -112,18 +112,34 @@ export function useWorkspaceStore() {
   async function reload() {
     loading.data = true
     try {
-      const [user, providerResponse, models, agentList, configs] = await Promise.all([
+      const [userResult, providerResult, modelResult, agentResult, configResult] = await Promise.allSettled([
         api.me(),
         api.providers(),
         api.modelConfigs(),
         api.agents(),
         api.agentConfigs(),
       ])
-      me.value = user
-      providers.value = providerResponse.providers
-      modelConfigs.value = models
-      agents.value = agentList
-      agentConfigs.value = configs
+
+      // Stop here if auth became invalid during the reload flow.
+      if (!session.value?.access_token) {
+        return
+      }
+
+      if (userResult.status === 'fulfilled') {
+        me.value = userResult.value
+      }
+      if (providerResult.status === 'fulfilled') {
+        providers.value = providerResult.value.providers
+      }
+      if (modelResult.status === 'fulfilled') {
+        modelConfigs.value = modelResult.value
+      }
+      if (agentResult.status === 'fulfilled') {
+        agents.value = agentResult.value
+      }
+      if (configResult.status === 'fulfilled') {
+        agentConfigs.value = configResult.value
+      }
     } finally {
       loading.data = false
     }

@@ -8,41 +8,26 @@ import (
 )
 
 type GenerateDeckRequest struct {
-	AgentConfigID  int64  `json:"agent_config_id" binding:"required,min=1"`
+	AgentConfigID  int64  `json:"agent_config_id"`
 	Description    string `json:"description" binding:"required,min=1,max=5000"`
-	Audience       string `json:"audience" binding:"omitempty,max=500"`
-	Goal           string `json:"goal" binding:"omitempty,max=500"`
-	PageCount      int    `json:"page_count" binding:"omitempty,min=1,max=30"`
-	Language       string `json:"language" binding:"omitempty,max=64"`
-	Style          string `json:"style" binding:"omitempty,max=200"`
-	SourceText     string `json:"source_text" binding:"omitempty,max=50000"`
 	SourceFileName string `json:"source_file_name"`
 	SourceFile     []byte `json:"-"`
 }
 
 type RuntimeGenerateDeckRequest struct {
 	Description      string
-	Audience         string
-	Goal             string
-	PageCount        int
-	Language         string
-	Style            string
-	SourceText       string
 	SourceFileName   string
 	SourceFile       []byte
 	NodeModelConfigs []RuntimeNodeModelConfig
 }
 
 type ResumeDeckRequest struct {
-	AgentConfigID int64           `json:"agent_config_id" binding:"required,min=1"`
-	RequestID     string          `json:"request_id" binding:"required"`
-	Action        string          `json:"action"`
-	Outline       json.RawMessage `json:"outline"`
+	RequestID string          `json:"request_id" binding:"required"`
+	Outline   json.RawMessage `json:"outline"`
 }
 
 type RuntimeResumeDeckRequest struct {
 	RequestID        string
-	Action           string
 	OutlineJSON      string
 	NodeModelConfigs []RuntimeNodeModelConfig
 }
@@ -59,15 +44,39 @@ type RuntimeNodeModelConfig struct {
 }
 
 type DeckStreamChunk struct {
-	RequestID   string          `json:"request_id"`
-	EventType   string          `json:"event_type,omitempty"`
-	Stage       string          `json:"stage,omitempty"`
-	Message     string          `json:"message,omitempty"`
-	Payload     json.RawMessage `json:"payload,omitempty"`
-	ArtifactURL string          `json:"artifact_url,omitempty"`
-	Done        bool            `json:"done,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	Sequence    int32           `json:"sequence"`
+	ConversationID int64           `json:"conversation_id,omitempty"`
+	RequestID      string          `json:"request_id"`
+	EventType      string          `json:"event_type,omitempty"`
+	Stage          string          `json:"stage,omitempty"`
+	Message        string          `json:"message,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	ArtifactURL    string          `json:"artifact_url,omitempty"`
+	Done           bool            `json:"done,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	Sequence       int32           `json:"sequence"`
+}
+
+type ConversationSummaryResponse struct {
+	ID              int64              `json:"id"`
+	AgentConfigID   int64              `json:"agent_config_id"`
+	AgentConfigName string             `json:"agent_config_name"`
+	Title           string             `json:"title"`
+	Status          ConversationStatus `json:"status"`
+	LatestRequestID string             `json:"latest_request_id,omitempty"`
+	CreatedAt       string             `json:"created_at"`
+	UpdatedAt       string             `json:"updated_at"`
+}
+
+type ConversationDetailResponse struct {
+	ID              int64              `json:"id"`
+	AgentConfigID   int64              `json:"agent_config_id"`
+	AgentConfigName string             `json:"agent_config_name"`
+	Title           string             `json:"title"`
+	Status          ConversationStatus `json:"status"`
+	LatestRequestID string             `json:"latest_request_id,omitempty"`
+	CreatedAt       string             `json:"created_at"`
+	UpdatedAt       string             `json:"updated_at"`
+	Messages        []map[string]any   `json:"messages"`
 }
 
 type DeckStream interface {

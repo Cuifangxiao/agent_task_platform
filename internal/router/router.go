@@ -56,6 +56,8 @@ func Register(
 	authGroup.DELETE("/agent-configs/:id", agentConfigHandler.DeleteConfig)
 	authGroup.POST("/provider-credentials/test", providerCredentialHandler.TestCredential)
 	authGroup.POST("/agent/stream-text", agentHandler.StreamText)
+	authGroup.GET("/ppt-agent/conversations", pptAgentHandler.ListConversations)
+	authGroup.GET("/ppt-agent/conversations/:id", pptAgentHandler.GetConversation)
 	authGroup.POST("/ppt-agent/generate", pptAgentHandler.GenerateDeck)
 	authGroup.POST("/ppt-agent/resume", pptAgentHandler.ResumeDeck)
 	authGroup.GET("/ppt-agent/artifacts/:request_id", pptAgentHandler.DownloadArtifact)
