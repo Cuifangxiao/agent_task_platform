@@ -99,11 +99,10 @@ class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
 
     def ResumeDeck(self, request, context):
         logger.info(
-            "ResumeDeck Begin. user_id:%s username:%s request_id:%s action:%s",
+            "ResumeDeck Begin. user_id:%s username:%s request_id:%s",
             request.user.user_id,
             request.user.username,
             request.request_id,
-            request.action,
         )
         try:
             for resp in self.handlers.deck_handler.resume_deck(request):
