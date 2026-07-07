@@ -68,14 +68,16 @@ message DeckNodeModelConfig {
 
 message GenerateDeckRequest {
   UserContext user = 1;
-  string topic = 2;
+  string user_description = 2;
   string audience = 3;
   string goal = 4;
   int32 page_count = 5;
   string language = 6;
   string style = 7;
   string source_text = 8;
-  repeated DeckNodeModelConfig node_model_configs = 9;
+  string source_pdf_filename = 9;
+  bytes source_pdf = 10;
+  repeated DeckNodeModelConfig node_model_configs = 11;
 }
 
 message GenerateDeckResponse {

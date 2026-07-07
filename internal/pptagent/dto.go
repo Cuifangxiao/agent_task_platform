@@ -8,24 +8,28 @@ import (
 )
 
 type GenerateDeckRequest struct {
-	AgentConfigID int64  `json:"agent_config_id" binding:"required,min=1"`
-	Topic         string `json:"topic" binding:"required,min=1,max=500"`
-	Audience      string `json:"audience" binding:"omitempty,max=500"`
-	Goal          string `json:"goal" binding:"omitempty,max=500"`
-	PageCount     int    `json:"page_count" binding:"omitempty,min=1,max=30"`
-	Language      string `json:"language" binding:"omitempty,max=64"`
-	Style         string `json:"style" binding:"omitempty,max=200"`
-	SourceText    string `json:"source_text" binding:"omitempty,max=50000"`
+	AgentConfigID  int64  `json:"agent_config_id" binding:"required,min=1"`
+	Description    string `json:"description" binding:"required,min=1,max=5000"`
+	Audience       string `json:"audience" binding:"omitempty,max=500"`
+	Goal           string `json:"goal" binding:"omitempty,max=500"`
+	PageCount      int    `json:"page_count" binding:"omitempty,min=1,max=30"`
+	Language       string `json:"language" binding:"omitempty,max=64"`
+	Style          string `json:"style" binding:"omitempty,max=200"`
+	SourceText     string `json:"source_text" binding:"omitempty,max=50000"`
+	SourcePDFName  string `json:"source_pdf_name"`
+	SourcePDFBytes []byte `json:"-"`
 }
 
 type RuntimeGenerateDeckRequest struct {
-	Topic            string
+	Description      string
 	Audience         string
 	Goal             string
 	PageCount        int
 	Language         string
 	Style            string
 	SourceText       string
+	SourcePDFName    string
+	SourcePDFBytes   []byte
 	NodeModelConfigs []RuntimeNodeModelConfig
 }
 

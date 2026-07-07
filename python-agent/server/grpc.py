@@ -16,6 +16,8 @@ from handler.container import AgentHandlers
 
 logger = logging.getLogger(__name__)
 
+MAX_DECK_GRPC_MESSAGE_BYTES = 25 * 1024 * 1024
+
 
 class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
     def __init__(self, handlers: AgentHandlers) -> None:
@@ -76,19 +78,18 @@ class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
 
     def GenerateDeck(self, request, context):
         logger.info(
-            "GenerateDeck Begin. user_id:%s username:%s provider:%s model:%s topic:%s",
+            "GenerateDeck Begin. user_id:%s username:%s description_chars:%s pdf:%s",
             request.user.user_id,
             request.user.username,
-            request.provider,
-            request.model,
-            request.topic,
+            len(request.user_description or ""),
+            request.source_pdf_filename,
         )
         try:
             for resp in self.handlers.deck_handler.generate_deck(request):
                 yield resp
-            logger.info("GenerateDeck Success. provider:%s model:%s", request.provider, request.model)
+            logger.info("GenerateDeck Success. user_id:%s", request.user.user_id)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("GenerateDeck Failed. provider:%s model:%s err:%s", request.provider, request.model, e)
+            logger.error("GenerateDeck Failed. user_id:%s err:%s", request.user.user_id, e)
             logger.error(traceback.format_exc())
             yield provider_pb2.GenerateDeckResponse(  # pylint: disable=no-member
                 event_type="error",
@@ -101,7 +102,11 @@ class GrpcServer:
     def __init__(self, cfg: GrpcServerConfig, handlers: AgentHandlers) -> None:
         self._cfg = cfg
         self._server = grpc.server(
-            futures.ThreadPoolExecutor(max_workers=cfg.max_workers)
+            futures.ThreadPoolExecutor(max_workers=cfg.max_workers),
+            options=[
+                ("grpc.max_receive_message_length", MAX_DECK_GRPC_MESSAGE_BYTES),
+                ("grpc.max_send_message_length", MAX_DECK_GRPC_MESSAGE_BYTES),
+            ],
         )
         # 在这里注册所有 servicer
         provider_pb2_grpc.add_ProviderRuntimeServiceServicer_to_server(

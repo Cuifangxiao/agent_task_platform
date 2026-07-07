@@ -19,13 +19,15 @@ class DeckNodeModelConfig:
 class GenerateDeckInput:
     user_id: int
     username: str
-    topic: str
+    user_description: str
     audience: str
     goal: str
     page_count: int
     language: str
     style: str
     source_text: str
+    source_pdf_filename: str = ""
+    source_pdf: bytes = b""
     node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
 
 

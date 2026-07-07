@@ -155,7 +155,8 @@ export function createApiClient(options: ApiClientOptions) {
     }
 
     const headers = new Headers(requestOptions.headers ?? {})
-    if (requestOptions.body !== undefined && !headers.has('Content-Type')) {
+    const bodyIsFormData = requestOptions.body instanceof FormData
+    if (requestOptions.body !== undefined && !bodyIsFormData && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json')
     }
     if (!headers.has('Accept')) {
@@ -167,10 +168,17 @@ export function createApiClient(options: ApiClientOptions) {
       headers.set('Authorization', `Bearer ${token}`)
     }
 
+    const requestBody: BodyInit | undefined =
+      requestOptions.body === undefined
+        ? undefined
+        : bodyIsFormData
+          ? (requestOptions.body as FormData)
+          : JSON.stringify(requestOptions.body)
+
     const response = await fetch(buildUrl(path), {
       method,
       headers,
-      body: requestOptions.body === undefined ? undefined : JSON.stringify(requestOptions.body),
+      body: requestBody,
       signal: requestOptions.signal,
     })
 
@@ -186,7 +194,7 @@ export function createApiClient(options: ApiClientOptions) {
       method,
       path,
       status: response.status,
-      request: requestOptions.body,
+      request: toLoggableBody(requestOptions.body),
       response: payload,
     })
 
@@ -206,20 +214,27 @@ export function createApiClient(options: ApiClientOptions) {
       throw new Error('请先登录再调用流式接口。')
     }
 
+    const bodyIsFormData = streamOptions.body instanceof FormData
     const headers = new Headers({
-      'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     })
+    if (!bodyIsFormData) {
+      headers.set('Content-Type', 'application/json')
+    }
 
     const token = options.getSession()?.access_token
     if (auth && token) {
       headers.set('Authorization', `Bearer ${token}`)
     }
 
+    const requestBody: BodyInit = bodyIsFormData
+      ? (streamOptions.body as FormData)
+      : JSON.stringify(streamOptions.body ?? {})
+
     const response = await fetch(buildUrl(path), {
       method,
       headers,
-      body: JSON.stringify(streamOptions.body ?? {}),
+      body: requestBody,
       signal: streamOptions.signal,
     })
 
@@ -237,7 +252,7 @@ export function createApiClient(options: ApiClientOptions) {
         method,
         path,
         status: response.status,
-        request: streamOptions.body,
+        request: toLoggableBody(streamOptions.body),
         response: payload,
       })
       throw new Error(getErrorMessage(payload, `${method} ${path} failed`))
@@ -248,7 +263,7 @@ export function createApiClient(options: ApiClientOptions) {
         method,
         path,
         status: response.status,
-        request: streamOptions.body,
+        request: toLoggableBody(streamOptions.body),
         response: { message: 'response body is empty' },
       })
       throw new Error('服务端没有返回可读取的流。')
@@ -276,7 +291,7 @@ export function createApiClient(options: ApiClientOptions) {
         method,
         path,
         status: 'stream',
-        request: streamOptions.body,
+        request: toLoggableBody(streamOptions.body),
         response: {
           state: finalEvent,
           preview,
@@ -288,7 +303,7 @@ export function createApiClient(options: ApiClientOptions) {
         method,
         path,
         status: note ? 'aborted' : 'stream-error',
-        request: streamOptions.body,
+        request: toLoggableBody(streamOptions.body),
         response: {
           state: note ?? 'stream error',
           preview,
@@ -305,6 +320,26 @@ export function createApiClient(options: ApiClientOptions) {
     refreshAccessToken,
     stream,
   }
+}
+
+function toLoggableBody(body: unknown) {
+  if (!(body instanceof FormData)) {
+    return body
+  }
+
+  const value: Record<string, unknown> = {}
+  for (const [key, entry] of body.entries()) {
+    if (entry instanceof File) {
+      value[key] = {
+        name: entry.name,
+        size: entry.size,
+        type: entry.type,
+      }
+      continue
+    }
+    value[key] = entry
+  }
+  return value
 }
 
 async function consumeEventStream(stream: ReadableStream<Uint8Array>, onEvent: (event: ParsedSseEvent) => void) {

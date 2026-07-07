@@ -68,9 +68,27 @@ func (s *Service) GenerateDeck(
 		return nil, fmt.Errorf("runtime client is not configured")
 	}
 
-	topic := strings.TrimSpace(req.Topic)
-	if topic == "" {
-		return nil, fmt.Errorf("%w: topic is required", ErrInvalidRequest)
+	description := strings.TrimSpace(req.Description)
+	if description == "" {
+		return nil, fmt.Errorf("%w: description is required", ErrInvalidRequest)
+	}
+	if len([]rune(description)) > 5000 {
+		return nil, fmt.Errorf("%w: description must be <= 5000 characters", ErrInvalidRequest)
+	}
+	if len([]rune(req.Audience)) > 500 {
+		return nil, fmt.Errorf("%w: audience must be <= 500 characters", ErrInvalidRequest)
+	}
+	if len([]rune(req.Goal)) > 500 {
+		return nil, fmt.Errorf("%w: goal must be <= 500 characters", ErrInvalidRequest)
+	}
+	if len([]rune(req.Language)) > 64 {
+		return nil, fmt.Errorf("%w: language must be <= 64 characters", ErrInvalidRequest)
+	}
+	if len([]rune(req.Style)) > 200 {
+		return nil, fmt.Errorf("%w: style must be <= 200 characters", ErrInvalidRequest)
+	}
+	if len([]rune(req.SourceText)) > 50000 {
+		return nil, fmt.Errorf("%w: source_text must be <= 50000 characters", ErrInvalidRequest)
 	}
 
 	runtimeModels, err := s.resolveRuntimeModelConfigs(ctx, user.UserID, req.AgentConfigID)
@@ -79,13 +97,15 @@ func (s *Service) GenerateDeck(
 	}
 
 	return s.runtimeClient.GenerateDeck(ctx, user, RuntimeGenerateDeckRequest{
-		Topic:            topic,
+		Description:      description,
 		Audience:         defaultString(req.Audience, "general audience"),
-		Goal:             defaultString(req.Goal, "explain the topic clearly"),
+		Goal:             defaultString(req.Goal, "create a presentation that follows the user description"),
 		PageCount:        clampPageCount(req.PageCount),
 		Language:         defaultString(req.Language, "zh-CN"),
 		Style:            defaultString(req.Style, "concise business deck"),
 		SourceText:       strings.TrimSpace(req.SourceText),
+		SourcePDFName:    strings.TrimSpace(req.SourcePDFName),
+		SourcePDFBytes:   req.SourcePDFBytes,
 		NodeModelConfigs: runtimeModels,
 	})
 }

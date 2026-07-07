@@ -149,13 +149,14 @@ const agentConfigFormMode = ref<'create' | 'edit'>('create')
 
 const pptForm = reactive({
   agent_config_id: '',
-  topic: 'Build a personal PPTAgent from the current agent platform',
+  description: '根据上传资料生成一份结构清晰、适合汇报的 PPT。',
   audience: 'solo developer',
   goal: 'explain the architecture, MVP scope, and next steps',
   page_count: 8,
   language: 'zh-CN',
   style: 'concise business deck',
   source_text: '',
+  source_pdf: null as File | null,
 })
 
 const pptState = reactive({
@@ -1159,8 +1160,8 @@ function resetPptState() {
 }
 
 async function generatePpt() {
-  if (!pptForm.topic.trim()) {
-    setBanner('Please enter a PPT topic.', 'error')
+  if (!pptForm.description.trim()) {
+    setBanner('请填写 PPT 生成描述。', 'error')
     return
   }
   const agentConfigId = Number.parseInt(pptForm.agent_config_id, 10)
@@ -1175,15 +1176,17 @@ async function generatePpt() {
   const controller = new AbortController()
   pptAbortController.value = controller
 
-  const body: Record<string, unknown> = {
-    agent_config_id: agentConfigId,
-    topic: pptForm.topic.trim(),
-    audience: pptForm.audience.trim(),
-    goal: pptForm.goal.trim(),
-    page_count: Number(pptForm.page_count),
-    language: pptForm.language.trim(),
-    style: pptForm.style.trim(),
-    source_text: pptForm.source_text.trim(),
+  const body = new FormData()
+  body.append('agent_config_id', String(agentConfigId))
+  body.append('description', pptForm.description.trim())
+  body.append('audience', pptForm.audience.trim())
+  body.append('goal', pptForm.goal.trim())
+  body.append('page_count', String(Number(pptForm.page_count)))
+  body.append('language', pptForm.language.trim())
+  body.append('style', pptForm.style.trim())
+  body.append('source_text', pptForm.source_text.trim())
+  if (pptForm.source_pdf) {
+    body.append('source_pdf', pptForm.source_pdf)
   }
 
   try {
@@ -1241,6 +1244,11 @@ async function generatePpt() {
     busy.ppt = false
     pptAbortController.value = null
   }
+}
+
+function onPptSourcePDFChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  pptForm.source_pdf = input.files?.[0] ?? null
 }
 
 function stopPptStream() {
@@ -1974,8 +1982,8 @@ function clearLogs() {
             <div class="section-title">
               <Bot class="section-icon" />
               <div>
-                <h2>PPTAgent Deck</h2>
-                <p>Generate a PPTX through Go SSE, Python gRPC, and a LangGraph deck workflow.</p>
+                <h2>PPTAgent 生成</h2>
+                <p>上传 PDF 或粘贴资料，再用文字描述你希望生成的 PPT。</p>
               </div>
             </div>
           </div>
@@ -1994,10 +2002,6 @@ function clearLogs() {
               <label class="field">
                 <span>Request ID</span>
                 <input :value="pptState.requestId" type="text" readonly placeholder="Created after start" />
-              </label>
-              <label class="field">
-                <span>Topic</span>
-                <input v-model="pptForm.topic" type="text" placeholder="What should the deck explain?" />
               </label>
               <label class="field">
                 <span>Audience</span>
@@ -2022,8 +2026,22 @@ function clearLogs() {
             </div>
 
             <label class="field">
-              <span>Source Text</span>
-              <textarea v-model="pptForm.source_text" rows="4" placeholder="Optional notes or source material" />
+              <span>生成描述</span>
+              <textarea
+                v-model="pptForm.description"
+                rows="4"
+                placeholder="例如：请根据这份行业报告生成一份 10 页中文汇报 PPT，重点突出市场机会、关键数据和下一步建议。"
+              />
+            </label>
+
+            <label class="field">
+              <span>上传 PDF（可选）</span>
+              <input type="file" accept="application/pdf,.pdf" @change="onPptSourcePDFChange" />
+            </label>
+
+            <label class="field">
+              <span>补充资料</span>
+              <textarea v-model="pptForm.source_text" rows="4" placeholder="可选：粘贴额外文字资料、要求或限制" />
             </label>
 
             <div class="button-row">

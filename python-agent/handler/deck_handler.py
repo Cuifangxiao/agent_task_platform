@@ -14,13 +14,15 @@ class DeckHandler:
             GenerateDeckInput(
                 user_id=req.user.user_id,
                 username=req.user.username,
-                topic=req.topic,
+                user_description=req.user_description,
                 audience=req.audience,
                 goal=req.goal,
                 page_count=req.page_count,
                 language=req.language,
                 style=req.style,
                 source_text=req.source_text,
+                source_pdf_filename=req.source_pdf_filename,
+                source_pdf=req.source_pdf,
                 node_model_configs=[
                     DeckNodeModelConfig(
                         node_key=item.node_key,

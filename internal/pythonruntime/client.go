@@ -14,6 +14,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+const maxDeckGRPCMessageBytes = 25 << 20
+
 type Client struct {
 	grpcClient providerv1.ProviderRuntimeServiceClient
 	timeout    time.Duration
@@ -174,15 +176,17 @@ func (c *Client) GenerateDeck(
 			SessionId: user.SessionID,
 			Device:    user.Device,
 		},
-		Topic:            req.Topic,
-		Audience:         req.Audience,
-		Goal:             req.Goal,
-		PageCount:        int32(req.PageCount),
-		Language:         req.Language,
-		Style:            req.Style,
-		SourceText:       req.SourceText,
-		NodeModelConfigs: nodeModelConfigs,
-	})
+		UserDescription:   req.Description,
+		Audience:          req.Audience,
+		Goal:              req.Goal,
+		PageCount:         int32(req.PageCount),
+		Language:          req.Language,
+		Style:             req.Style,
+		SourceText:        req.SourceText,
+		SourcePdfFilename: req.SourcePDFName,
+		SourcePdf:         req.SourcePDFBytes,
+		NodeModelConfigs:  nodeModelConfigs,
+	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("call python runtime generate deck failed: %w", err)

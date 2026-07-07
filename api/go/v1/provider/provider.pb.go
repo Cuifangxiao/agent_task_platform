@@ -554,18 +554,20 @@ func (x *DeckNodeModelConfig) GetMaxTokens() int32 {
 }
 
 type GenerateDeckRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	User             *UserContext           `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
-	Topic            string                 `protobuf:"bytes,2,opt,name=topic,proto3" json:"topic,omitempty"`
-	Audience         string                 `protobuf:"bytes,3,opt,name=audience,proto3" json:"audience,omitempty"`
-	Goal             string                 `protobuf:"bytes,4,opt,name=goal,proto3" json:"goal,omitempty"`
-	PageCount        int32                  `protobuf:"varint,5,opt,name=page_count,json=pageCount,proto3" json:"page_count,omitempty"`
-	Language         string                 `protobuf:"bytes,6,opt,name=language,proto3" json:"language,omitempty"`
-	Style            string                 `protobuf:"bytes,7,opt,name=style,proto3" json:"style,omitempty"`
-	SourceText       string                 `protobuf:"bytes,8,opt,name=source_text,json=sourceText,proto3" json:"source_text,omitempty"`
-	NodeModelConfigs []*DeckNodeModelConfig `protobuf:"bytes,9,rep,name=node_model_configs,json=nodeModelConfigs,proto3" json:"node_model_configs,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	User              *UserContext           `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
+	UserDescription   string                 `protobuf:"bytes,2,opt,name=user_description,json=userDescription,proto3" json:"user_description,omitempty"`
+	Audience          string                 `protobuf:"bytes,3,opt,name=audience,proto3" json:"audience,omitempty"`
+	Goal              string                 `protobuf:"bytes,4,opt,name=goal,proto3" json:"goal,omitempty"`
+	PageCount         int32                  `protobuf:"varint,5,opt,name=page_count,json=pageCount,proto3" json:"page_count,omitempty"`
+	Language          string                 `protobuf:"bytes,6,opt,name=language,proto3" json:"language,omitempty"`
+	Style             string                 `protobuf:"bytes,7,opt,name=style,proto3" json:"style,omitempty"`
+	SourceText        string                 `protobuf:"bytes,8,opt,name=source_text,json=sourceText,proto3" json:"source_text,omitempty"`
+	SourcePdfFilename string                 `protobuf:"bytes,9,opt,name=source_pdf_filename,json=sourcePdfFilename,proto3" json:"source_pdf_filename,omitempty"`
+	SourcePdf         []byte                 `protobuf:"bytes,10,opt,name=source_pdf,json=sourcePdf,proto3" json:"source_pdf,omitempty"`
+	NodeModelConfigs  []*DeckNodeModelConfig `protobuf:"bytes,11,rep,name=node_model_configs,json=nodeModelConfigs,proto3" json:"node_model_configs,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GenerateDeckRequest) Reset() {
@@ -605,9 +607,9 @@ func (x *GenerateDeckRequest) GetUser() *UserContext {
 	return nil
 }
 
-func (x *GenerateDeckRequest) GetTopic() string {
+func (x *GenerateDeckRequest) GetUserDescription() string {
 	if x != nil {
-		return x.Topic
+		return x.UserDescription
 	}
 	return ""
 }
@@ -652,6 +654,20 @@ func (x *GenerateDeckRequest) GetSourceText() string {
 		return x.SourceText
 	}
 	return ""
+}
+
+func (x *GenerateDeckRequest) GetSourcePdfFilename() string {
+	if x != nil {
+		return x.SourcePdfFilename
+	}
+	return ""
+}
+
+func (x *GenerateDeckRequest) GetSourcePdf() []byte {
+	if x != nil {
+		return x.SourcePdf
+	}
+	return nil
 }
 
 func (x *GenerateDeckRequest) GetNodeModelConfigs() []*DeckNodeModelConfig {
@@ -1165,10 +1181,10 @@ const file_provider_proto_rawDesc = "" +
 	"\x15provider_options_json\x18\x06 \x01(\tR\x13providerOptionsJson\x12 \n" +
 	"\vtemperature\x18\a \x01(\x01R\vtemperature\x12\x1d\n" +
 	"\n" +
-	"max_tokens\x18\b \x01(\x05R\tmaxTokens\"\xcb\x02\n" +
+	"max_tokens\x18\b \x01(\x05R\tmaxTokens\"\xaf\x03\n" +
 	"\x13GenerateDeckRequest\x12,\n" +
-	"\x04user\x18\x01 \x01(\v2\x18.provider.v1.UserContextR\x04user\x12\x14\n" +
-	"\x05topic\x18\x02 \x01(\tR\x05topic\x12\x1a\n" +
+	"\x04user\x18\x01 \x01(\v2\x18.provider.v1.UserContextR\x04user\x12)\n" +
+	"\x10user_description\x18\x02 \x01(\tR\x0fuserDescription\x12\x1a\n" +
 	"\baudience\x18\x03 \x01(\tR\baudience\x12\x12\n" +
 	"\x04goal\x18\x04 \x01(\tR\x04goal\x12\x1d\n" +
 	"\n" +
@@ -1176,8 +1192,12 @@ const file_provider_proto_rawDesc = "" +
 	"\blanguage\x18\x06 \x01(\tR\blanguage\x12\x14\n" +
 	"\x05style\x18\a \x01(\tR\x05style\x12\x1f\n" +
 	"\vsource_text\x18\b \x01(\tR\n" +
-	"sourceText\x12N\n" +
-	"\x12node_model_configs\x18\t \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\x92\x02\n" +
+	"sourceText\x12.\n" +
+	"\x13source_pdf_filename\x18\t \x01(\tR\x11sourcePdfFilename\x12\x1d\n" +
+	"\n" +
+	"source_pdf\x18\n" +
+	" \x01(\fR\tsourcePdf\x12N\n" +
+	"\x12node_model_configs\x18\v \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\x92\x02\n" +
 	"\x14GenerateDeckResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n" +

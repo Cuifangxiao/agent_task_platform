@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -13,14 +14,18 @@ from langgraph.graph import END, START, StateGraph
 from core.deck.renderer import DeckRenderer
 
 
+PROMPT_DIR = Path(__file__).with_name("prompts")
+
+
 class DeckGraphState(TypedDict, total=False):
     request_id: str
-    topic: str
+    deck_title: str
     audience: str
     goal: str
     page_count: int
     language: str
     style: str
+    user_description: str
     source_text: str
     plan: dict[str, Any]
     slides: list[dict[str, Any]]
@@ -43,12 +48,13 @@ def build_deck_graph(llms: Any, output_dir: Path):
         )
 
         return {
-            "topic": str(state.get("topic") or "").strip(),
+            "deck_title": str(state.get("deck_title") or "").strip(),
             "audience": str(state.get("audience") or "general audience").strip(),
-            "goal": str(state.get("goal") or "explain the topic clearly").strip(),
+            "goal": str(state.get("goal") or "follow the user description clearly").strip(),
             "page_count": _clamp_page_count(state.get("page_count")),
             "language": str(state.get("language") or "zh-CN").strip(),
             "style": str(state.get("style") or "concise business deck").strip(),
+            "user_description": _truncate(str(state.get("user_description") or "").strip(), 4000),
             "source_text": _truncate(str(state.get("source_text") or "").strip(), 12000),
         }
 
@@ -65,10 +71,7 @@ def build_deck_graph(llms: Any, output_dir: Path):
         plan = _normalize_plan(
             _invoke_json(
                 _llm_for_node(llm_registry, "outline"),
-                system=(
-                    "You are a senior presentation strategist. Return only valid JSON. "
-                    "Design a coherent presentation outline with a clear narrative arc."
-                ),
+                system=_load_node_prompt("outline"),
                 user=_outline_prompt(state),
             ),
             state,
@@ -96,10 +99,7 @@ def build_deck_graph(llms: Any, output_dir: Path):
         slides = _normalize_slides(
             _invoke_json(
                 _llm_for_node(llm_registry, "slides"),
-                system=(
-                    "You are an expert slide writer. Return only valid JSON. "
-                    "Write concise slide content with strong titles and practical visuals."
-                ),
+                system=_load_node_prompt("slides"),
                 user=_slides_prompt(state),
             ),
             state,
@@ -124,10 +124,7 @@ def build_deck_graph(llms: Any, output_dir: Path):
             review = _normalize_review(
                 _invoke_json(
                     review_llm,
-                    system=(
-                        "You are a presentation QA reviewer. Return only valid JSON. "
-                        "Check slide count, duplication, clarity, and completeness."
-                    ),
+                    system=_load_node_prompt("review"),
                     user=_review_prompt(state),
                 )
             )
@@ -185,6 +182,18 @@ def build_deck_graph(llms: Any, output_dir: Path):
     return graph.compile()
 
 
+@lru_cache(maxsize=None)
+def _load_node_prompt(node_key: str) -> str:
+    path = PROMPT_DIR / f"{node_key}.md"
+    try:
+        prompt = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise ValueError(f"missing deck node prompt file: {path}") from exc
+    if not prompt:
+        raise ValueError(f"deck node prompt file is empty: {path}")
+    return prompt
+
+
 def _normalize_llm_registry(llms: Any) -> dict[str, Any]:
     if isinstance(llms, dict):
         registry: dict[str, Any] = {}
@@ -211,27 +220,14 @@ def _explicit_llm_for_node(registry: dict[str, Any], node_key: str) -> Any | Non
 def _outline_prompt(state: DeckGraphState) -> str:
     return json.dumps(
         {
-            "task": "Create a presentation outline.",
-            "topic": state["topic"],
+            "deck_title": state["deck_title"],
             "audience": state["audience"],
             "goal": state["goal"],
             "page_count": state["page_count"],
             "language": state["language"],
             "style": state["style"],
+            "user_description": state.get("user_description", ""),
             "source_text": state.get("source_text", ""),
-            "required_json_shape": {
-                "title": "string",
-                "narrative": "string",
-                "slides": [
-                    {
-                        "index": 1,
-                        "title": "string",
-                        "key_message": "string",
-                        "layout": "title|section|content|comparison|summary",
-                        "visual_suggestion": "string",
-                    }
-                ],
-            },
         },
         ensure_ascii=False,
     )
@@ -240,35 +236,17 @@ def _outline_prompt(state: DeckGraphState) -> str:
 def _slides_prompt(state: DeckGraphState) -> str:
     return json.dumps(
         {
-            "task": "Expand the outline into exact slide specs.",
             "brief": {
-                "topic": state["topic"],
+                "deck_title": state["deck_title"],
                 "audience": state["audience"],
                 "goal": state["goal"],
                 "page_count": state["page_count"],
                 "language": state["language"],
                 "style": state["style"],
+                "user_description": state.get("user_description", ""),
+                "source_text": state.get("source_text", ""),
             },
             "outline": state.get("plan") or {},
-            "requirements": [
-                "Return exactly page_count slides.",
-                "Each slide should have 3 to 5 concise bullets except title or section slides.",
-                "Do not use Markdown fences.",
-                "Keep all visible slide text in the requested language.",
-            ],
-            "required_json_shape": {
-                "slides": [
-                    {
-                        "index": 1,
-                        "title": "string",
-                        "key_message": "string",
-                        "layout": "title|section|content|comparison|summary",
-                        "bullets": ["string"],
-                        "visual_suggestion": "string",
-                        "speaker_notes": "string",
-                    }
-                ]
-            },
         },
         ensure_ascii=False,
     )
@@ -277,20 +255,16 @@ def _slides_prompt(state: DeckGraphState) -> str:
 def _review_prompt(state: DeckGraphState) -> str:
     return json.dumps(
         {
-            "task": "Review these slide specs before rendering.",
             "brief": {
-                "topic": state["topic"],
+                "deck_title": state["deck_title"],
                 "audience": state["audience"],
                 "goal": state["goal"],
                 "page_count": state["page_count"],
                 "language": state["language"],
                 "style": state["style"],
+                "user_description": state.get("user_description", ""),
             },
             "slides": state.get("slides") or [],
-            "required_json_shape": {
-                "status": "ok|warning",
-                "warnings": ["string"],
-            },
         },
         ensure_ascii=False,
     )
@@ -343,7 +317,7 @@ def _normalize_plan(raw: dict[str, Any], state: DeckGraphState) -> dict[str, Any
         slides.append(
             {
                 "index": index + 1,
-                "title": str(source.get("title") or _fallback_slide_title(index + 1, state["topic"])).strip(),
+                "title": str(source.get("title") or _fallback_slide_title(index + 1, state["deck_title"])).strip(),
                 "key_message": str(source.get("key_message") or source.get("message") or "").strip(),
                 "layout": _normalize_layout(str(source.get("layout") or ("title" if index == 0 else "content"))),
                 "visual_suggestion": str(source.get("visual_suggestion") or "").strip(),
@@ -351,7 +325,7 @@ def _normalize_plan(raw: dict[str, Any], state: DeckGraphState) -> dict[str, Any
         )
 
     return {
-        "title": str(raw.get("title") or state["topic"]).strip(),
+        "title": str(raw.get("title") or state["deck_title"]).strip(),
         "narrative": str(raw.get("narrative") or state["goal"]).strip(),
         "slides": slides,
     }
@@ -374,7 +348,7 @@ def _normalize_slides(raw: dict[str, Any], state: DeckGraphState) -> list[dict[s
         slides.append(
             {
                 "index": index + 1,
-                "title": str(source.get("title") or outline.get("title") or _fallback_slide_title(index + 1, state["topic"])).strip(),
+                "title": str(source.get("title") or outline.get("title") or _fallback_slide_title(index + 1, state["deck_title"])).strip(),
                 "key_message": str(source.get("key_message") or outline.get("key_message") or "").strip(),
                 "layout": layout,
                 "bullets": bullets[:5],
@@ -446,18 +420,18 @@ def _normalize_layout(value: str) -> str:
 
 
 def _fallback_bullets(index: int, state: DeckGraphState) -> list[str]:
-    topic = state["topic"]
+    deck_title = state["deck_title"]
     return [
-        f"Key point {index} about {topic}",
+        f"Key point {index} for {deck_title}",
         "Why it matters to the audience",
         "Practical implication or next step",
     ]
 
 
-def _fallback_slide_title(index: int, topic: str) -> str:
+def _fallback_slide_title(index: int, deck_title: str) -> str:
     if index == 1:
-        return topic
-    return f"{topic} - Part {index}"
+        return deck_title
+    return f"{deck_title} - Part {index}"
 
 
 def _clamp_page_count(value: Any) -> int:

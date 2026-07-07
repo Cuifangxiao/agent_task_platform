@@ -71,7 +71,7 @@ def test_deck_graph_streams_and_renders_pptx(tmp_path):
     for part in graph.stream(
         {
             "request_id": "11111111-1111-1111-1111-111111111111",
-            "topic": "PPTAgent MVP",
+            "deck_title": "PPTAgent MVP",
             "audience": "developer",
             "goal": "show the first usable flow",
             "page_count": 2,
@@ -90,4 +90,3 @@ def test_deck_graph_streams_and_renders_pptx(tmp_path):
     artifact_path = tmp_path / "11111111-1111-1111-1111-111111111111.pptx"
     assert artifact_path.exists()
     assert artifact_path.stat().st_size > 0
-
