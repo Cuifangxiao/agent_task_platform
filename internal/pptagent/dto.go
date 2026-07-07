@@ -16,8 +16,8 @@ type GenerateDeckRequest struct {
 	Language       string `json:"language" binding:"omitempty,max=64"`
 	Style          string `json:"style" binding:"omitempty,max=200"`
 	SourceText     string `json:"source_text" binding:"omitempty,max=50000"`
-	SourcePDFName  string `json:"source_pdf_name"`
-	SourcePDFBytes []byte `json:"-"`
+	SourceFileName string `json:"source_file_name"`
+	SourceFile     []byte `json:"-"`
 }
 
 type RuntimeGenerateDeckRequest struct {
@@ -28,8 +28,22 @@ type RuntimeGenerateDeckRequest struct {
 	Language         string
 	Style            string
 	SourceText       string
-	SourcePDFName    string
-	SourcePDFBytes   []byte
+	SourceFileName   string
+	SourceFile       []byte
+	NodeModelConfigs []RuntimeNodeModelConfig
+}
+
+type ResumeDeckRequest struct {
+	AgentConfigID int64           `json:"agent_config_id" binding:"required,min=1"`
+	RequestID     string          `json:"request_id" binding:"required"`
+	Action        string          `json:"action"`
+	Outline       json.RawMessage `json:"outline"`
+}
+
+type RuntimeResumeDeckRequest struct {
+	RequestID        string
+	Action           string
+	OutlineJSON      string
 	NodeModelConfigs []RuntimeNodeModelConfig
 }
 
@@ -66,5 +80,10 @@ type RuntimeClient interface {
 		ctx context.Context,
 		user providercredential.UserContext,
 		req RuntimeGenerateDeckRequest,
+	) (DeckStream, error)
+	ResumeDeck(
+		ctx context.Context,
+		user providercredential.UserContext,
+		req RuntimeResumeDeckRequest,
 	) (DeckStream, error)
 }

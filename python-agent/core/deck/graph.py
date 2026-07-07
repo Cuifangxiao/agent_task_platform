@@ -10,6 +10,7 @@ from typing import Any, TypedDict
 
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from core.deck.renderer import DeckRenderer
 
@@ -27,13 +28,15 @@ class DeckGraphState(TypedDict, total=False):
     style: str
     user_description: str
     source_text: str
+    uploaded_file_name: str
+    uploaded_file_text: str
     plan: dict[str, Any]
     slides: list[dict[str, Any]]
     review: dict[str, Any]
     artifact_path: str
 
 
-def build_deck_graph(llms: Any, output_dir: Path):
+def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
     renderer = DeckRenderer(output_dir)
     llm_registry = _normalize_llm_registry(llms)
 
@@ -56,6 +59,8 @@ def build_deck_graph(llms: Any, output_dir: Path):
             "style": str(state.get("style") or "concise business deck").strip(),
             "user_description": _truncate(str(state.get("user_description") or "").strip(), 4000),
             "source_text": _truncate(str(state.get("source_text") or "").strip(), 12000),
+            "uploaded_file_name": str(state.get("uploaded_file_name") or "").strip(),
+            "uploaded_file_text": _truncate(str(state.get("uploaded_file_text") or "").strip(), 20000),
         }
 
     def generate_outline(state: DeckGraphState) -> dict[str, Any]:
@@ -115,6 +120,34 @@ def build_deck_graph(llms: Any, output_dir: Path):
             )
         return {"slides": slides}
 
+    def review_outline(state: DeckGraphState) -> dict[str, Any]:
+        writer = get_stream_writer()
+        plan = state.get("plan") or {}
+        writer(
+            {
+                "event_type": "progress",
+                "stage": "outline_review",
+                "message": "Waiting for outline confirmation",
+            }
+        )
+        decision = interrupt(
+            {
+                "type": "outline_review",
+                "request_id": state.get("request_id", ""),
+                "stage": "outline_review",
+                "message": "Outline is ready for review",
+                "outline": plan,
+            }
+        )
+
+        if isinstance(decision, dict):
+            action = str(decision.get("action") or "continue").strip().lower()
+            if action in {"continue", "approve", "approved"}:
+                edited_outline = decision.get("outline") or decision.get("plan")
+                if isinstance(edited_outline, dict):
+                    return {"plan": _normalize_plan(edited_outline, state)}
+        return {}
+
     def review_deck(state: DeckGraphState) -> dict[str, Any]:
         writer = get_stream_writer()
         review_llm = _explicit_llm_for_node(llm_registry, "review")
@@ -170,16 +203,18 @@ def build_deck_graph(llms: Any, output_dir: Path):
     graph = StateGraph(DeckGraphState)
     graph.add_node("brief", normalize_brief)
     graph.add_node("outline", generate_outline)
+    graph.add_node("outline_review", review_outline)
     graph.add_node("slides", generate_slides)
     graph.add_node("review", review_deck)
     graph.add_node("render", render_deck)
     graph.add_edge(START, "brief")
     graph.add_edge("brief", "outline")
-    graph.add_edge("outline", "slides")
+    graph.add_edge("outline", "outline_review")
+    graph.add_edge("outline_review", "slides")
     graph.add_edge("slides", "review")
     graph.add_edge("review", "render")
     graph.add_edge("render", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 @lru_cache(maxsize=None)
@@ -218,7 +253,7 @@ def _explicit_llm_for_node(registry: dict[str, Any], node_key: str) -> Any | Non
 
 
 def _outline_prompt(state: DeckGraphState) -> str:
-    return json.dumps(
+    return _compose_brief_prompt(
         {
             "deck_title": state["deck_title"],
             "audience": state["audience"],
@@ -227,14 +262,15 @@ def _outline_prompt(state: DeckGraphState) -> str:
             "language": state["language"],
             "style": state["style"],
             "user_description": state.get("user_description", ""),
-            "source_text": state.get("source_text", ""),
         },
-        ensure_ascii=False,
+        source_text=state.get("source_text", ""),
+        uploaded_file_name=state.get("uploaded_file_name", ""),
+        uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
 
 def _slides_prompt(state: DeckGraphState) -> str:
-    return json.dumps(
+    return _compose_brief_prompt(
         {
             "brief": {
                 "deck_title": state["deck_title"],
@@ -244,16 +280,17 @@ def _slides_prompt(state: DeckGraphState) -> str:
                 "language": state["language"],
                 "style": state["style"],
                 "user_description": state.get("user_description", ""),
-                "source_text": state.get("source_text", ""),
             },
             "outline": state.get("plan") or {},
         },
-        ensure_ascii=False,
+        source_text=state.get("source_text", ""),
+        uploaded_file_name=state.get("uploaded_file_name", ""),
+        uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
 
 def _review_prompt(state: DeckGraphState) -> str:
-    return json.dumps(
+    return _compose_brief_prompt(
         {
             "brief": {
                 "deck_title": state["deck_title"],
@@ -266,8 +303,33 @@ def _review_prompt(state: DeckGraphState) -> str:
             },
             "slides": state.get("slides") or [],
         },
-        ensure_ascii=False,
+        source_text=state.get("source_text", ""),
+        uploaded_file_name=state.get("uploaded_file_name", ""),
+        uploaded_file_text=state.get("uploaded_file_text", ""),
     )
+
+
+def _compose_brief_prompt(
+    payload: dict[str, Any],
+    *,
+    source_text: str,
+    uploaded_file_name: str,
+    uploaded_file_text: str,
+) -> str:
+    parts = [
+        "请求参数如下：",
+        json.dumps(payload, ensure_ascii=False),
+    ]
+    source_text = (source_text or "").strip()
+    if source_text:
+        parts.extend(["", "用户补充资料如下：", source_text])
+
+    uploaded_file_text = (uploaded_file_text or "").strip()
+    if uploaded_file_text:
+        file_name = (uploaded_file_name or "未命名文件").strip()
+        parts.extend(["", f"用户上传了文件：{file_name}", "文件内容如下：", uploaded_file_text])
+
+    return "\n".join(parts)
 
 
 def _invoke_json(llm: Any, system: str, user: str) -> dict[str, Any]:

@@ -1,7 +1,7 @@
 """Deck RPC handler."""
 
 from api import provider_pb2
-from core.deck.contract import DeckNodeModelConfig, GenerateDeckInput
+from core.deck.contract import DeckNodeModelConfig, GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
 from core.deck.service import DeckService
 
 
@@ -21,8 +21,8 @@ class DeckHandler:
                 language=req.language,
                 style=req.style,
                 source_text=req.source_text,
-                source_pdf_filename=req.source_pdf_filename,
-                source_pdf=req.source_pdf,
+                source_file_filename=req.source_file_filename,
+                source_file=req.source_file,
                 node_model_configs=[
                     DeckNodeModelConfig(
                         node_key=item.node_key,
@@ -38,14 +38,43 @@ class DeckHandler:
                 ],
             )
         ):
-            yield provider_pb2.GenerateDeckResponse(
-                request_id=out.request_id,
-                event_type=out.event_type,
-                stage=out.stage,
-                message=out.message,
-                payload_json=out.payload_json,
-                artifact_path=out.artifact_path,
-                done=out.done,
-                error=out.error,
-                sequence=out.sequence,
+            yield _to_generate_deck_response(out)
+
+    def resume_deck(self, req: provider_pb2.ResumeDeckRequest):
+        for out in self._deck_service.resume_deck(
+            ResumeDeckInput(
+                user_id=req.user.user_id,
+                username=req.user.username,
+                request_id=req.request_id,
+                action=req.action,
+                outline_json=req.outline_json,
+                node_model_configs=[
+                    DeckNodeModelConfig(
+                        node_key=item.node_key,
+                        provider=item.provider,
+                        model=item.model,
+                        api_key=item.api_key,
+                        base_url=item.base_url,
+                        provider_options_json=item.provider_options_json,
+                        temperature=item.temperature,
+                        max_tokens=item.max_tokens,
+                    )
+                    for item in req.node_model_configs
+                ],
             )
+        ):
+            yield _to_generate_deck_response(out)
+
+
+def _to_generate_deck_response(out: GenerateDeckOutput):
+    return provider_pb2.GenerateDeckResponse(
+        request_id=out.request_id,
+        event_type=out.event_type,
+        stage=out.stage,
+        message=out.message,
+        payload_json=out.payload_json,
+        artifact_path=out.artifact_path,
+        done=out.done,
+        error=out.error,
+        sequence=out.sequence,
+    )

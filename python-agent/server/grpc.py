@@ -78,11 +78,11 @@ class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
 
     def GenerateDeck(self, request, context):
         logger.info(
-            "GenerateDeck Begin. user_id:%s username:%s description_chars:%s pdf:%s",
+            "GenerateDeck Begin. user_id:%s username:%s description_chars:%s file:%s",
             request.user.user_id,
             request.user.username,
             len(request.user_description or ""),
-            request.source_pdf_filename,
+            request.source_file_filename,
         )
         try:
             for resp in self.handlers.deck_handler.generate_deck(request):
@@ -92,6 +92,28 @@ class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):
             logger.error("GenerateDeck Failed. user_id:%s err:%s", request.user.user_id, e)
             logger.error(traceback.format_exc())
             yield provider_pb2.GenerateDeckResponse(  # pylint: disable=no-member
+                event_type="error",
+                error=str(e),
+                done=True,
+            )
+
+    def ResumeDeck(self, request, context):
+        logger.info(
+            "ResumeDeck Begin. user_id:%s username:%s request_id:%s action:%s",
+            request.user.user_id,
+            request.user.username,
+            request.request_id,
+            request.action,
+        )
+        try:
+            for resp in self.handlers.deck_handler.resume_deck(request):
+                yield resp
+            logger.info("ResumeDeck Success. request_id:%s", request.request_id)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("ResumeDeck Failed. request_id:%s err:%s", request.request_id, e)
+            logger.error(traceback.format_exc())
+            yield provider_pb2.GenerateDeckResponse(  # pylint: disable=no-member
+                request_id=request.request_id,
                 event_type="error",
                 error=str(e),
                 done=True,

@@ -61,7 +61,7 @@ defineEmits<{
       <div>
         <span>3</span>
         <strong>运行 PPTAgent</strong>
-        <p>选择 active PPTAgent Config，提交主题并查看生成进度和下载入口。</p>
+        <p>选择 active PPTAgent Config，填写生成描述，也可以附加文件或文字资料。</p>
       </div>
     </div>
   </section>

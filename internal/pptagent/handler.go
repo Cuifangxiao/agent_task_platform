@@ -17,8 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const maxSourcePDFBytes = 20 << 20
-const maxGenerateDeckMultipartBytes = maxSourcePDFBytes + (2 << 20)
+const maxSourceFileBytes = 20 << 20
+const maxGenerateDeckMultipartBytes = maxSourceFileBytes + (2 << 20)
 
 type Handler struct {
 	service *Service
@@ -53,6 +53,38 @@ func (h *Handler) GenerateDeck(c *gin.Context) {
 	}
 	defer stream.Close()
 
+	h.writeDeckStream(c, stream)
+}
+
+func (h *Handler) ResumeDeck(c *gin.Context) {
+	claims, ok := httpctx.Claims(c)
+	if !ok {
+		response.Internal(c, "missing auth claims")
+		return
+	}
+
+	var req ResumeDeckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request", err)
+		return
+	}
+
+	stream, err := h.service.ResumeDeck(c.Request.Context(), providercredential.UserContext{
+		UserID:    claims.UserID,
+		Username:  claims.Username,
+		SessionID: claims.SessionID,
+		Device:    claims.Device,
+	}, req)
+	if err != nil {
+		h.respondError(c, err)
+		return
+	}
+	defer stream.Close()
+
+	h.writeDeckStream(c, stream)
+}
+
+func (h *Handler) writeDeckStream(c *gin.Context, stream DeckStream) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -146,7 +178,7 @@ func bindGenerateDeckMultipart(c *gin.Context) (GenerateDeckRequest, error) {
 		SourceText:    c.PostForm("source_text"),
 	}
 
-	file, header, err := sourcePDFFormFile(c)
+	file, header, err := sourceFileFormFile(c)
 	if err != nil {
 		if !errors.Is(err, http.ErrMissingFile) {
 			return GenerateDeckRequest{}, err
@@ -155,12 +187,12 @@ func bindGenerateDeckMultipart(c *gin.Context) (GenerateDeckRequest, error) {
 	}
 	defer file.Close()
 
-	data, err := readSourcePDF(file, header)
+	data, err := readSourceFile(file, header)
 	if err != nil {
 		return GenerateDeckRequest{}, err
 	}
-	req.SourcePDFName = header.Filename
-	req.SourcePDFBytes = data
+	req.SourceFileName = header.Filename
+	req.SourceFile = data
 	return req, nil
 }
 
@@ -188,27 +220,27 @@ func parseOptionalIntForm(c *gin.Context, key string) (int, error) {
 	return value, nil
 }
 
-func sourcePDFFormFile(c *gin.Context) (multipart.File, *multipart.FileHeader, error) {
-	file, header, err := c.Request.FormFile("source_pdf")
+func sourceFileFormFile(c *gin.Context) (multipart.File, *multipart.FileHeader, error) {
+	file, header, err := c.Request.FormFile("source_file")
 	if err == nil || !errors.Is(err, http.ErrMissingFile) {
 		return file, header, err
 	}
 	return c.Request.FormFile("file")
 }
 
-func readSourcePDF(file multipart.File, header *multipart.FileHeader) ([]byte, error) {
+func readSourceFile(file multipart.File, header *multipart.FileHeader) ([]byte, error) {
 	if header == nil {
 		return nil, http.ErrMissingFile
 	}
-	if header.Size > maxSourcePDFBytes {
-		return nil, fmt.Errorf("source_pdf must be <= %d bytes", maxSourcePDFBytes)
+	if header.Size > maxSourceFileBytes {
+		return nil, fmt.Errorf("source_file must be <= %d bytes", maxSourceFileBytes)
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxSourcePDFBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, maxSourceFileBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxSourcePDFBytes {
-		return nil, fmt.Errorf("source_pdf must be <= %d bytes", maxSourcePDFBytes)
+	if len(data) > maxSourceFileBytes {
+		return nil, fmt.Errorf("source_file must be <= %d bytes", maxSourceFileBytes)
 	}
 	return data, nil
 }

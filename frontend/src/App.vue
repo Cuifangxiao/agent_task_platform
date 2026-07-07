@@ -28,6 +28,7 @@ import type {
   HealthResponse,
   MeResponse,
   ModelConfig,
+  ParsedSseEvent,
   PptDeckChunk,
   Provider,
   ProviderCredentialTestResponse,
@@ -156,7 +157,7 @@ const pptForm = reactive({
   language: 'zh-CN',
   style: 'concise business deck',
   source_text: '',
-  source_pdf: null as File | null,
+  source_file: null as File | null,
 })
 
 const pptState = reactive({
@@ -168,6 +169,8 @@ const pptState = reactive({
 })
 
 const pptEvents = ref<PptEventLog[]>([])
+const pptOutlineJson = ref('')
+const pptAwaitingOutline = ref(false)
 const pptAbortController = ref<AbortController | null>(null)
 
 const busy = reactive({
@@ -1156,6 +1159,8 @@ function resetPptState() {
   pptState.done = false
   pptState.lastEvent = ''
   pptState.artifactUrl = ''
+  pptOutlineJson.value = ''
+  pptAwaitingOutline.value = false
   pptEvents.value = []
 }
 
@@ -1185,8 +1190,8 @@ async function generatePpt() {
   body.append('language', pptForm.language.trim())
   body.append('style', pptForm.style.trim())
   body.append('source_text', pptForm.source_text.trim())
-  if (pptForm.source_pdf) {
-    body.append('source_pdf', pptForm.source_pdf)
+  if (pptForm.source_file) {
+    body.append('source_file', pptForm.source_file)
   }
 
   try {
@@ -1195,35 +1200,63 @@ async function generatePpt() {
       body,
       signal: controller.signal,
       onEvent(event) {
-        pptState.lastEvent = event.event
+        handlePptEvent(event)
+      },
+    })
 
-        if (typeof event.data !== 'object' || event.data === null) {
-          return
-        }
+    if (pptAwaitingOutline.value) {
+      setBanner('大纲已生成，等待确认。', 'info')
+    } else if (!pptState.error) {
+      setBanner('PPTAgent generation complete.', 'success')
+    } else {
+      setBanner(pptState.error, 'error')
+    }
+  } catch (error) {
+    const message = normalizeError(error)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      setBanner('PPTAgent stream stopped.', 'info')
+    } else {
+      pptState.error = message
+      setBanner(message, 'error')
+    }
+  } finally {
+    busy.ppt = false
+    pptAbortController.value = null
+  }
+}
 
-        const chunk = event.data as PptDeckChunk
-        if (chunk.request_id) {
-          pptState.requestId = chunk.request_id
-        }
-        if (chunk.artifact_url) {
-          pptState.artifactUrl = buildApiHref(chunk.artifact_url)
-        }
-        if (event.event === 'error') {
-          pptState.error = chunk.error ?? 'PPT stream error'
-          pptState.done = Boolean(chunk.done)
-        }
-        if (event.event === 'done') {
-          pptState.done = true
-        }
+async function resumePpt() {
+  const agentConfigId = Number.parseInt(pptForm.agent_config_id, 10)
+  if (!pptState.requestId || !Number.isFinite(agentConfigId) || agentConfigId <= 0) {
+    setBanner('缺少 request_id 或 PPT Agent Config，无法继续生成。', 'error')
+    return
+  }
 
-        pptEvents.value.push({
-          id: Date.now() + pptEvents.value.length,
-          event: event.event,
-          stage: chunk.stage ?? '',
-          message: chunk.message ?? '',
-          sequence: chunk.sequence ?? pptEvents.value.length + 1,
-          payload: chunk.payload,
-        })
+  let outline: unknown
+  try {
+    outline = JSON.parse(pptOutlineJson.value)
+  } catch {
+    setBanner('大纲 JSON 格式不正确，请检查后再继续。', 'error')
+    return
+  }
+
+  busy.ppt = true
+  clearBanner()
+  const controller = new AbortController()
+  pptAbortController.value = controller
+
+  try {
+    await api.stream('/ppt-agent/resume', {
+      auth: true,
+      body: {
+        agent_config_id: agentConfigId,
+        request_id: pptState.requestId,
+        action: 'continue',
+        outline,
+      },
+      signal: controller.signal,
+      onEvent(event) {
+        handlePptEvent(event)
       },
     })
 
@@ -1246,9 +1279,54 @@ async function generatePpt() {
   }
 }
 
-function onPptSourcePDFChange(event: Event) {
+function handlePptEvent(event: ParsedSseEvent) {
+  pptState.lastEvent = event.event
+
+  if (typeof event.data !== 'object' || event.data === null) {
+    return
+  }
+
+  const chunk = event.data as PptDeckChunk
+  if (chunk.request_id) {
+    pptState.requestId = chunk.request_id
+  }
+  if (chunk.artifact_url) {
+    pptState.artifactUrl = buildApiHref(chunk.artifact_url)
+  }
+  if (chunk.event_type === 'outline' && chunk.payload) {
+    pptOutlineJson.value = JSON.stringify(chunk.payload, null, 2)
+  }
+  if (chunk.event_type === 'interrupt') {
+    pptAwaitingOutline.value = true
+    const payload = chunk.payload as { outline?: unknown } | undefined
+    if (payload?.outline) {
+      pptOutlineJson.value = JSON.stringify(payload.outline, null, 2)
+    }
+  }
+  if (chunk.event_type === 'artifact' || chunk.event_type === 'done') {
+    pptAwaitingOutline.value = false
+  }
+  if (event.event === 'error') {
+    pptState.error = chunk.error ?? 'PPT stream error'
+    pptState.done = Boolean(chunk.done)
+  }
+  if (event.event === 'done' || chunk.event_type === 'done') {
+    pptState.done = true
+  }
+
+  pptEvents.value.push({
+    id: Date.now() + pptEvents.value.length,
+    event: event.event,
+    stage: chunk.stage ?? '',
+    message: chunk.message ?? '',
+    sequence: chunk.sequence ?? pptEvents.value.length + 1,
+    payload: chunk.payload,
+  })
+}
+
+function onPptSourceFileChange(event: Event) {
   const input = event.target as HTMLInputElement
-  pptForm.source_pdf = input.files?.[0] ?? null
+  pptForm.source_file = input.files?.[0] ?? null
 }
 
 function stopPptStream() {
@@ -1983,7 +2061,7 @@ function clearLogs() {
               <Bot class="section-icon" />
               <div>
                 <h2>PPTAgent 生成</h2>
-                <p>上传 PDF 或粘贴资料，再用文字描述你希望生成的 PPT。</p>
+                <p>上传文件或粘贴资料，再用文字描述你希望生成的 PPT。</p>
               </div>
             </div>
           </div>
@@ -2035,8 +2113,12 @@ function clearLogs() {
             </label>
 
             <label class="field">
-              <span>上传 PDF（可选）</span>
-              <input type="file" accept="application/pdf,.pdf" @change="onPptSourcePDFChange" />
+              <span>上传文件（可选）</span>
+              <input
+                type="file"
+                accept=".pdf,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                @change="onPptSourceFileChange"
+              />
             </label>
 
             <label class="field">
@@ -2059,6 +2141,20 @@ function clearLogs() {
               </a>
             </div>
           </form>
+
+          <div v-if="pptOutlineJson" class="chat-output">
+            <div class="chat-meta">
+              <span>Outline review</span>
+              <span>{{ pptAwaitingOutline ? 'waiting confirmation' : 'preview' }}</span>
+            </div>
+            <textarea v-model="pptOutlineJson" rows="14" spellcheck="false" />
+            <div v-if="pptAwaitingOutline" class="button-row">
+              <button class="button primary" :disabled="!isAuthenticated || busy.ppt" @click="resumePpt">
+                <Send class="icon" />
+                <span>确认大纲并继续</span>
+              </button>
+            </div>
+          </div>
 
           <div class="chat-output">
             <div class="chat-meta">

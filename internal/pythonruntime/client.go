@@ -176,20 +176,64 @@ func (c *Client) GenerateDeck(
 			SessionId: user.SessionID,
 			Device:    user.Device,
 		},
-		UserDescription:   req.Description,
-		Audience:          req.Audience,
-		Goal:              req.Goal,
-		PageCount:         int32(req.PageCount),
-		Language:          req.Language,
-		Style:             req.Style,
-		SourceText:        req.SourceText,
-		SourcePdfFilename: req.SourcePDFName,
-		SourcePdf:         req.SourcePDFBytes,
-		NodeModelConfigs:  nodeModelConfigs,
+		UserDescription:    req.Description,
+		Audience:           req.Audience,
+		Goal:               req.Goal,
+		PageCount:          int32(req.PageCount),
+		Language:           req.Language,
+		Style:              req.Style,
+		SourceText:         req.SourceText,
+		SourceFileFilename: req.SourceFileName,
+		SourceFile:         req.SourceFile,
+		NodeModelConfigs:   nodeModelConfigs,
 	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("call python runtime generate deck failed: %w", err)
+	}
+
+	return &deckStream{
+		stream: stream,
+		cancel: cancel,
+	}, nil
+}
+
+func (c *Client) ResumeDeck(
+	ctx context.Context,
+	user providercredential.UserContext,
+	req pptagent.RuntimeResumeDeckRequest,
+) (pptagent.DeckStream, error) {
+	callCtx, cancel := context.WithCancel(ctx)
+
+	nodeModelConfigs := make([]*providerv1.DeckNodeModelConfig, 0, len(req.NodeModelConfigs))
+	for _, config := range req.NodeModelConfigs {
+		nodeModelConfigs = append(nodeModelConfigs, &providerv1.DeckNodeModelConfig{
+			NodeKey:             config.NodeKey,
+			Provider:            config.Provider,
+			Model:               config.Model,
+			ApiKey:              config.APIKey,
+			BaseUrl:             config.BaseURL,
+			ProviderOptionsJson: config.ProviderOptionsJSON,
+			Temperature:         config.Temperature,
+			MaxTokens:           int32(config.MaxTokens),
+		})
+	}
+
+	stream, err := c.grpcClient.ResumeDeck(callCtx, &providerv1.ResumeDeckRequest{
+		User: &providerv1.UserContext{
+			UserId:    user.UserID,
+			Username:  user.Username,
+			SessionId: user.SessionID,
+			Device:    user.Device,
+		},
+		RequestId:        req.RequestID,
+		Action:           req.Action,
+		OutlineJson:      req.OutlineJSON,
+		NodeModelConfigs: nodeModelConfigs,
+	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("call python runtime resume deck failed: %w", err)
 	}
 
 	return &deckStream{
@@ -226,8 +270,12 @@ func (s *textStream) Close() error {
 }
 
 type deckStream struct {
-	stream providerv1.ProviderRuntimeService_GenerateDeckClient
+	stream deckRuntimeStream
 	cancel context.CancelFunc
+}
+
+type deckRuntimeStream interface {
+	Recv() (*providerv1.GenerateDeckResponse, error)
 }
 
 func (s *deckStream) Recv() (*pptagent.DeckStreamChunk, error) {

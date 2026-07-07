@@ -26,8 +26,18 @@ class GenerateDeckInput:
     language: str
     style: str
     source_text: str
-    source_pdf_filename: str = ""
-    source_pdf: bytes = b""
+    source_file_filename: str = ""
+    source_file: bytes = b""
+    node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ResumeDeckInput:
+    user_id: int
+    username: str
+    request_id: str
+    action: str = "continue"
+    outline_json: str = ""
     node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
 
 

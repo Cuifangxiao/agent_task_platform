@@ -2,6 +2,7 @@ package pptagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -104,8 +105,57 @@ func (s *Service) GenerateDeck(
 		Language:         defaultString(req.Language, "zh-CN"),
 		Style:            defaultString(req.Style, "concise business deck"),
 		SourceText:       strings.TrimSpace(req.SourceText),
-		SourcePDFName:    strings.TrimSpace(req.SourcePDFName),
-		SourcePDFBytes:   req.SourcePDFBytes,
+		SourceFileName:   strings.TrimSpace(req.SourceFileName),
+		SourceFile:       req.SourceFile,
+		NodeModelConfigs: runtimeModels,
+	})
+}
+
+func (s *Service) ResumeDeck(
+	ctx context.Context,
+	user providercredential.UserContext,
+	req ResumeDeckRequest,
+) (DeckStream, error) {
+	if s == nil {
+		return nil, fmt.Errorf("ppt agent service is not configured")
+	}
+	if s.agentConfigRepo == nil {
+		return nil, fmt.Errorf("agent config repository is not configured")
+	}
+	if s.modelConfigRepo == nil {
+		return nil, fmt.Errorf("model config repository is not configured")
+	}
+	if s.runtimeClient == nil {
+		return nil, fmt.Errorf("runtime client is not configured")
+	}
+
+	requestID := strings.TrimSpace(req.RequestID)
+	if requestID == "" {
+		return nil, fmt.Errorf("%w: request_id is required", ErrInvalidRequest)
+	}
+
+	action := strings.TrimSpace(req.Action)
+	if action == "" {
+		action = "continue"
+	}
+	outlineJSON := strings.TrimSpace(string(req.Outline))
+	if outlineJSON == "" || outlineJSON == "null" {
+		return nil, fmt.Errorf("%w: outline is required", ErrInvalidRequest)
+	}
+	var outline map[string]any
+	if err := json.Unmarshal([]byte(outlineJSON), &outline); err != nil {
+		return nil, fmt.Errorf("%w: outline must be a JSON object", ErrInvalidRequest)
+	}
+
+	runtimeModels, err := s.resolveRuntimeModelConfigs(ctx, user.UserID, req.AgentConfigID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.runtimeClient.ResumeDeck(ctx, user, RuntimeResumeDeckRequest{
+		RequestID:        requestID,
+		Action:           action,
+		OutlineJSON:      outlineJSON,
 		NodeModelConfigs: runtimeModels,
 	})
 }

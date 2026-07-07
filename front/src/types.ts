@@ -142,13 +142,21 @@ export interface CredentialTestResponse {
 
 export interface PptGeneratePayload {
   agent_config_id: number
-  topic: string
+  description: string
   audience: string
   goal: string
   page_count: number
   language: string
   style: string
   source_text: string
+  source_file?: File | null
+}
+
+export interface PptResumePayload {
+  agent_config_id: number
+  request_id: string
+  action: string
+  outline: unknown
 }
 
 export interface ParsedSseEvent {

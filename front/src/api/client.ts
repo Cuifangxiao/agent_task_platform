@@ -9,6 +9,7 @@ import type {
   ModelConfigPayload,
   ParsedSseEvent,
   PptGeneratePayload,
+  PptResumePayload,
   Provider,
   RequestLogEntry,
   SessionState,
@@ -122,14 +123,14 @@ export function createApiClient(options: ApiClientOptions) {
       throw new Error('请先登录再生成 PPT。')
     }
 
+    const formData = toPptGenerateFormData(body)
     const response = await fetch(`${API_BASE}/ppt-agent/generate`, {
       method: 'POST',
       headers: {
         Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(body),
+      body: formData,
       signal,
     })
 
@@ -146,6 +147,44 @@ export function createApiClient(options: ApiClientOptions) {
     }
 
     options.onLog({ method: 'POST', path: '/ppt-agent/generate', status: 'stream' })
+    await consumeEventStream(response.body, onEvent)
+  }
+
+  async function resumePpt(
+    body: PptResumePayload,
+    onEvent: (event: ParsedSseEvent) => void,
+    signal: AbortSignal,
+  ) {
+    const token = options.getSession()?.access_token
+    if (!token) {
+      options.onUnauthorized()
+      throw new Error('请先登录再继续生成 PPT。')
+    }
+
+    const response = await fetch(`${API_BASE}/ppt-agent/resume`, {
+      method: 'POST',
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      signal,
+    })
+
+    if (response.status === 401) {
+      const refreshed = await refreshAccessToken()
+      if (refreshed) {
+        return resumePpt(body, onEvent, signal)
+      }
+    }
+
+    if (!response.ok || !response.body) {
+      const payload = await readPayload(response)
+      throw new Error(getErrorMessage(payload, '继续生成请求启动失败。'))
+    }
+
+    options.onLog({ method: 'POST', path: '/ppt-agent/resume', status: 'stream' })
     await consumeEventStream(response.body, onEvent)
   }
 
@@ -179,6 +218,7 @@ export function createApiClient(options: ApiClientOptions) {
     deleteAgentConfig: (id: number) =>
       request<{ message: string }>(`/agent-configs/${id}`, { method: 'DELETE', auth: true }),
     streamPpt,
+    resumePpt,
   }
 }
 
@@ -220,6 +260,22 @@ function getErrorMessage(payload: unknown, fallback: string) {
     return [message, error].filter(Boolean).join(': ') || fallback
   }
   return fallback
+}
+
+function toPptGenerateFormData(body: PptGeneratePayload) {
+  const formData = new FormData()
+  formData.append('agent_config_id', String(body.agent_config_id))
+  formData.append('description', body.description)
+  formData.append('audience', body.audience)
+  formData.append('goal', body.goal)
+  formData.append('page_count', String(body.page_count))
+  formData.append('language', body.language)
+  formData.append('style', body.style)
+  formData.append('source_text', body.source_text)
+  if (body.source_file) {
+    formData.append('source_file', body.source_file)
+  }
+  return formData
 }
 
 async function consumeEventStream(stream: ReadableStream<Uint8Array>, onEvent: (event: ParsedSseEvent) => void) {

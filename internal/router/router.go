@@ -57,5 +57,6 @@ func Register(
 	authGroup.POST("/provider-credentials/test", providerCredentialHandler.TestCredential)
 	authGroup.POST("/agent/stream-text", agentHandler.StreamText)
 	authGroup.POST("/ppt-agent/generate", pptAgentHandler.GenerateDeck)
+	authGroup.POST("/ppt-agent/resume", pptAgentHandler.ResumeDeck)
 	authGroup.GET("/ppt-agent/artifacts/:request_id", pptAgentHandler.DownloadArtifact)
 }

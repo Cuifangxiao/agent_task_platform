@@ -179,6 +179,7 @@ function normalizeError(error: unknown) {
       :agents="store.agents.value"
       :models="store.modelConfigs.value"
       :stream-ppt="store.api.streamPpt"
+      :resume-ppt="store.api.resumePpt"
     />
 
     <RequestLogsPage v-else :logs="store.logs.value" />

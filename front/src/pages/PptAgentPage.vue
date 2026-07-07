@@ -5,30 +5,34 @@ import { AlertCircle, Download, Play, Presentation, Square } from '@lucide/vue'
 import EmptyState from '@/components/EmptyState.vue'
 import NodeBindingList from '@/components/NodeBindingList.vue'
 import SseProgressTimeline, { type TimelineEvent } from '@/components/SseProgressTimeline.vue'
-import type { AgentConfig, AgentDefinition, ModelConfig, ParsedSseEvent, PptGeneratePayload, PptStreamChunk } from '@/types'
+import type { AgentConfig, AgentDefinition, ModelConfig, ParsedSseEvent, PptGeneratePayload, PptResumePayload, PptStreamChunk } from '@/types'
 
 const props = defineProps<{
   configs: AgentConfig[]
   agents: AgentDefinition[]
   models: ModelConfig[]
   streamPpt: (payload: PptGeneratePayload, onEvent: (event: ParsedSseEvent) => void, signal: AbortSignal) => Promise<void>
+  resumePpt: (payload: PptResumePayload, onEvent: (event: ParsedSseEvent) => void, signal: AbortSignal) => Promise<void>
 }>()
 
 const form = reactive({
   agent_config_id: '',
-  topic: '',
+  description: '',
   audience: '',
   goal: '',
   page_count: 8,
   language: 'zh-CN',
   style: 'concise business deck',
   source_text: '',
+  source_file: null as File | null,
 })
 
 const running = ref(false)
 const error = ref('')
 const artifactUrl = ref('')
 const requestId = ref('')
+const awaitingOutline = ref(false)
+const outlineJson = ref('')
 const events = ref<TimelineEvent[]>([])
 const abortController = ref<AbortController | null>(null)
 
@@ -44,14 +48,16 @@ function useDefaultConfig() {
 async function generate() {
   error.value = ''
   artifactUrl.value = ''
+  awaitingOutline.value = false
+  outlineJson.value = ''
   events.value = []
 
   if (!form.agent_config_id) {
     error.value = '请先选择一个 active PPTAgent Config。'
     return
   }
-  if (!form.topic.trim()) {
-    error.value = '请输入 PPT 主题。'
+  if (!form.description.trim()) {
+    error.value = '请填写 PPT 生成描述。'
     return
   }
 
@@ -63,13 +69,14 @@ async function generate() {
     await props.streamPpt(
       {
         agent_config_id: Number(form.agent_config_id),
-        topic: form.topic.trim(),
+        description: form.description.trim(),
         audience: form.audience.trim(),
         goal: form.goal.trim(),
         page_count: Number(form.page_count),
         language: form.language.trim(),
         style: form.style.trim(),
         source_text: form.source_text.trim(),
+        source_file: form.source_file,
       },
       handleEvent,
       controller.signal,
@@ -91,8 +98,64 @@ async function generate() {
   }
 }
 
+async function resume() {
+  error.value = ''
+  if (!requestId.value) {
+    error.value = '缺少 request_id，无法继续生成。'
+    return
+  }
+  if (!form.agent_config_id) {
+    error.value = '请先选择一个 active PPTAgent Config。'
+    return
+  }
+
+  let outline: unknown
+  try {
+    outline = JSON.parse(outlineJson.value)
+  } catch {
+    error.value = '大纲 JSON 格式不正确，请检查后再继续。'
+    return
+  }
+
+  const controller = new AbortController()
+  abortController.value = controller
+  running.value = true
+
+  try {
+    await props.resumePpt(
+      {
+        agent_config_id: Number(form.agent_config_id),
+        request_id: requestId.value,
+        action: 'continue',
+        outline,
+      },
+      handleEvent,
+      controller.signal,
+    )
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      events.value.unshift({
+        id: Date.now(),
+        event: 'abort',
+        stage: '已停止',
+        message: '继续生成请求已停止。',
+      })
+    } else {
+      error.value = err instanceof Error ? err.message : String(err)
+    }
+  } finally {
+    running.value = false
+    abortController.value = null
+  }
+}
+
 function stop() {
   abortController.value?.abort()
+}
+
+function onSourceFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  form.source_file = input.files?.[0] ?? null
 }
 
 function handleEvent(event: ParsedSseEvent) {
@@ -102,6 +165,19 @@ function handleEvent(event: ParsedSseEvent) {
   }
   if (data.artifact_url) {
     artifactUrl.value = data.artifact_url
+  }
+  if (data.event_type === 'outline' && data.payload) {
+    outlineJson.value = JSON.stringify(data.payload, null, 2)
+  }
+  if (data.event_type === 'interrupt') {
+    awaitingOutline.value = true
+    const payload = data.payload as { outline?: unknown } | undefined
+    if (payload?.outline) {
+      outlineJson.value = JSON.stringify(payload.outline, null, 2)
+    }
+  }
+  if (data.event_type === 'artifact' || data.event_type === 'done') {
+    awaitingOutline.value = false
   }
   if (data.error) {
     error.value = data.error
@@ -166,8 +242,13 @@ useDefaultConfig()
         </div>
 
         <label>
-          主题
-          <input v-model="form.topic" required maxlength="500" placeholder="例如：面向个人开发者的 Agent 平台 MVP 规划" />
+          生成描述
+          <textarea
+            v-model="form.description"
+            required
+            maxlength="5000"
+            placeholder="例如：请生成一份面向个人开发者的 Agent 平台 MVP 规划 PPT，重点说明架构、MVP 范围和下一步。"
+          />
         </label>
 
         <div class="form-grid">
@@ -198,7 +279,16 @@ useDefaultConfig()
         </div>
 
         <label>
-          参考材料
+          上传文件（可选）
+          <input
+            type="file"
+            accept=".pdf,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            @change="onSourceFileChange"
+          />
+        </label>
+
+        <label>
+          补充资料
           <textarea v-model="form.source_text" maxlength="50000" placeholder="可选：粘贴产品背景、文章、会议纪要或资料摘要" />
         </label>
 
@@ -223,6 +313,18 @@ useDefaultConfig()
         </div>
 
         <p v-if="requestId" class="muted mono">request_id: {{ requestId }}</p>
+
+        <div v-if="outlineJson" class="selected-config">
+          <strong>大纲预览</strong>
+          <p v-if="awaitingOutline">可以直接编辑 JSON 大纲，确认后继续生成页面。</p>
+          <textarea v-model="outlineJson" rows="14" spellcheck="false" />
+          <div v-if="awaitingOutline" class="button-row">
+            <button class="btn primary" type="button" :disabled="running" @click="resume">
+              <Play :size="18" />
+              确认大纲并继续
+            </button>
+          </div>
+        </div>
       </form>
     </div>
 

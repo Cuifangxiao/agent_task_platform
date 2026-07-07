@@ -9,6 +9,7 @@ service ProviderRuntimeService {
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
   rpc StreamText(StreamTextRequest) returns (stream StreamTextResponse);
   rpc GenerateDeck(GenerateDeckRequest) returns (stream GenerateDeckResponse);
+  rpc ResumeDeck(ResumeDeckRequest) returns (stream GenerateDeckResponse);
 }
 
 message UserContext {
@@ -75,9 +76,17 @@ message GenerateDeckRequest {
   string language = 6;
   string style = 7;
   string source_text = 8;
-  string source_pdf_filename = 9;
-  bytes source_pdf = 10;
+  string source_file_filename = 9;
+  bytes source_file = 10;
   repeated DeckNodeModelConfig node_model_configs = 11;
+}
+
+message ResumeDeckRequest {
+  UserContext user = 1;
+  string request_id = 2;
+  string action = 3;
+  string outline_json = 4;
+  repeated DeckNodeModelConfig node_model_configs = 5;
 }
 
 message GenerateDeckResponse {
