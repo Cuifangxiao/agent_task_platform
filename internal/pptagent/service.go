@@ -9,11 +9,13 @@ import (
 	"regexp"
 	"strings"
 
+	"agent-task-platform/internal/agentconfig"
 	"agent-task-platform/internal/modelconfig"
 	"agent-task-platform/internal/providercredential"
 )
 
 var ErrInvalidRequest = errors.New("invalid ppt agent request")
+var ErrAgentConfigNotFound = errors.New("agent config not found")
 var ErrModelConfigNotFound = errors.New("model config not found")
 var ErrModelConfigInactive = errors.New("model config is inactive")
 var ErrArtifactNotFound = errors.New("deck artifact not found")
@@ -22,11 +24,17 @@ var artifactIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{36}$`)
 
 type Service struct {
 	modelConfigRepo modelconfig.Repository
+	agentConfigRepo agentconfig.Repository
 	runtimeClient   RuntimeClient
 	artifactDir     string
 }
 
-func NewService(modelConfigRepo modelconfig.Repository, runtimeClient RuntimeClient, artifactDir string) *Service {
+func NewService(
+	modelConfigRepo modelconfig.Repository,
+	agentConfigRepo agentconfig.Repository,
+	runtimeClient RuntimeClient,
+	artifactDir string,
+) *Service {
 	if strings.TrimSpace(artifactDir) == "" {
 		artifactDir = filepath.Join("python-agent", "artifacts", "decks")
 	}
@@ -36,6 +44,7 @@ func NewService(modelConfigRepo modelconfig.Repository, runtimeClient RuntimeCli
 
 	return &Service{
 		modelConfigRepo: modelConfigRepo,
+		agentConfigRepo: agentConfigRepo,
 		runtimeClient:   runtimeClient,
 		artifactDir:     artifactDir,
 	}
@@ -52,6 +61,9 @@ func (s *Service) GenerateDeck(
 	if s.modelConfigRepo == nil {
 		return nil, fmt.Errorf("model config repository is not configured")
 	}
+	if s.agentConfigRepo == nil {
+		return nil, fmt.Errorf("agent config repository is not configured")
+	}
 	if s.runtimeClient == nil {
 		return nil, fmt.Errorf("runtime client is not configured")
 	}
@@ -61,34 +73,20 @@ func (s *Service) GenerateDeck(
 		return nil, fmt.Errorf("%w: topic is required", ErrInvalidRequest)
 	}
 
-	config, err := s.resolveModelConfig(ctx, user.UserID, req.ModelConfigID)
+	runtimeModels, err := s.resolveRuntimeModelConfigs(ctx, user.UserID, req.AgentConfigID)
 	if err != nil {
 		return nil, err
 	}
-	if config.Status != modelconfig.StatusActive {
-		return nil, ErrModelConfigInactive
-	}
-
-	providerOptions := strings.TrimSpace(config.ProviderOptions)
-	if providerOptions == "" {
-		providerOptions = "{}"
-	}
 
 	return s.runtimeClient.GenerateDeck(ctx, user, RuntimeGenerateDeckRequest{
-		Provider:            config.Provider,
-		Model:               config.ModelName,
-		APIKey:              config.APIKey,
-		BaseURL:             config.BaseURL,
-		ProviderOptionsJSON: providerOptions,
-		Temperature:         config.Temperature,
-		MaxTokens:           config.MaxTokens,
-		Topic:               topic,
-		Audience:            defaultString(req.Audience, "general audience"),
-		Goal:                defaultString(req.Goal, "explain the topic clearly"),
-		PageCount:           clampPageCount(req.PageCount),
-		Language:            defaultString(req.Language, "zh-CN"),
-		Style:               defaultString(req.Style, "concise business deck"),
-		SourceText:          strings.TrimSpace(req.SourceText),
+		Topic:            topic,
+		Audience:         defaultString(req.Audience, "general audience"),
+		Goal:             defaultString(req.Goal, "explain the topic clearly"),
+		PageCount:        clampPageCount(req.PageCount),
+		Language:         defaultString(req.Language, "zh-CN"),
+		Style:            defaultString(req.Style, "concise business deck"),
+		SourceText:       strings.TrimSpace(req.SourceText),
+		NodeModelConfigs: runtimeModels,
 	})
 }
 
@@ -120,46 +118,112 @@ func (s *Service) ArtifactPath(requestID string) (string, error) {
 	return cleanPath, nil
 }
 
-func (s *Service) resolveModelConfig(ctx context.Context, userID int64, id int64) (*modelconfig.ModelConfig, error) {
-	if id > 0 {
-		config, err := s.modelConfigRepo.GetByID(ctx, userID, id)
-		if err != nil {
-			if errors.Is(err, modelconfig.ErrNotFound) {
-				return nil, ErrModelConfigNotFound
-			}
-			return nil, err
-		}
-		return config, nil
+func (s *Service) resolveRuntimeModelConfigs(
+	ctx context.Context,
+	userID int64,
+	agentConfigID int64,
+) ([]RuntimeNodeModelConfig, error) {
+	if agentConfigID <= 0 {
+		return nil, fmt.Errorf("%w: agent_config_id is required", ErrInvalidRequest)
 	}
 
-	configs, err := s.modelConfigRepo.ListByUserID(ctx, userID)
+	config, err := s.agentConfigRepo.GetConfigByID(ctx, userID, agentConfigID)
+	if err != nil {
+		if errors.Is(err, agentconfig.ErrNotFound) {
+			return nil, ErrAgentConfigNotFound
+		}
+		return nil, err
+	}
+	if config.AgentKey != agentconfig.AgentKeyPPT {
+		return nil, fmt.Errorf("%w: agent config is not for ppt_agent", ErrInvalidRequest)
+	}
+	if config.Status != agentconfig.StatusActive {
+		return nil, fmt.Errorf("%w: agent config is inactive", ErrInvalidRequest)
+	}
+
+	agent, err := s.agentConfigRepo.GetAgentByID(ctx, config.AgentID)
 	if err != nil {
 		return nil, err
 	}
+	return s.runtimeModelsFromConfig(ctx, userID, config, agent)
+}
 
-	var firstActive *modelconfig.ModelConfig
-	for _, config := range configs {
-		if config == nil || config.Status != modelconfig.StatusActive {
-			continue
-		}
-		if config.IsDefault {
-			return config, nil
-		}
-		if firstActive == nil {
-			firstActive = config
-		}
-	}
-	if firstActive != nil {
-		return firstActive, nil
+func (s *Service) runtimeModelsFromConfig(
+	ctx context.Context,
+	userID int64,
+	agentConfig *agentconfig.AgentConfig,
+	agent *agentconfig.AgentDefinition,
+) ([]RuntimeNodeModelConfig, error) {
+	requiredNodes := modelNodeKeys(agent.Nodes)
+	byNode := make(map[string]agentconfig.NodeBinding, len(agentConfig.NodeBindings))
+	for _, binding := range agentConfig.NodeBindings {
+		byNode[binding.NodeKey] = binding
 	}
 
-	return nil, ErrModelConfigNotFound
+	runtimeModels := make([]RuntimeNodeModelConfig, 0, len(requiredNodes))
+	for _, nodeKey := range requiredNodes {
+		binding, ok := byNode[nodeKey]
+		if !ok {
+			return nil, fmt.Errorf("%w: agent config missing node binding '%s'", ErrInvalidRequest, nodeKey)
+		}
+
+		config, err := s.modelConfigRepo.GetByID(ctx, userID, binding.ModelConfigID)
+		if err != nil {
+			if errors.Is(err, modelconfig.ErrNotFound) {
+				return nil, fmt.Errorf("%w: model config for node '%s' was not found", ErrModelConfigNotFound, nodeKey)
+			}
+			return nil, err
+		}
+		if config.Status != modelconfig.StatusActive {
+			return nil, fmt.Errorf("%w: model config for node '%s' is inactive", ErrModelConfigInactive, nodeKey)
+		}
+
+		temperature := config.Temperature
+		if binding.Temperature != nil {
+			temperature = *binding.Temperature
+		}
+		maxTokens := config.MaxTokens
+		if binding.MaxTokens != nil {
+			maxTokens = *binding.MaxTokens
+		}
+
+		runtimeModels = append(runtimeModels, RuntimeNodeModelConfig{
+			NodeKey:             nodeKey,
+			Provider:            config.Provider,
+			Model:               config.ModelName,
+			APIKey:              config.APIKey,
+			BaseURL:             config.BaseURL,
+			ProviderOptionsJSON: normalizedProviderOptions(config.ProviderOptions),
+			Temperature:         temperature,
+			MaxTokens:           maxTokens,
+		})
+	}
+
+	return runtimeModels, nil
+}
+
+func modelNodeKeys(nodes []agentconfig.NodeDefinition) []string {
+	keys := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.RequiresModel {
+			keys = append(keys, node.Key)
+		}
+	}
+	return keys
 }
 
 func defaultString(value string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback
+	}
+	return value
+}
+
+func normalizedProviderOptions(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "{}"
 	}
 	return value
 }

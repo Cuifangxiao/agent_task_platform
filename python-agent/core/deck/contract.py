@@ -1,12 +1,11 @@
 """Deck generation input/output contracts."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
-class GenerateDeckInput:
-    user_id: int
-    username: str
+class DeckNodeModelConfig:
+    node_key: str
     provider: str
     model: str
     api_key: str
@@ -14,6 +13,12 @@ class GenerateDeckInput:
     provider_options_json: str
     temperature: float
     max_tokens: int
+
+
+@dataclass(frozen=True)
+class GenerateDeckInput:
+    user_id: int
+    username: str
     topic: str
     audience: str
     goal: str
@@ -21,6 +26,7 @@ class GenerateDeckInput:
     language: str
     style: str
     source_text: str
+    node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -34,4 +40,3 @@ class GenerateDeckOutput:
     done: bool = False
     error: str = ""
     sequence: int = 0
-

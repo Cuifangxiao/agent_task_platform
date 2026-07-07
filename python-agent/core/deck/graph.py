@@ -28,8 +28,9 @@ class DeckGraphState(TypedDict, total=False):
     artifact_path: str
 
 
-def build_deck_graph(llm: Any, output_dir: Path):
+def build_deck_graph(llms: Any, output_dir: Path):
     renderer = DeckRenderer(output_dir)
+    llm_registry = _normalize_llm_registry(llms)
 
     def normalize_brief(state: DeckGraphState) -> dict[str, Any]:
         writer = get_stream_writer()
@@ -63,7 +64,7 @@ def build_deck_graph(llm: Any, output_dir: Path):
 
         plan = _normalize_plan(
             _invoke_json(
-                llm,
+                _llm_for_node(llm_registry, "outline"),
                 system=(
                     "You are a senior presentation strategist. Return only valid JSON. "
                     "Design a coherent presentation outline with a clear narrative arc."
@@ -94,7 +95,7 @@ def build_deck_graph(llm: Any, output_dir: Path):
 
         slides = _normalize_slides(
             _invoke_json(
-                llm,
+                _llm_for_node(llm_registry, "slides"),
                 system=(
                     "You are an expert slide writer. Return only valid JSON. "
                     "Write concise slide content with strong titles and practical visuals."
@@ -116,7 +117,20 @@ def build_deck_graph(llm: Any, output_dir: Path):
 
     def review_deck(state: DeckGraphState) -> dict[str, Any]:
         writer = get_stream_writer()
-        review = _review(state.get("slides") or [], _clamp_page_count(state.get("page_count")))
+        review_llm = _explicit_llm_for_node(llm_registry, "review")
+        if review_llm is None:
+            review = _review(state.get("slides") or [], _clamp_page_count(state.get("page_count")))
+        else:
+            review = _normalize_review(
+                _invoke_json(
+                    review_llm,
+                    system=(
+                        "You are a presentation QA reviewer. Return only valid JSON. "
+                        "Check slide count, duplication, clarity, and completeness."
+                    ),
+                    user=_review_prompt(state),
+                )
+            )
         writer(
             {
                 "event_type": "review",
@@ -169,6 +183,29 @@ def build_deck_graph(llm: Any, output_dir: Path):
     graph.add_edge("review", "render")
     graph.add_edge("render", END)
     return graph.compile()
+
+
+def _normalize_llm_registry(llms: Any) -> dict[str, Any]:
+    if isinstance(llms, dict):
+        registry: dict[str, Any] = {}
+        for key, value in llms.items():
+            node_key = str(key).strip().lower()
+            if node_key and value is not None:
+                registry[node_key] = value
+        return registry
+
+    return {"default": llms}
+
+
+def _llm_for_node(registry: dict[str, Any], node_key: str) -> Any:
+    llm = registry.get(node_key) or registry.get("default")
+    if llm is None:
+        raise ValueError(f"missing llm for deck node '{node_key}'")
+    return llm
+
+
+def _explicit_llm_for_node(registry: dict[str, Any], node_key: str) -> Any | None:
+    return registry.get(node_key)
 
 
 def _outline_prompt(state: DeckGraphState) -> str:
@@ -231,6 +268,28 @@ def _slides_prompt(state: DeckGraphState) -> str:
                         "speaker_notes": "string",
                     }
                 ]
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def _review_prompt(state: DeckGraphState) -> str:
+    return json.dumps(
+        {
+            "task": "Review these slide specs before rendering.",
+            "brief": {
+                "topic": state["topic"],
+                "audience": state["audience"],
+                "goal": state["goal"],
+                "page_count": state["page_count"],
+                "language": state["language"],
+                "style": state["style"],
+            },
+            "slides": state.get("slides") or [],
+            "required_json_shape": {
+                "status": "ok|warning",
+                "warnings": ["string"],
             },
         },
         ensure_ascii=False,
@@ -347,6 +406,28 @@ def _review(slides: list[dict[str, Any]], page_count: int) -> dict[str, Any]:
     }
 
 
+def _normalize_review(raw: dict[str, Any]) -> dict[str, Any]:
+    status = str(raw.get("status") or "").strip().lower()
+    if status not in {"ok", "warning"}:
+        status = "warning"
+
+    warnings: list[str] = []
+    raw_warnings = raw.get("warnings")
+    if isinstance(raw_warnings, list):
+        for item in raw_warnings:
+            text = str(item).strip()
+            if text:
+                warnings.append(text)
+
+    if warnings and status == "ok":
+        status = "warning"
+
+    return {
+        "status": status,
+        "warnings": warnings[:10],
+    }
+
+
 def _normalize_bullets(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -391,4 +472,3 @@ def _truncate(value: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return value[:max_chars]
-

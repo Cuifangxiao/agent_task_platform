@@ -8,7 +8,7 @@ import (
 )
 
 type GenerateDeckRequest struct {
-	ModelConfigID int64  `json:"model_config_id"`
+	AgentConfigID int64  `json:"agent_config_id" binding:"required,min=1"`
 	Topic         string `json:"topic" binding:"required,min=1,max=500"`
 	Audience      string `json:"audience" binding:"omitempty,max=500"`
 	Goal          string `json:"goal" binding:"omitempty,max=500"`
@@ -19,6 +19,18 @@ type GenerateDeckRequest struct {
 }
 
 type RuntimeGenerateDeckRequest struct {
+	Topic            string
+	Audience         string
+	Goal             string
+	PageCount        int
+	Language         string
+	Style            string
+	SourceText       string
+	NodeModelConfigs []RuntimeNodeModelConfig
+}
+
+type RuntimeNodeModelConfig struct {
+	NodeKey             string
 	Provider            string
 	Model               string
 	APIKey              string
@@ -26,13 +38,6 @@ type RuntimeGenerateDeckRequest struct {
 	ProviderOptionsJSON string
 	Temperature         float64
 	MaxTokens           int
-	Topic               string
-	Audience            string
-	Goal                string
-	PageCount           int
-	Language            string
-	Style               string
-	SourceText          string
 }
 
 type DeckStreamChunk struct {

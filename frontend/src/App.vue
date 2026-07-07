@@ -22,6 +22,9 @@ import {
 
 import { createApiClient } from './api'
 import type {
+  AgentConfig,
+  AgentNodeDefinition,
+  AgentDefinition,
   HealthResponse,
   MeResponse,
   ModelConfig,
@@ -31,7 +34,6 @@ import type {
   ProviderParameter,
   RequestLogEntry,
   SessionState,
-  StreamChunk,
 } from './types'
 
 type BannerTone = 'success' | 'error' | 'info'
@@ -55,6 +57,23 @@ interface ModelConfigDraft {
   status: 'active' | 'inactive'
 }
 
+interface AgentConfigNodeBindingDraft {
+  node_key: string
+  model_config_id: string
+  temperature: string
+  max_tokens: string
+}
+
+interface AgentConfigDraft {
+  id: number | null
+  agent_id: string
+  name: string
+  description: string
+  node_bindings: AgentConfigNodeBindingDraft[]
+  is_default: boolean
+  status: 'active' | 'inactive'
+}
+
 interface PptEventLog {
   id: number
   event: string
@@ -67,8 +86,29 @@ interface PptEventLog {
 const STORAGE_KEYS = {
   apiBase: 'agent-task-platform:api-base',
   session: 'agent-task-platform:session',
-  selectedChatModel: 'agent-task-platform:selected-chat-model',
+  selectedPptConfig: 'agent-task-platform:selected-ppt-config',
 } as const
+
+const FALLBACK_PPT_NODES: AgentNodeDefinition[] = [
+  {
+    key: 'outline',
+    display_name: '大纲规划',
+    description: '生成叙事结构、章节顺序和每页核心信息。',
+    requires_model: true,
+  },
+  {
+    key: 'slides',
+    display_name: '页面内容',
+    description: '把大纲扩写成每页标题、要点、视觉建议和讲稿备注。',
+    requires_model: true,
+  },
+  {
+    key: 'review',
+    display_name: '质量审核',
+    description: '检查页数、重复标题、信息完整性和改进建议。',
+    requires_model: true,
+  },
+]
 
 const apiBase = ref(readStoredString(STORAGE_KEYS.apiBase, '/api'))
 const banner = ref<BannerState | null>(null)
@@ -76,11 +116,14 @@ const health = ref<HealthResponse | null>(null)
 const currentUser = ref<MeResponse | null>(null)
 const providers = ref<Provider[]>([])
 const modelConfigs = ref<ModelConfig[]>([])
+const agents = ref<AgentDefinition[]>([])
+const agentConfigs = ref<AgentConfig[]>([])
 const selectedModelConfig = ref<ModelConfig | null>(null)
+const selectedAgentConfig = ref<AgentConfig | null>(null)
 const credentialResult = ref<ProviderCredentialTestResponse | null>(null)
 const activityLogs = ref<RequestLogEntry[]>([])
 const session = ref<SessionState | null>(readStoredJson<SessionState>(STORAGE_KEYS.session))
-const selectedChatModelConfigId = ref<number | null>(readStoredNumber(STORAGE_KEYS.selectedChatModel))
+const selectedPptAgentConfigId = ref<number | null>(readStoredNumber(STORAGE_KEYS.selectedPptConfig))
 
 const registerForm = reactive({
   username: '',
@@ -101,15 +144,11 @@ const credentialForm = reactive({
 
 const modelConfigForm = reactive<ModelConfigDraft>(createEmptyModelConfigDraft())
 const modelFormMode = ref<'create' | 'edit'>('create')
-
-const chatForm = reactive({
-  model_config_id: '',
-  message: '你好，帮我根据这个后端接口梳理一个前端联调方案。',
-  system_prompt: '你是一个简洁、可靠的助手。',
-})
+const agentConfigForm = reactive<AgentConfigDraft>(createEmptyAgentConfigDraft())
+const agentConfigFormMode = ref<'create' | 'edit'>('create')
 
 const pptForm = reactive({
-  model_config_id: '',
+  agent_config_id: '',
   topic: 'Build a personal PPTAgent from the current agent platform',
   audience: 'solo developer',
   goal: 'explain the architecture, MVP scope, and next steps',
@@ -117,14 +156,6 @@ const pptForm = reactive({
   language: 'zh-CN',
   style: 'concise business deck',
   source_text: '',
-})
-
-const streamState = reactive({
-  requestId: '',
-  content: '',
-  error: '',
-  done: false,
-  lastEvent: '',
 })
 
 const pptState = reactive({
@@ -136,7 +167,6 @@ const pptState = reactive({
 })
 
 const pptEvents = ref<PptEventLog[]>([])
-const chatAbortController = ref<AbortController | null>(null)
 const pptAbortController = ref<AbortController | null>(null)
 
 const busy = reactive({
@@ -150,9 +180,12 @@ const busy = reactive({
   credential: false,
   modelConfigs: false,
   modelSave: false,
+  agents: false,
+  agentConfigs: false,
+  agentConfigSave: false,
   detail: false,
   deleteId: 0,
-  chat: false,
+  deleteConfigId: 0,
   ppt: false,
 })
 
@@ -175,12 +208,33 @@ const modelFormTitle = computed(() =>
     ? '创建 Model Config'
     : `编辑 Model Config #${modelConfigForm.id ?? ''}`,
 )
-const selectedChatConfigLabel = computed(() => {
-  if (selectedChatModelConfigId.value === null) {
-    return '自动选择默认 active 配置'
+const pptAgentDefinition = computed(
+  () => agents.value.find((item) => item.agent_key === 'ppt_agent') ?? null,
+)
+const selectedConfigAgentDefinition = computed(() => {
+  const agentID = Number.parseInt(agentConfigForm.agent_id, 10)
+  return agents.value.find((item) => item.id === agentID) ?? pptAgentDefinition.value
+})
+const selectedAgentNodes = computed(() => {
+  const agent = selectedConfigAgentDefinition.value
+  if (!agent) {
+    return FALLBACK_PPT_NODES
   }
-  const config = modelConfigs.value.find((item) => item.id === selectedChatModelConfigId.value)
-  return config ? `${config.name} (#${config.id})` : `指定配置 #${selectedChatModelConfigId.value}`
+  return agent.nodes.filter((item) => item.requires_model)
+})
+const activeModelConfigs = computed(() => modelConfigs.value.filter((item) => item.status === 'active'))
+const pptAgentConfigs = computed(() => agentConfigs.value.filter((item) => item.agent_key === 'ppt_agent'))
+const agentConfigFormTitle = computed(() =>
+  agentConfigFormMode.value === 'create'
+    ? '创建 Agent Config'
+    : `编辑 Agent Config #${agentConfigForm.id ?? ''}`,
+)
+const selectedPptConfigLabel = computed(() => {
+  if (selectedPptAgentConfigId.value === null) {
+    return '请选择 PPT Agent Config'
+  }
+  const config = pptAgentConfigs.value.find((item) => item.id === selectedPptAgentConfigId.value)
+  return config ? `${config.name} (#${config.id})` : `指定 Config #${selectedPptAgentConfigId.value}`
 })
 
 const api = createApiClient({
@@ -225,16 +279,16 @@ watch(
 )
 
 watch(
-  selectedChatModelConfigId,
+  selectedPptAgentConfigId,
   (value) => {
     if (value === null) {
-      localStorage.removeItem(STORAGE_KEYS.selectedChatModel)
-      chatForm.model_config_id = ''
+      localStorage.removeItem(STORAGE_KEYS.selectedPptConfig)
+      pptForm.agent_config_id = ''
       return
     }
 
-    localStorage.setItem(STORAGE_KEYS.selectedChatModel, String(value))
-    chatForm.model_config_id = String(value)
+    localStorage.setItem(STORAGE_KEYS.selectedPptConfig, String(value))
+    pptForm.agent_config_id = String(value)
   },
   { immediate: true },
 )
@@ -259,6 +313,27 @@ function createEmptyModelConfigDraft(): ModelConfigDraft {
     max_tokens: 4096,
     is_default: false,
     status: 'active',
+  }
+}
+
+function createEmptyAgentConfigDraft(): AgentConfigDraft {
+  return {
+    id: null,
+    agent_id: '',
+    name: '',
+    description: '',
+    node_bindings: FALLBACK_PPT_NODES.map((node) => createEmptyNodeBindingDraft(node.key)),
+    is_default: false,
+    status: 'active',
+  }
+}
+
+function createEmptyNodeBindingDraft(nodeKey: string): AgentConfigNodeBindingDraft {
+  return {
+    node_key: nodeKey,
+    model_config_id: '',
+    temperature: '',
+    max_tokens: '',
   }
 }
 
@@ -292,11 +367,14 @@ function resetProtectedState() {
   currentUser.value = null
   providers.value = []
   modelConfigs.value = []
+  agents.value = []
+  agentConfigs.value = []
   selectedModelConfig.value = null
+  selectedAgentConfig.value = null
   credentialResult.value = null
-  selectedChatModelConfigId.value = null
+  selectedPptAgentConfigId.value = null
   resetModelConfigForm()
-  stopChatStream()
+  resetAgentConfigForm()
   stopPptStream()
 }
 
@@ -308,6 +386,12 @@ function resetModelConfigForm() {
     modelConfigForm.provider = providers.value[0].name
     onModelProviderChange()
   }
+}
+
+function resetAgentConfigForm() {
+  Object.assign(agentConfigForm, createEmptyAgentConfigDraft())
+  agentConfigFormMode.value = 'create'
+  syncAgentConfigNodeBindings()
 }
 
 function setBanner(text: string, tone: BannerTone = 'info') {
@@ -490,12 +574,7 @@ async function loadModelConfigs(silent = false) {
       auth: true,
     })
 
-    if (
-      selectedChatModelConfigId.value !== null &&
-      !modelConfigs.value.some((item) => item.id === selectedChatModelConfigId.value)
-    ) {
-      selectedChatModelConfigId.value = null
-    }
+    syncAgentConfigNodeBindings()
 
     if (!silent) {
       setBanner(`已加载 ${modelConfigs.value.length} 条模型配置。`, 'success')
@@ -506,6 +585,48 @@ async function loadModelConfigs(silent = false) {
     }
   } finally {
     busy.modelConfigs = false
+  }
+}
+
+async function loadAgentDefinitions(silent = false) {
+  busy.agents = true
+  try {
+    agents.value = await api.request<AgentDefinition[]>('/agents', {
+      auth: true,
+    })
+    syncAgentConfigNodeBindings()
+    if (!silent) {
+      setBanner(`已加载 ${agents.value.length} 个 Agent。`, 'success')
+    }
+  } catch (error) {
+    if (!silent) {
+      setBanner(normalizeError(error), 'error')
+    }
+  } finally {
+    busy.agents = false
+  }
+}
+
+async function loadAgentConfigs(silent = false) {
+  busy.agentConfigs = true
+  try {
+    agentConfigs.value = await api.request<AgentConfig[]>('/agent-configs', {
+      auth: true,
+    })
+
+    if (selectedPptAgentConfigId.value !== null && !pptAgentConfigs.value.some((item) => item.id === selectedPptAgentConfigId.value)) {
+      selectedPptAgentConfigId.value = null
+    }
+
+    if (!silent) {
+      setBanner(`已加载 ${agentConfigs.value.length} 个 Agent Config。`, 'success')
+    }
+  } catch (error) {
+    if (!silent) {
+      setBanner(normalizeError(error), 'error')
+    }
+  } finally {
+    busy.agentConfigs = false
   }
 }
 
@@ -528,7 +649,13 @@ async function loadModelConfigDetail(id: number, silent = false) {
 }
 
 async function reloadWorkspace(silent = false) {
-  const results = await Promise.allSettled([loadMe(true), loadProviders(true), loadModelConfigs(true)])
+  const results = await Promise.allSettled([
+    loadMe(true),
+    loadProviders(true),
+    loadModelConfigs(true),
+    loadAgentDefinitions(true),
+    loadAgentConfigs(true),
+  ])
   const failed = results.filter((item) => item.status === 'rejected')
 
   if (!silent) {
@@ -726,9 +853,6 @@ async function saveModelConfig() {
     })
 
     selectedModelConfig.value = saved
-    if (selectedChatModelConfigId.value === null) {
-      selectedChatModelConfigId.value = saved.id
-    }
     await loadModelConfigs(true)
     populateModelConfigForm(saved)
     modelConfigForm.api_key = ''
@@ -755,9 +879,6 @@ async function deleteModelConfig(config: ModelConfig) {
     if (selectedModelConfig.value?.id === config.id) {
       selectedModelConfig.value = null
     }
-    if (selectedChatModelConfigId.value === config.id) {
-      selectedChatModelConfigId.value = null
-    }
     if (modelConfigForm.id === config.id) {
       resetModelConfigForm()
     }
@@ -768,6 +889,232 @@ async function deleteModelConfig(config: ModelConfig) {
   } finally {
     busy.deleteId = 0
   }
+}
+
+function syncAgentConfigNodeBindings() {
+  if (!agentConfigForm.agent_id && pptAgentDefinition.value?.id) {
+    agentConfigForm.agent_id = String(pptAgentDefinition.value.id)
+  }
+
+  const existingByNode = new Map(agentConfigForm.node_bindings.map((binding) => [binding.node_key, binding]))
+  const fallbackModelId = activeModelConfigs.value[0]?.id
+
+  agentConfigForm.node_bindings = selectedAgentNodes.value.map((node) => {
+    const existing = existingByNode.get(node.key)
+    if (existing) {
+      const modelId = Number.parseInt(existing.model_config_id, 10)
+      if (Number.isFinite(modelId) && activeModelConfigs.value.some((item) => item.id === modelId)) {
+        return existing
+      }
+      return {
+        ...existing,
+        model_config_id: fallbackModelId ? String(fallbackModelId) : '',
+      }
+    }
+
+    return {
+      ...createEmptyNodeBindingDraft(node.key),
+      model_config_id: fallbackModelId ? String(fallbackModelId) : '',
+    }
+  })
+}
+
+function getAgentDefinitionByID(agentID: number) {
+  return agents.value.find((item) => item.id === agentID) ?? null
+}
+
+function getAgentNodesForAgent(agentID: number) {
+  const agent = getAgentDefinitionByID(agentID)
+  if (!agent) {
+    return FALLBACK_PPT_NODES
+  }
+  return agent.nodes.filter((item) => item.requires_model)
+}
+
+function getAgentNodeDefinition(nodeKey: string, agentID?: number) {
+  const nodes = agentID ? getAgentNodesForAgent(agentID) : selectedAgentNodes.value
+  return nodes.find((item) => item.key === nodeKey)
+}
+
+function getAgentNodeDisplayName(nodeKey: string, agentID?: number) {
+  return getAgentNodeDefinition(nodeKey, agentID)?.display_name ?? nodeKey
+}
+
+function getAgentNodeDescription(nodeKey: string, agentID?: number) {
+  return getAgentNodeDefinition(nodeKey, agentID)?.description ?? ''
+}
+
+function getModelConfigLabel(id: number) {
+  const config = modelConfigs.value.find((item) => item.id === id)
+  if (!config) {
+    return `#${id}`
+  }
+  return `#${config.id} ${config.name} · ${config.provider}/${config.model_name}`
+}
+
+function populateAgentConfigForm(config: AgentConfig) {
+  agentConfigFormMode.value = 'edit'
+  agentConfigForm.id = config.id
+  agentConfigForm.agent_id = String(config.agent_id)
+  agentConfigForm.name = config.name
+  agentConfigForm.description = config.description
+  agentConfigForm.is_default = config.is_default
+  agentConfigForm.status = config.status
+  agentConfigForm.node_bindings = getAgentNodesForAgent(config.agent_id).map((node) => {
+    const source = config.node_bindings.find((item) => item.node_key === node.key)
+    return {
+      node_key: node.key,
+      model_config_id: source ? String(source.model_config_id) : '',
+      temperature: source?.temperature === undefined ? '' : String(source.temperature),
+      max_tokens: source?.max_tokens === undefined ? '' : String(source.max_tokens),
+    }
+  })
+  syncAgentConfigNodeBindings()
+  selectedAgentConfig.value = config
+  setBanner(`已将 Agent Config #${config.id} 填入编辑表单。`, 'info')
+}
+
+function selectAgentForConfig(agent: AgentDefinition) {
+  agentConfigFormMode.value = 'create'
+  agentConfigForm.id = null
+  agentConfigForm.agent_id = String(agent.id)
+  agentConfigForm.name = agent.agent_key === 'ppt_agent' ? 'PPTAgent balanced' : `${agent.name} config`
+  agentConfigForm.description = agent.description
+  agentConfigForm.is_default = false
+  agentConfigForm.status = 'active'
+  agentConfigForm.node_bindings = []
+  selectedAgentConfig.value = null
+  syncAgentConfigNodeBindings()
+  setBanner(`正在配置 ${agent.name} 的节点模型。`, 'info')
+}
+
+function buildAgentConfigPayload() {
+  const nodeBindings = agentConfigForm.node_bindings.map((binding) => {
+    const payload: Record<string, unknown> = {
+      node_key: binding.node_key,
+      model_config_id: Number.parseInt(binding.model_config_id, 10),
+    }
+    const temperature = binding.temperature.trim()
+    const maxTokens = binding.max_tokens.trim()
+    if (temperature) {
+      payload.temperature = Number(temperature)
+    }
+    if (maxTokens) {
+      payload.max_tokens = Number.parseInt(maxTokens, 10)
+    }
+    return payload
+  })
+
+  return {
+    agent_id: Number.parseInt(agentConfigForm.agent_id, 10),
+    name: agentConfigForm.name.trim(),
+    description: agentConfigForm.description.trim(),
+    node_bindings: nodeBindings,
+    is_default: agentConfigForm.is_default,
+    status: agentConfigForm.status,
+  }
+}
+
+function validateAgentConfigDraft() {
+  if (!agentConfigForm.name.trim()) {
+    return '请填写 Agent Config 名称。'
+  }
+  const agentID = Number.parseInt(agentConfigForm.agent_id, 10)
+  if (!Number.isFinite(agentID) || agentID <= 0) {
+    return '请先选择一个 Agent。'
+  }
+  if (activeModelConfigs.value.length === 0) {
+    return '请先创建至少一个 active 的 Model Config。'
+  }
+  for (const binding of agentConfigForm.node_bindings) {
+    const modelId = Number.parseInt(binding.model_config_id, 10)
+    if (!Number.isFinite(modelId) || modelId <= 0) {
+      return `请为 ${getAgentNodeDisplayName(binding.node_key)} 选择 Model Config。`
+    }
+  }
+  return ''
+}
+
+async function saveAgentConfig() {
+  const draftError = validateAgentConfigDraft()
+  if (draftError) {
+    setBanner(draftError, 'error')
+    return
+  }
+
+  busy.agentConfigSave = true
+  clearBanner()
+  try {
+    const payload = buildAgentConfigPayload()
+    const method = agentConfigFormMode.value === 'create' ? 'POST' : 'PUT'
+    const path =
+      agentConfigFormMode.value === 'create'
+        ? '/agent-configs'
+        : `/agent-configs/${agentConfigForm.id ?? ''}`
+
+    const saved = await api.request<AgentConfig>(path, {
+      method,
+      auth: true,
+      body: payload,
+    })
+
+    selectedAgentConfig.value = saved
+    if (saved.agent_key === 'ppt_agent') {
+      selectedPptAgentConfigId.value = saved.id
+    }
+    await loadAgentConfigs(true)
+    populateAgentConfigForm(saved)
+    setBanner(agentConfigFormMode.value === 'create' ? 'Agent Config 已创建。' : 'Agent Config 已更新。', 'success')
+  } catch (error) {
+    setBanner(normalizeError(error), 'error')
+  } finally {
+    busy.agentConfigSave = false
+  }
+}
+
+async function deleteAgentConfig(config: AgentConfig) {
+  if (!window.confirm(`确认删除 Agent Config #${config.id} ${config.name} 吗？`)) {
+    return
+  }
+
+  busy.deleteConfigId = config.id
+  clearBanner()
+  try {
+    await api.request(`/agent-configs/${config.id}`, {
+      method: 'DELETE',
+      auth: true,
+    })
+    if (selectedAgentConfig.value?.id === config.id) {
+      selectedAgentConfig.value = null
+    }
+    if (selectedPptAgentConfigId.value === config.id) {
+      selectedPptAgentConfigId.value = null
+    }
+    if (agentConfigForm.id === config.id) {
+      resetAgentConfigForm()
+    }
+    await loadAgentConfigs(true)
+    setBanner(`Agent Config #${config.id} 已删除。`, 'success')
+  } catch (error) {
+    setBanner(normalizeError(error), 'error')
+  } finally {
+    busy.deleteConfigId = 0
+  }
+}
+
+function useConfigForPpt(config: AgentConfig) {
+  if (config.agent_key !== 'ppt_agent') {
+    setBanner('只有 ppt_agent 的 Agent Config 可以用于 PPTAgent。', 'error')
+    return
+  }
+  selectedPptAgentConfigId.value = config.id
+  pptForm.agent_config_id = String(config.id)
+  setBanner(`PPTAgent 已切换到 Config #${config.id}。`, 'info')
+}
+
+function onPptConfigChange() {
+  const rawValue = pptForm.agent_config_id.trim()
+  selectedPptAgentConfigId.value = rawValue ? Number.parseInt(rawValue, 10) : null
 }
 
 async function runCredentialTest() {
@@ -802,99 +1149,6 @@ async function runCredentialTest() {
   }
 }
 
-function useConfigForChat(config: ModelConfig) {
-  selectedChatModelConfigId.value = config.id
-  chatForm.model_config_id = String(config.id)
-  setBanner(`聊天面板已切换到配置 #${config.id}。`, 'info')
-}
-
-function onChatConfigChange() {
-  const rawValue = chatForm.model_config_id.trim()
-  selectedChatModelConfigId.value = rawValue ? Number.parseInt(rawValue, 10) : null
-}
-
-function resetStreamState() {
-  streamState.requestId = ''
-  streamState.content = ''
-  streamState.error = ''
-  streamState.done = false
-  streamState.lastEvent = ''
-}
-
-async function sendChat() {
-  if (!chatForm.message.trim()) {
-    setBanner('请输入要发送的 message。', 'error')
-    return
-  }
-
-  busy.chat = true
-  clearBanner()
-  resetStreamState()
-  const controller = new AbortController()
-  chatAbortController.value = controller
-
-  const body: Record<string, unknown> = {
-    message: chatForm.message.trim(),
-    system_prompt: chatForm.system_prompt.trim(),
-  }
-  if (selectedChatModelConfigId.value !== null) {
-    body.model_config_id = selectedChatModelConfigId.value
-  }
-
-  try {
-    await api.stream('/agent/stream-text', {
-      auth: true,
-      body,
-      signal: controller.signal,
-      onEvent(event) {
-        streamState.lastEvent = event.event
-
-        if (typeof event.data !== 'object' || event.data === null) {
-          return
-        }
-
-        const chunk = event.data as StreamChunk
-        if (chunk.request_id) {
-          streamState.requestId = chunk.request_id
-        }
-        if (event.event === 'delta' && chunk.delta) {
-          streamState.content += chunk.delta
-        }
-        if (event.event === 'error') {
-          streamState.error = chunk.error ?? 'stream error'
-          streamState.done = Boolean(chunk.done)
-        }
-        if (event.event === 'done') {
-          streamState.done = true
-        }
-      },
-    })
-
-    if (!streamState.error) {
-      setBanner('流式输出已完成。', 'success')
-    } else {
-      setBanner(streamState.error, 'error')
-    }
-  } catch (error) {
-    const message = normalizeError(error)
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      setBanner('已手动停止当前流式请求。', 'info')
-    } else {
-      streamState.error = message
-      setBanner(message, 'error')
-    }
-  } finally {
-    busy.chat = false
-    chatAbortController.value = null
-  }
-}
-
-function stopChatStream() {
-  chatAbortController.value?.abort()
-  chatAbortController.value = null
-  busy.chat = false
-}
-
 function resetPptState() {
   pptState.requestId = ''
   pptState.error = ''
@@ -909,6 +1163,11 @@ async function generatePpt() {
     setBanner('Please enter a PPT topic.', 'error')
     return
   }
+  const agentConfigId = Number.parseInt(pptForm.agent_config_id, 10)
+  if (!Number.isFinite(agentConfigId) || agentConfigId <= 0) {
+    setBanner('请先选择一个已保存的 PPT Agent Config。', 'error')
+    return
+  }
 
   busy.ppt = true
   clearBanner()
@@ -917,6 +1176,7 @@ async function generatePpt() {
   pptAbortController.value = controller
 
   const body: Record<string, unknown> = {
+    agent_config_id: agentConfigId,
     topic: pptForm.topic.trim(),
     audience: pptForm.audience.trim(),
     goal: pptForm.goal.trim(),
@@ -924,10 +1184,6 @@ async function generatePpt() {
     language: pptForm.language.trim(),
     style: pptForm.style.trim(),
     source_text: pptForm.source_text.trim(),
-  }
-  const modelConfigId = Number.parseInt(pptForm.model_config_id, 10)
-  if (Number.isFinite(modelConfigId) && modelConfigId > 0) {
-    body.model_config_id = modelConfigId
   }
 
   try {
@@ -1075,7 +1331,7 @@ function clearLogs() {
         <p class="eyebrow">Vue 联调测试台</p>
         <h1>Agent Task Platform</h1>
         <p class="subtitle">
-          我们按接口文档把认证、Provider、Model Config、凭证测试和 SSE 聊天都收在一个面板里，适合本地联调时快速来回试。
+          我们按接口文档把认证、Provider、Model Config、Agent Config 和 PPTAgent 生成流程收在一个面板里，适合本地联调时快速来回试。
         </p>
       </div>
 
@@ -1115,9 +1371,13 @@ function clearLogs() {
         <span class="stat-label">Model Config 数量</span>
         <strong>{{ modelConfigs.length }}</strong>
       </div>
+      <div class="stat">
+        <span class="stat-label">Agent Config 数量</span>
+        <strong>{{ agentConfigs.length }}</strong>
+      </div>
       <div class="stat wide">
-        <span class="stat-label">聊天配置</span>
-        <strong>{{ selectedChatConfigLabel }}</strong>
+        <span class="stat-label">PPT Config</span>
+        <strong>{{ selectedPptConfigLabel }}</strong>
       </div>
     </section>
 
@@ -1499,9 +1759,6 @@ function clearLogs() {
                       <button class="icon-button" title="填入编辑表单" @click="populateModelConfigForm(config)">
                         <Save class="icon" />
                       </button>
-                      <button class="icon-button" title="用作聊天配置" @click="useConfigForChat(config)">
-                        <Bot class="icon" />
-                      </button>
                       <button
                         class="icon-button danger"
                         title="删除"
@@ -1528,59 +1785,188 @@ function clearLogs() {
             <div class="section-title">
               <Bot class="section-icon" />
               <div>
-                <h2>Agent SSE 聊天</h2>
-                <p>这里直接用 fetch 读取 POST + text/event-stream，按 delta 增量拼接内容。</p>
+                <h2>{{ agentConfigFormTitle }}</h2>
+                <p>选择 Python Agent，再为这个 Agent 的每个模型节点绑定 Model Config。</p>
               </div>
+            </div>
+            <div class="button-row">
+              <button class="button secondary" :disabled="!isAuthenticated || busy.agentConfigs" @click="loadAgentConfigs()">
+                <RefreshCw class="icon" />
+                <span>{{ busy.agentConfigs ? '加载中' : '刷新 Configs' }}</span>
+              </button>
+              <button class="button ghost" @click="resetAgentConfigForm">
+                <Plus class="icon" />
+                <span>新建模式</span>
+              </button>
             </div>
           </div>
 
-          <form class="form-block" @submit.prevent="sendChat">
+          <form class="config-form" @submit.prevent="saveAgentConfig">
+            <div class="agent-catalog">
+              <div
+                v-for="agent in agents"
+                :key="agent.id"
+                class="agent-card"
+                :class="{ 'is-selected': String(agent.id) === agentConfigForm.agent_id }"
+              >
+                <div class="agent-card-main">
+                  <div class="stacked">
+                    <strong>{{ agent.name }}</strong>
+                    <span class="mono">{{ agent.agent_key }}</span>
+                  </div>
+                  <span class="badge" :class="agent.status === 'active' ? 'is-success' : 'is-muted'">
+                    {{ agent.status }}
+                  </span>
+                </div>
+                <p>{{ agent.description || '暂无描述' }}</p>
+                <div class="chips">
+                  <span v-for="node in agent.nodes" :key="node.key" class="chip">
+                    {{ node.display_name || node.key }}
+                  </span>
+                </div>
+                <button type="button" class="button secondary" :disabled="agent.status !== 'active'" @click="selectAgentForConfig(agent)">
+                  <Bot class="icon" />
+                  <span>配置节点</span>
+                </button>
+              </div>
+              <p v-if="agents.length === 0" class="empty-row">当前还没有可配置 Agent。</p>
+            </div>
+
             <div class="field-grid">
               <label class="field">
-                <span>使用的 Model Config</span>
-                <select v-model="chatForm.model_config_id" @change="onChatConfigChange">
-                  <option value="">自动选择默认 active 配置</option>
-                  <option v-for="config in modelConfigs" :key="config.id" :value="String(config.id)">
-                    #{{ config.id }} {{ config.name }}
+                <span>名称</span>
+                <input v-model="agentConfigForm.name" type="text" placeholder="PPTAgent balanced" />
+              </label>
+              <label class="field">
+                <span>Agent</span>
+                <select v-model="agentConfigForm.agent_id" @change="syncAgentConfigNodeBindings">
+                  <option value="">请选择 Agent</option>
+                  <option v-for="agent in agents" :key="agent.id" :value="String(agent.id)">
+                    #{{ agent.id }} {{ agent.name }} · {{ agent.agent_key }}
                   </option>
                 </select>
               </label>
               <label class="field">
-                <span>Request ID</span>
-                <input :value="streamState.requestId" type="text" readonly placeholder="发送后自动出现" />
+                <span>状态</span>
+                <select v-model="agentConfigForm.status">
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                </select>
+              </label>
+              <label class="field checkbox">
+                <input v-model="agentConfigForm.is_default" type="checkbox" />
+                <span>设为该 Agent 的默认 Config</span>
               </label>
             </div>
 
             <label class="field">
-              <span>Message</span>
-              <textarea v-model="chatForm.message" rows="4" placeholder="请输入要发送给 Agent 的 message" />
+              <span>描述</span>
+              <input v-model="agentConfigForm.description" type="text" placeholder="高质量 / 均衡 / 省钱等用途说明" />
             </label>
 
-            <label class="field">
-              <span>System Prompt</span>
-              <textarea v-model="chatForm.system_prompt" rows="3" placeholder="可选系统提示词" />
-            </label>
+            <div class="node-binding-list">
+              <div v-for="binding in agentConfigForm.node_bindings" :key="binding.node_key" class="node-binding">
+                <div class="node-binding-title">
+                  <strong>{{ getAgentNodeDisplayName(binding.node_key) }}</strong>
+                  <span>{{ getAgentNodeDescription(binding.node_key) }}</span>
+                </div>
+                <div class="node-binding-fields">
+                  <label class="field">
+                    <span>Model Config</span>
+                    <select v-model="binding.model_config_id">
+                      <option value="">请选择 active 配置</option>
+                      <option v-for="config in activeModelConfigs" :key="config.id" :value="String(config.id)">
+                        #{{ config.id }} {{ config.name }} · {{ config.provider }}/{{ config.model_name }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Temperature 覆盖</span>
+                    <input v-model="binding.temperature" type="number" min="0" max="2" step="0.1" placeholder="沿用模型配置" />
+                  </label>
+                  <label class="field">
+                    <span>Max Tokens 覆盖</span>
+                    <input v-model="binding.max_tokens" type="number" min="1" step="1" placeholder="沿用模型配置" />
+                  </label>
+                </div>
+              </div>
+            </div>
 
             <div class="button-row">
-              <button class="button primary" :disabled="!isAuthenticated || busy.chat">
-                <Send class="icon" />
-                <span>{{ busy.chat ? '流式进行中' : '发送消息' }}</span>
-              </button>
-              <button type="button" class="button danger" :disabled="!busy.chat" @click="stopChatStream">
-                <XCircle class="icon" />
-                <span>停止流式请求</span>
+              <button class="button primary" :disabled="!isAuthenticated || busy.agentConfigSave">
+                <Save class="icon" />
+                <span>{{ busy.agentConfigSave ? '保存中' : agentConfigFormMode === 'create' ? '创建 Config' : '保存 Config' }}</span>
               </button>
             </div>
           </form>
 
-          <div class="chat-output">
-            <div class="chat-meta">
-              <span>最后事件：{{ streamState.lastEvent || '-' }}</span>
-              <span>完成状态：{{ streamState.done ? 'done' : 'streaming / idle' }}</span>
-            </div>
-            <pre class="chat-text">{{ streamState.content || '这里会实时展示 delta 拼接后的文本。' }}</pre>
-            <p v-if="streamState.error" class="inline-error">{{ streamState.error }}</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>名称</th>
+                  <th>节点绑定</th>
+                  <th>状态</th>
+                  <th>更新时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="config in agentConfigs" :key="config.id">
+                  <td class="mono">#{{ config.id }}</td>
+                  <td>
+                    <div class="stacked">
+                      <strong>{{ config.name }}</strong>
+                      <span>{{ config.agent_name }} · {{ config.description || config.agent_key }}</span>
+                      <span v-if="config.is_default" class="badge">default</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="config-bindings">
+                      <span v-for="binding in config.node_bindings" :key="binding.node_key" class="chip">
+                        {{ getAgentNodeDisplayName(binding.node_key, config.agent_id) }} · {{ getModelConfigLabel(binding.model_config_id) }}
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge" :class="config.status === 'active' ? 'is-success' : 'is-muted'">
+                      {{ config.status }}
+                    </span>
+                  </td>
+                  <td>{{ formatDate(config.updated_at) }}</td>
+                  <td>
+                    <div class="table-actions">
+                      <button class="icon-button" title="填入编辑表单" @click="populateAgentConfigForm(config)">
+                        <Save class="icon" />
+                      </button>
+                      <button
+                        v-if="config.agent_key === 'ppt_agent'"
+                        class="icon-button"
+                        title="用作 PPT Config"
+                        @click="useConfigForPpt(config)"
+                      >
+                        <Bot class="icon" />
+                      </button>
+                      <button
+                        class="icon-button danger"
+                        title="删除"
+                        :disabled="busy.deleteConfigId === config.id"
+                        @click="deleteAgentConfig(config)"
+                      >
+                        <Trash2 class="icon" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="agentConfigs.length === 0">
+                  <td colspan="6" class="empty-row">当前还没有 Agent Config。</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
+
+          <pre class="json-view">{{ toPrettyJson(selectedAgentConfig) }}</pre>
         </section>
 
         <section class="panel">
@@ -1597,11 +1983,11 @@ function clearLogs() {
           <form class="form-block" @submit.prevent="generatePpt">
             <div class="field-grid">
               <label class="field">
-                <span>Model Config</span>
-                <select v-model="pptForm.model_config_id">
-                  <option value="">Use default active config</option>
-                  <option v-for="config in modelConfigs" :key="config.id" :value="String(config.id)">
-                    #{{ config.id }} {{ config.name }}
+                <span>Agent Config</span>
+                <select v-model="pptForm.agent_config_id" @change="onPptConfigChange">
+                  <option value="">请选择 PPT Agent Config</option>
+                  <option v-for="config in pptAgentConfigs" :key="config.id" :value="String(config.id)">
+                    #{{ config.id }} {{ config.name }} · {{ config.agent_name }}
                   </option>
                 </select>
               </label>

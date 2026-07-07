@@ -144,7 +144,7 @@ code,
 
 .status-band {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -394,6 +394,75 @@ code,
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-alt);
+}
+
+.node-binding-list {
+  display: grid;
+  gap: 12px;
+}
+
+.node-binding {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-alt);
+}
+
+.node-binding-title {
+  display: grid;
+  gap: 4px;
+}
+
+.node-binding-title span {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.node-binding-fields {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) repeat(2, minmax(120px, 0.6fr));
+  gap: 12px;
+}
+
+.agent-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.agent-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.agent-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+.agent-card-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-card p {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.config-bindings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 640px;
 }
 
 .key-values {
@@ -652,6 +721,7 @@ code,
 
   .auth-grid,
   .field-grid,
+  .node-binding-fields,
   .key-values,
   .log-body {
     grid-template-columns: 1fr;

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agent-task-platform/internal/agent"
+	"agent-task-platform/internal/agentconfig"
 	"agent-task-platform/internal/auth"
 	"agent-task-platform/internal/bootstrap"
 	"agent-task-platform/internal/middleware"
@@ -40,6 +41,7 @@ type Application struct {
 type httpDependencies struct {
 	userHandler               *user.Handler
 	agentHandler              *agent.Handler
+	agentConfigHandler        *agentconfig.Handler
 	pptAgentHandler           *pptagent.Handler
 	modelConfigHandler        *modelconfig.Handler
 	providerCatalogHandler    *providercatalog.Handler
@@ -96,6 +98,7 @@ func New(confPath string) (*Application, error) {
 		engine,
 		deps.userHandler,
 		deps.agentHandler,
+		deps.agentConfigHandler,
 		deps.pptAgentHandler,
 		deps.modelConfigHandler,
 		deps.providerCatalogHandler,
@@ -125,6 +128,7 @@ func buildHTTPDependencies(
 ) httpDependencies {
 	userRepo := user.NewRepository(db)
 	modelConfigRepo := modelconfig.NewRepository(db)
+	agentConfigRepo := agentconfig.NewRepository(db)
 	pythonRuntimeClient := pythonruntime.NewClient(grpcConn)
 
 	jwtManager := auth.NewManager(
@@ -143,12 +147,14 @@ func buildHTTPDependencies(
 		providerCredentialService,
 		providerCatalogService,
 	)
+	agentConfigService := agentconfig.NewService(agentConfigRepo, modelConfigRepo)
 	agentService := agent.NewService(modelConfigRepo, pythonRuntimeClient)
-	pptAgentService := pptagent.NewService(modelConfigRepo, pythonRuntimeClient, "")
+	pptAgentService := pptagent.NewService(modelConfigRepo, agentConfigRepo, pythonRuntimeClient, "")
 
 	return httpDependencies{
 		userHandler:               user.NewHandler(userService),
 		agentHandler:              agent.NewHandler(agentService),
+		agentConfigHandler:        agentconfig.NewHandler(agentConfigService),
 		pptAgentHandler:           pptagent.NewHandler(pptAgentService),
 		modelConfigHandler:        modelconfig.NewHandler(modelConfigService),
 		providerCatalogHandler:    providercatalog.NewHandler(providerCatalogService),

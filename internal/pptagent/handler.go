@@ -114,6 +114,8 @@ func (h *Handler) respondError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidRequest):
 		response.BadRequest(c, err.Error(), nil)
+	case errors.Is(err, ErrAgentConfigNotFound):
+		response.NotFound(c, err.Error())
 	case errors.Is(err, ErrModelConfigNotFound):
 		response.NotFound(c, err.Error())
 	case errors.Is(err, ErrModelConfigInactive):

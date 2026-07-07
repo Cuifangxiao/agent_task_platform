@@ -1,7 +1,7 @@
 """Deck RPC handler."""
 
 from api import provider_pb2
-from core.deck.contract import GenerateDeckInput
+from core.deck.contract import DeckNodeModelConfig, GenerateDeckInput
 from core.deck.service import DeckService
 
 
@@ -14,13 +14,6 @@ class DeckHandler:
             GenerateDeckInput(
                 user_id=req.user.user_id,
                 username=req.user.username,
-                provider=req.provider,
-                model=req.model,
-                api_key=req.api_key,
-                base_url=req.base_url,
-                provider_options_json=req.provider_options_json,
-                temperature=req.temperature,
-                max_tokens=req.max_tokens,
                 topic=req.topic,
                 audience=req.audience,
                 goal=req.goal,
@@ -28,6 +21,19 @@ class DeckHandler:
                 language=req.language,
                 style=req.style,
                 source_text=req.source_text,
+                node_model_configs=[
+                    DeckNodeModelConfig(
+                        node_key=item.node_key,
+                        provider=item.provider,
+                        model=item.model,
+                        api_key=item.api_key,
+                        base_url=item.base_url,
+                        provider_options_json=item.provider_options_json,
+                        temperature=item.temperature,
+                        max_tokens=item.max_tokens,
+                    )
+                    for item in req.node_model_configs
+                ],
             )
         ):
             yield provider_pb2.GenerateDeckResponse(
@@ -41,4 +47,3 @@ class DeckHandler:
                 error=out.error,
                 sequence=out.sequence,
             )
-

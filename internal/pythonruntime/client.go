@@ -153,6 +153,20 @@ func (c *Client) GenerateDeck(
 ) (pptagent.DeckStream, error) {
 	callCtx, cancel := context.WithCancel(ctx)
 
+	nodeModelConfigs := make([]*providerv1.DeckNodeModelConfig, 0, len(req.NodeModelConfigs))
+	for _, config := range req.NodeModelConfigs {
+		nodeModelConfigs = append(nodeModelConfigs, &providerv1.DeckNodeModelConfig{
+			NodeKey:             config.NodeKey,
+			Provider:            config.Provider,
+			Model:               config.Model,
+			ApiKey:              config.APIKey,
+			BaseUrl:             config.BaseURL,
+			ProviderOptionsJson: config.ProviderOptionsJSON,
+			Temperature:         config.Temperature,
+			MaxTokens:           int32(config.MaxTokens),
+		})
+	}
+
 	stream, err := c.grpcClient.GenerateDeck(callCtx, &providerv1.GenerateDeckRequest{
 		User: &providerv1.UserContext{
 			UserId:    user.UserID,
@@ -160,20 +174,14 @@ func (c *Client) GenerateDeck(
 			SessionId: user.SessionID,
 			Device:    user.Device,
 		},
-		Provider:            req.Provider,
-		Model:               req.Model,
-		ApiKey:              req.APIKey,
-		BaseUrl:             req.BaseURL,
-		ProviderOptionsJson: req.ProviderOptionsJSON,
-		Temperature:         req.Temperature,
-		MaxTokens:           int32(req.MaxTokens),
-		Topic:               req.Topic,
-		Audience:            req.Audience,
-		Goal:                req.Goal,
-		PageCount:           int32(req.PageCount),
-		Language:            req.Language,
-		Style:               req.Style,
-		SourceText:          req.SourceText,
+		Topic:            req.Topic,
+		Audience:         req.Audience,
+		Goal:             req.Goal,
+		PageCount:        int32(req.PageCount),
+		Language:         req.Language,
+		Style:            req.Style,
+		SourceText:       req.SourceText,
+		NodeModelConfigs: nodeModelConfigs,
 	})
 	if err != nil {
 		cancel()

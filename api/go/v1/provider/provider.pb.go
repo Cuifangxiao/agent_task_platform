@@ -453,9 +453,9 @@ func (x *StreamTextResponse) GetSequence() int32 {
 	return 0
 }
 
-type GenerateDeckRequest struct {
+type DeckNodeModelConfig struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
-	User                *UserContext           `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
+	NodeKey             string                 `protobuf:"bytes,1,opt,name=node_key,json=nodeKey,proto3" json:"node_key,omitempty"`
 	Provider            string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
 	Model               string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	ApiKey              string                 `protobuf:"bytes,4,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
@@ -463,20 +463,114 @@ type GenerateDeckRequest struct {
 	ProviderOptionsJson string                 `protobuf:"bytes,6,opt,name=provider_options_json,json=providerOptionsJson,proto3" json:"provider_options_json,omitempty"`
 	Temperature         float64                `protobuf:"fixed64,7,opt,name=temperature,proto3" json:"temperature,omitempty"`
 	MaxTokens           int32                  `protobuf:"varint,8,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
-	Topic               string                 `protobuf:"bytes,9,opt,name=topic,proto3" json:"topic,omitempty"`
-	Audience            string                 `protobuf:"bytes,10,opt,name=audience,proto3" json:"audience,omitempty"`
-	Goal                string                 `protobuf:"bytes,11,opt,name=goal,proto3" json:"goal,omitempty"`
-	PageCount           int32                  `protobuf:"varint,12,opt,name=page_count,json=pageCount,proto3" json:"page_count,omitempty"`
-	Language            string                 `protobuf:"bytes,13,opt,name=language,proto3" json:"language,omitempty"`
-	Style               string                 `protobuf:"bytes,14,opt,name=style,proto3" json:"style,omitempty"`
-	SourceText          string                 `protobuf:"bytes,15,opt,name=source_text,json=sourceText,proto3" json:"source_text,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
 
+func (x *DeckNodeModelConfig) Reset() {
+	*x = DeckNodeModelConfig{}
+	mi := &file_provider_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeckNodeModelConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeckNodeModelConfig) ProtoMessage() {}
+
+func (x *DeckNodeModelConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_provider_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeckNodeModelConfig.ProtoReflect.Descriptor instead.
+func (*DeckNodeModelConfig) Descriptor() ([]byte, []int) {
+	return file_provider_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *DeckNodeModelConfig) GetNodeKey() string {
+	if x != nil {
+		return x.NodeKey
+	}
+	return ""
+}
+
+func (x *DeckNodeModelConfig) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *DeckNodeModelConfig) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *DeckNodeModelConfig) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *DeckNodeModelConfig) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *DeckNodeModelConfig) GetProviderOptionsJson() string {
+	if x != nil {
+		return x.ProviderOptionsJson
+	}
+	return ""
+}
+
+func (x *DeckNodeModelConfig) GetTemperature() float64 {
+	if x != nil {
+		return x.Temperature
+	}
+	return 0
+}
+
+func (x *DeckNodeModelConfig) GetMaxTokens() int32 {
+	if x != nil {
+		return x.MaxTokens
+	}
+	return 0
+}
+
+type GenerateDeckRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	User             *UserContext           `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
+	Topic            string                 `protobuf:"bytes,2,opt,name=topic,proto3" json:"topic,omitempty"`
+	Audience         string                 `protobuf:"bytes,3,opt,name=audience,proto3" json:"audience,omitempty"`
+	Goal             string                 `protobuf:"bytes,4,opt,name=goal,proto3" json:"goal,omitempty"`
+	PageCount        int32                  `protobuf:"varint,5,opt,name=page_count,json=pageCount,proto3" json:"page_count,omitempty"`
+	Language         string                 `protobuf:"bytes,6,opt,name=language,proto3" json:"language,omitempty"`
+	Style            string                 `protobuf:"bytes,7,opt,name=style,proto3" json:"style,omitempty"`
+	SourceText       string                 `protobuf:"bytes,8,opt,name=source_text,json=sourceText,proto3" json:"source_text,omitempty"`
+	NodeModelConfigs []*DeckNodeModelConfig `protobuf:"bytes,9,rep,name=node_model_configs,json=nodeModelConfigs,proto3" json:"node_model_configs,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
 func (x *GenerateDeckRequest) Reset() {
 	*x = GenerateDeckRequest{}
-	mi := &file_provider_proto_msgTypes[6]
+	mi := &file_provider_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -488,7 +582,7 @@ func (x *GenerateDeckRequest) String() string {
 func (*GenerateDeckRequest) ProtoMessage() {}
 
 func (x *GenerateDeckRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[6]
+	mi := &file_provider_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -501,7 +595,7 @@ func (x *GenerateDeckRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateDeckRequest.ProtoReflect.Descriptor instead.
 func (*GenerateDeckRequest) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{6}
+	return file_provider_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GenerateDeckRequest) GetUser() *UserContext {
@@ -509,55 +603,6 @@ func (x *GenerateDeckRequest) GetUser() *UserContext {
 		return x.User
 	}
 	return nil
-}
-
-func (x *GenerateDeckRequest) GetProvider() string {
-	if x != nil {
-		return x.Provider
-	}
-	return ""
-}
-
-func (x *GenerateDeckRequest) GetModel() string {
-	if x != nil {
-		return x.Model
-	}
-	return ""
-}
-
-func (x *GenerateDeckRequest) GetApiKey() string {
-	if x != nil {
-		return x.ApiKey
-	}
-	return ""
-}
-
-func (x *GenerateDeckRequest) GetBaseUrl() string {
-	if x != nil {
-		return x.BaseUrl
-	}
-	return ""
-}
-
-func (x *GenerateDeckRequest) GetProviderOptionsJson() string {
-	if x != nil {
-		return x.ProviderOptionsJson
-	}
-	return ""
-}
-
-func (x *GenerateDeckRequest) GetTemperature() float64 {
-	if x != nil {
-		return x.Temperature
-	}
-	return 0
-}
-
-func (x *GenerateDeckRequest) GetMaxTokens() int32 {
-	if x != nil {
-		return x.MaxTokens
-	}
-	return 0
 }
 
 func (x *GenerateDeckRequest) GetTopic() string {
@@ -609,6 +654,13 @@ func (x *GenerateDeckRequest) GetSourceText() string {
 	return ""
 }
 
+func (x *GenerateDeckRequest) GetNodeModelConfigs() []*DeckNodeModelConfig {
+	if x != nil {
+		return x.NodeModelConfigs
+	}
+	return nil
+}
+
 type GenerateDeckResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -626,7 +678,7 @@ type GenerateDeckResponse struct {
 
 func (x *GenerateDeckResponse) Reset() {
 	*x = GenerateDeckResponse{}
-	mi := &file_provider_proto_msgTypes[7]
+	mi := &file_provider_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -638,7 +690,7 @@ func (x *GenerateDeckResponse) String() string {
 func (*GenerateDeckResponse) ProtoMessage() {}
 
 func (x *GenerateDeckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[7]
+	mi := &file_provider_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -651,7 +703,7 @@ func (x *GenerateDeckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateDeckResponse.ProtoReflect.Descriptor instead.
 func (*GenerateDeckResponse) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{7}
+	return file_provider_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GenerateDeckResponse) GetRequestId() string {
@@ -734,7 +786,7 @@ type ProviderModelParameter struct {
 
 func (x *ProviderModelParameter) Reset() {
 	*x = ProviderModelParameter{}
-	mi := &file_provider_proto_msgTypes[8]
+	mi := &file_provider_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -746,7 +798,7 @@ func (x *ProviderModelParameter) String() string {
 func (*ProviderModelParameter) ProtoMessage() {}
 
 func (x *ProviderModelParameter) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[8]
+	mi := &file_provider_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -759,7 +811,7 @@ func (x *ProviderModelParameter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderModelParameter.ProtoReflect.Descriptor instead.
 func (*ProviderModelParameter) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{8}
+	return file_provider_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProviderModelParameter) GetName() string {
@@ -839,7 +891,7 @@ type ProviderModel struct {
 
 func (x *ProviderModel) Reset() {
 	*x = ProviderModel{}
-	mi := &file_provider_proto_msgTypes[9]
+	mi := &file_provider_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -851,7 +903,7 @@ func (x *ProviderModel) String() string {
 func (*ProviderModel) ProtoMessage() {}
 
 func (x *ProviderModel) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[9]
+	mi := &file_provider_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -864,7 +916,7 @@ func (x *ProviderModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderModel.ProtoReflect.Descriptor instead.
 func (*ProviderModel) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{9}
+	return file_provider_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ProviderModel) GetId() string {
@@ -926,7 +978,7 @@ type ProviderDescriptor struct {
 
 func (x *ProviderDescriptor) Reset() {
 	*x = ProviderDescriptor{}
-	mi := &file_provider_proto_msgTypes[10]
+	mi := &file_provider_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -938,7 +990,7 @@ func (x *ProviderDescriptor) String() string {
 func (*ProviderDescriptor) ProtoMessage() {}
 
 func (x *ProviderDescriptor) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[10]
+	mi := &file_provider_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -951,7 +1003,7 @@ func (x *ProviderDescriptor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderDescriptor.ProtoReflect.Descriptor instead.
 func (*ProviderDescriptor) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{10}
+	return file_provider_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ProviderDescriptor) GetName() string {
@@ -1026,7 +1078,7 @@ type ListProvidersResponse struct {
 
 func (x *ListProvidersResponse) Reset() {
 	*x = ListProvidersResponse{}
-	mi := &file_provider_proto_msgTypes[11]
+	mi := &file_provider_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1038,7 +1090,7 @@ func (x *ListProvidersResponse) String() string {
 func (*ListProvidersResponse) ProtoMessage() {}
 
 func (x *ListProvidersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_provider_proto_msgTypes[11]
+	mi := &file_provider_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1051,7 +1103,7 @@ func (x *ListProvidersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProvidersResponse.ProtoReflect.Descriptor instead.
 func (*ListProvidersResponse) Descriptor() ([]byte, []int) {
-	return file_provider_proto_rawDescGZIP(), []int{11}
+	return file_provider_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListProvidersResponse) GetProviders() []*ProviderDescriptor {
@@ -1103,9 +1155,9 @@ const file_provider_proto_rawDesc = "" +
 	"\x05delta\x18\x02 \x01(\tR\x05delta\x12\x12\n" +
 	"\x04done\x18\x03 \x01(\bR\x04done\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1a\n" +
-	"\bsequence\x18\x05 \x01(\x05R\bsequence\"\xd6\x03\n" +
-	"\x13GenerateDeckRequest\x12,\n" +
-	"\x04user\x18\x01 \x01(\v2\x18.provider.v1.UserContextR\x04user\x12\x1a\n" +
+	"\bsequence\x18\x05 \x01(\x05R\bsequence\"\x8b\x02\n" +
+	"\x13DeckNodeModelConfig\x12\x19\n" +
+	"\bnode_key\x18\x01 \x01(\tR\anodeKey\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12\x17\n" +
 	"\aapi_key\x18\x04 \x01(\tR\x06apiKey\x12\x19\n" +
@@ -1113,17 +1165,19 @@ const file_provider_proto_rawDesc = "" +
 	"\x15provider_options_json\x18\x06 \x01(\tR\x13providerOptionsJson\x12 \n" +
 	"\vtemperature\x18\a \x01(\x01R\vtemperature\x12\x1d\n" +
 	"\n" +
-	"max_tokens\x18\b \x01(\x05R\tmaxTokens\x12\x14\n" +
-	"\x05topic\x18\t \x01(\tR\x05topic\x12\x1a\n" +
-	"\baudience\x18\n" +
-	" \x01(\tR\baudience\x12\x12\n" +
-	"\x04goal\x18\v \x01(\tR\x04goal\x12\x1d\n" +
+	"max_tokens\x18\b \x01(\x05R\tmaxTokens\"\xcb\x02\n" +
+	"\x13GenerateDeckRequest\x12,\n" +
+	"\x04user\x18\x01 \x01(\v2\x18.provider.v1.UserContextR\x04user\x12\x14\n" +
+	"\x05topic\x18\x02 \x01(\tR\x05topic\x12\x1a\n" +
+	"\baudience\x18\x03 \x01(\tR\baudience\x12\x12\n" +
+	"\x04goal\x18\x04 \x01(\tR\x04goal\x12\x1d\n" +
 	"\n" +
-	"page_count\x18\f \x01(\x05R\tpageCount\x12\x1a\n" +
-	"\blanguage\x18\r \x01(\tR\blanguage\x12\x14\n" +
-	"\x05style\x18\x0e \x01(\tR\x05style\x12\x1f\n" +
-	"\vsource_text\x18\x0f \x01(\tR\n" +
-	"sourceText\"\x92\x02\n" +
+	"page_count\x18\x05 \x01(\x05R\tpageCount\x12\x1a\n" +
+	"\blanguage\x18\x06 \x01(\tR\blanguage\x12\x14\n" +
+	"\x05style\x18\a \x01(\tR\x05style\x12\x1f\n" +
+	"\vsource_text\x18\b \x01(\tR\n" +
+	"sourceText\x12N\n" +
+	"\x12node_model_configs\x18\t \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\x92\x02\n" +
 	"\x14GenerateDeckResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n" +
@@ -1189,7 +1243,7 @@ func file_provider_proto_rawDescGZIP() []byte {
 	return file_provider_proto_rawDescData
 }
 
-var file_provider_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_provider_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_provider_proto_goTypes = []any{
 	(*UserContext)(nil),            // 0: provider.v1.UserContext
 	(*TestCredentialRequest)(nil),  // 1: provider.v1.TestCredentialRequest
@@ -1197,33 +1251,35 @@ var file_provider_proto_goTypes = []any{
 	(*ListProvidersRequest)(nil),   // 3: provider.v1.ListProvidersRequest
 	(*StreamTextRequest)(nil),      // 4: provider.v1.StreamTextRequest
 	(*StreamTextResponse)(nil),     // 5: provider.v1.StreamTextResponse
-	(*GenerateDeckRequest)(nil),    // 6: provider.v1.GenerateDeckRequest
-	(*GenerateDeckResponse)(nil),   // 7: provider.v1.GenerateDeckResponse
-	(*ProviderModelParameter)(nil), // 8: provider.v1.ProviderModelParameter
-	(*ProviderModel)(nil),          // 9: provider.v1.ProviderModel
-	(*ProviderDescriptor)(nil),     // 10: provider.v1.ProviderDescriptor
-	(*ListProvidersResponse)(nil),  // 11: provider.v1.ListProvidersResponse
+	(*DeckNodeModelConfig)(nil),    // 6: provider.v1.DeckNodeModelConfig
+	(*GenerateDeckRequest)(nil),    // 7: provider.v1.GenerateDeckRequest
+	(*GenerateDeckResponse)(nil),   // 8: provider.v1.GenerateDeckResponse
+	(*ProviderModelParameter)(nil), // 9: provider.v1.ProviderModelParameter
+	(*ProviderModel)(nil),          // 10: provider.v1.ProviderModel
+	(*ProviderDescriptor)(nil),     // 11: provider.v1.ProviderDescriptor
+	(*ListProvidersResponse)(nil),  // 12: provider.v1.ListProvidersResponse
 }
 var file_provider_proto_depIdxs = []int32{
 	0,  // 0: provider.v1.TestCredentialRequest.user:type_name -> provider.v1.UserContext
 	0,  // 1: provider.v1.StreamTextRequest.user:type_name -> provider.v1.UserContext
 	0,  // 2: provider.v1.GenerateDeckRequest.user:type_name -> provider.v1.UserContext
-	8,  // 3: provider.v1.ProviderModel.parameters:type_name -> provider.v1.ProviderModelParameter
-	9,  // 4: provider.v1.ProviderDescriptor.models:type_name -> provider.v1.ProviderModel
-	10, // 5: provider.v1.ListProvidersResponse.providers:type_name -> provider.v1.ProviderDescriptor
-	1,  // 6: provider.v1.ProviderRuntimeService.TestCredential:input_type -> provider.v1.TestCredentialRequest
-	3,  // 7: provider.v1.ProviderRuntimeService.ListProviders:input_type -> provider.v1.ListProvidersRequest
-	4,  // 8: provider.v1.ProviderRuntimeService.StreamText:input_type -> provider.v1.StreamTextRequest
-	6,  // 9: provider.v1.ProviderRuntimeService.GenerateDeck:input_type -> provider.v1.GenerateDeckRequest
-	2,  // 10: provider.v1.ProviderRuntimeService.TestCredential:output_type -> provider.v1.TestCredentialResponse
-	11, // 11: provider.v1.ProviderRuntimeService.ListProviders:output_type -> provider.v1.ListProvidersResponse
-	5,  // 12: provider.v1.ProviderRuntimeService.StreamText:output_type -> provider.v1.StreamTextResponse
-	7,  // 13: provider.v1.ProviderRuntimeService.GenerateDeck:output_type -> provider.v1.GenerateDeckResponse
-	10, // [10:14] is the sub-list for method output_type
-	6,  // [6:10] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	6,  // 3: provider.v1.GenerateDeckRequest.node_model_configs:type_name -> provider.v1.DeckNodeModelConfig
+	9,  // 4: provider.v1.ProviderModel.parameters:type_name -> provider.v1.ProviderModelParameter
+	10, // 5: provider.v1.ProviderDescriptor.models:type_name -> provider.v1.ProviderModel
+	11, // 6: provider.v1.ListProvidersResponse.providers:type_name -> provider.v1.ProviderDescriptor
+	1,  // 7: provider.v1.ProviderRuntimeService.TestCredential:input_type -> provider.v1.TestCredentialRequest
+	3,  // 8: provider.v1.ProviderRuntimeService.ListProviders:input_type -> provider.v1.ListProvidersRequest
+	4,  // 9: provider.v1.ProviderRuntimeService.StreamText:input_type -> provider.v1.StreamTextRequest
+	7,  // 10: provider.v1.ProviderRuntimeService.GenerateDeck:input_type -> provider.v1.GenerateDeckRequest
+	2,  // 11: provider.v1.ProviderRuntimeService.TestCredential:output_type -> provider.v1.TestCredentialResponse
+	12, // 12: provider.v1.ProviderRuntimeService.ListProviders:output_type -> provider.v1.ListProvidersResponse
+	5,  // 13: provider.v1.ProviderRuntimeService.StreamText:output_type -> provider.v1.StreamTextResponse
+	8,  // 14: provider.v1.ProviderRuntimeService.GenerateDeck:output_type -> provider.v1.GenerateDeckResponse
+	11, // [11:15] is the sub-list for method output_type
+	7,  // [7:11] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_provider_proto_init() }
@@ -1231,14 +1287,14 @@ func file_provider_proto_init() {
 	if File_provider_proto != nil {
 		return
 	}
-	file_provider_proto_msgTypes[8].OneofWrappers = []any{}
+	file_provider_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_provider_proto_rawDesc), len(file_provider_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -82,6 +82,45 @@ export interface ModelConfig {
   updated_at: string
 }
 
+export interface AgentNodeDefinition {
+  key: string
+  display_name: string
+  description: string
+  requires_model: boolean
+}
+
+export interface AgentDefinition {
+  id: number
+  agent_key: string
+  name: string
+  description: string
+  nodes: AgentNodeDefinition[]
+  status: 'active' | 'inactive'
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentConfigNodeBinding {
+  node_key: string
+  model_config_id: number
+  temperature?: number
+  max_tokens?: number
+}
+
+export interface AgentConfig {
+  id: number
+  agent_id: number
+  agent_key: string
+  agent_name: string
+  name: string
+  description: string
+  is_default: boolean
+  status: 'active' | 'inactive'
+  node_bindings: AgentConfigNodeBinding[]
+  created_at: string
+  updated_at: string
+}
+
 export interface ProviderCredentialTestResponse {
   request_id: string
   provider: string

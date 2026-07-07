@@ -55,8 +55,8 @@ message StreamTextResponse {
   int32 sequence = 5;
 }
 
-message GenerateDeckRequest {
-  UserContext user = 1;
+message DeckNodeModelConfig {
+  string node_key = 1;
   string provider = 2;
   string model = 3;
   string api_key = 4;
@@ -64,13 +64,18 @@ message GenerateDeckRequest {
   string provider_options_json = 6;
   double temperature = 7;
   int32 max_tokens = 8;
-  string topic = 9;
-  string audience = 10;
-  string goal = 11;
-  int32 page_count = 12;
-  string language = 13;
-  string style = 14;
-  string source_text = 15;
+}
+
+message GenerateDeckRequest {
+  UserContext user = 1;
+  string topic = 2;
+  string audience = 3;
+  string goal = 4;
+  int32 page_count = 5;
+  string language = 6;
+  string style = 7;
+  string source_text = 8;
+  repeated DeckNodeModelConfig node_model_configs = 9;
 }
 
 message GenerateDeckResponse {

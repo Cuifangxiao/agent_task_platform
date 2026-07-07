@@ -2,6 +2,7 @@ package router
 
 import (
 	"agent-task-platform/internal/agent"
+	"agent-task-platform/internal/agentconfig"
 	"agent-task-platform/internal/auth"
 	"agent-task-platform/internal/middleware"
 	"agent-task-platform/internal/modelconfig"
@@ -18,6 +19,7 @@ func Register(
 	r *gin.Engine,
 	userHandler *user.Handler,
 	agentHandler *agent.Handler,
+	agentConfigHandler *agentconfig.Handler,
 	pptAgentHandler *pptagent.Handler,
 	modelConfigHandler *modelconfig.Handler,
 	providerCatalogHandler *providercatalog.Handler,
@@ -45,6 +47,13 @@ func Register(
 	authGroup.GET("/model-configs/:id", modelConfigHandler.Get)
 	authGroup.PUT("/model-configs/:id", modelConfigHandler.Update)
 	authGroup.DELETE("/model-configs/:id", modelConfigHandler.Delete)
+	authGroup.GET("/agents", agentConfigHandler.ListAgents)
+	authGroup.GET("/agents/:id", agentConfigHandler.GetAgent)
+	authGroup.GET("/agent-configs", agentConfigHandler.ListConfigs)
+	authGroup.POST("/agent-configs", agentConfigHandler.CreateConfig)
+	authGroup.GET("/agent-configs/:id", agentConfigHandler.GetConfig)
+	authGroup.PUT("/agent-configs/:id", agentConfigHandler.UpdateConfig)
+	authGroup.DELETE("/agent-configs/:id", agentConfigHandler.DeleteConfig)
 	authGroup.POST("/provider-credentials/test", providerCredentialHandler.TestCredential)
 	authGroup.POST("/agent/stream-text", agentHandler.StreamText)
 	authGroup.POST("/ppt-agent/generate", pptAgentHandler.GenerateDeck)

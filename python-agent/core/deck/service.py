@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from core.deck.contract import GenerateDeckInput, GenerateDeckOutput
+from core.deck.contract import DeckNodeModelConfig, GenerateDeckInput, GenerateDeckOutput
 from core.deck.graph import build_deck_graph
 from core.provider.model_utils import provider_config_manager
 
@@ -27,16 +27,8 @@ class DeckService:
             if not topic:
                 raise ValueError("topic is required")
 
-            client = provider_config_manager.build_chat_client(
-                provider_name=inp.provider.strip().lower(),
-                model_name=inp.model.strip(),
-                api_key=inp.api_key.strip(),
-                base_url=inp.base_url.strip(),
-                temperature=inp.temperature,
-                max_tokens=max(int(inp.max_tokens or 0), 2048),
-                provider_options=_decode_provider_options(inp.provider_options_json),
-            )
-            graph = build_deck_graph(client, _artifact_dir())
+            llms = _build_deck_llms(inp)
+            graph = build_deck_graph(llms, _artifact_dir())
 
             initial_state = {
                 "request_id": request_id,
@@ -50,11 +42,10 @@ class DeckService:
             }
 
             logger.info(
-                "generate deck: request_id=%s user_id=%s provider=%s model=%s",
+                "generate deck: request_id=%s user_id=%s models=%s",
                 request_id,
                 inp.user_id,
-                inp.provider,
-                inp.model,
+                _describe_model_assignment(inp),
             )
 
             for part in graph.stream(
@@ -125,9 +116,62 @@ def _decode_provider_options(raw: str) -> dict[str, Any]:
     return decoded
 
 
+def _build_deck_llms(inp: GenerateDeckInput) -> Any:
+    if not inp.node_model_configs:
+        raise ValueError("node_model_configs is required")
+
+    clients: dict[str, Any] = {}
+    for config in inp.node_model_configs:
+        node_key = config.node_key.strip().lower()
+        if not node_key:
+            raise ValueError("node_model_configs[].node_key is required")
+        clients[node_key] = _build_chat_client_from_node(config)
+
+    return clients
+
+
+def _build_chat_client_from_node(config: DeckNodeModelConfig) -> Any:
+    return _build_chat_client(
+        provider=config.provider,
+        model=config.model,
+        api_key=config.api_key,
+        base_url=config.base_url,
+        provider_options_json=config.provider_options_json,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+    )
+
+
+def _build_chat_client(
+    provider: str,
+    model: str,
+    api_key: str,
+    base_url: str,
+    provider_options_json: str,
+    temperature: float,
+    max_tokens: int,
+) -> Any:
+    return provider_config_manager.build_chat_client(
+        provider_name=provider.strip().lower(),
+        model_name=model.strip(),
+        api_key=api_key.strip(),
+        base_url=base_url.strip(),
+        temperature=temperature,
+        max_tokens=max(int(max_tokens or 0), 2048),
+        provider_options=_decode_provider_options(provider_options_json),
+    )
+
+
+def _describe_model_assignment(inp: GenerateDeckInput) -> str:
+    parts = [
+        f"{item.node_key}={item.provider}/{item.model}"
+        for item in inp.node_model_configs
+    ]
+    return ", ".join(parts)
+
+
 def _artifact_dir() -> Path:
     configured = os.getenv("DECK_ARTIFACTS_DIR", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
     return (Path.cwd() / "artifacts" / "decks").resolve()
-
