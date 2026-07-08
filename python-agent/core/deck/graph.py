@@ -302,8 +302,7 @@ def _compose_context_prompt(
 
     uploaded_file_text = (uploaded_file_text or "").strip()
     if uploaded_file_text:
-        file_name = (uploaded_file_name or "uploaded file").strip()
-        parts.extend(["", f"Uploaded file: {file_name}", "File content:", uploaded_file_text])
+        parts.extend(["", "Uploaded documents:", uploaded_file_text])
 
     return "\n".join(parts)
 

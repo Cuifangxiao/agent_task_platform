@@ -95,6 +95,70 @@ func TestResumeDeckAcceptsOutlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestGenerateDeckForwardsMultipleSourceFiles(t *testing.T) {
+	ctx := context.Background()
+	agentRepo := &fakeAgentConfigRepo{
+		agent: &agentconfig.AgentDefinition{
+			ID:       10,
+			AgentKey: agentconfig.AgentKeyPPT,
+			Name:     "PPTAgent",
+			Status:   agentconfig.StatusActive,
+			Nodes: []agentconfig.NodeDefinition{
+				{Key: "outline", RequiresModel: true},
+				{Key: "slides", RequiresModel: true},
+			},
+		},
+		config: &agentconfig.AgentConfig{
+			ID:       20,
+			UserID:   7,
+			AgentID:  10,
+			AgentKey: agentconfig.AgentKeyPPT,
+			Name:     "Default PPTAgent",
+			Status:   agentconfig.StatusActive,
+			NodeBindings: []agentconfig.NodeBinding{
+				{NodeKey: "outline", ModelConfigID: 100},
+				{NodeKey: "slides", ModelConfigID: 100},
+			},
+		},
+	}
+	modelRepo := &fakeModelConfigRepo{
+		config: &modelconfig.ModelConfig{
+			ID:              100,
+			UserID:          7,
+			Provider:        "openai",
+			ModelName:       "gpt-test",
+			APIKey:          "test-key",
+			ProviderOptions: "{}",
+			Temperature:     0.2,
+			MaxTokens:       4096,
+			Status:          modelconfig.StatusActive,
+		},
+	}
+	historyRepo := &fakeHistoryRepo{}
+	runtime := &fakeRuntimeClient{}
+	service := NewService(modelRepo, agentRepo, historyRepo, runtime, t.TempDir())
+
+	stream, err := service.GenerateDeck(ctx, providercredential.UserContext{UserID: 7}, GenerateDeckRequest{
+		Description: "生成一份资料汇总 PPT",
+		SourceFiles: []SourceFile{
+			{FileName: "a.pdf", Content: []byte("first")},
+			{FileName: "b.md", Content: []byte("second")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeck returned error: %v", err)
+	}
+	if stream == nil {
+		t.Fatal("GenerateDeck returned nil stream")
+	}
+	if len(runtime.generateReq.SourceFiles) != 2 {
+		t.Fatalf("runtime source file count = %d, want 2", len(runtime.generateReq.SourceFiles))
+	}
+	if runtime.generateReq.SourceFiles[0].FileName != "a.pdf" || string(runtime.generateReq.SourceFiles[1].Content) != "second" {
+		t.Fatalf("runtime source files were not forwarded correctly: %#v", runtime.generateReq.SourceFiles)
+	}
+}
+
 type fakeModelConfigRepo struct {
 	config *modelconfig.ModelConfig
 }
@@ -159,7 +223,11 @@ type fakeHistoryRepo struct {
 }
 
 func (r *fakeHistoryRepo) CreateConversation(ctx context.Context, conversation Conversation) (*Conversation, error) {
-	return nil, nil
+	if conversation.ID == 0 {
+		conversation.ID = 30
+	}
+	r.conversation = &conversation
+	return &conversation, nil
 }
 
 func (r *fakeHistoryRepo) GetConversationByID(ctx context.Context, userID int64, id int64) (*Conversation, error) {
@@ -197,7 +265,8 @@ func (r *fakeHistoryRepo) UpdateConversationState(ctx context.Context, conversat
 }
 
 type fakeRuntimeClient struct {
-	resumeReq RuntimeResumeDeckRequest
+	generateReq RuntimeGenerateDeckRequest
+	resumeReq   RuntimeResumeDeckRequest
 }
 
 func (c *fakeRuntimeClient) GenerateDeck(
@@ -205,6 +274,7 @@ func (c *fakeRuntimeClient) GenerateDeck(
 	user providercredential.UserContext,
 	req RuntimeGenerateDeckRequest,
 ) (DeckStream, error) {
+	c.generateReq = req
 	return &fakeDeckStream{}, nil
 }
 

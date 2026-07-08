@@ -8,11 +8,11 @@ import (
 )
 
 type GenerateDeckRequest struct {
-	AgentConfigID  int64  `json:"agent_config_id"`
-	Description    string `json:"description" binding:"required,min=1,max=5000"`
-	SourceFileName string `json:"source_file_name"`
-	SourceFile     []byte `json:"-"`
-	SourceFiles    []SourceFile
+	AgentConfigID  int64        `json:"agent_config_id"`
+	Description    string       `json:"description" binding:"required,min=1,max=5000"`
+	SourceFileName string       `json:"source_file_name"`
+	SourceFile     []byte       `json:"-"`
+	SourceFiles    []SourceFile `json:"source_files"`
 }
 
 type RuntimeGenerateDeckRequest struct {
@@ -24,8 +24,8 @@ type RuntimeGenerateDeckRequest struct {
 }
 
 type SourceFile struct {
-	FileName string
-	Content  []byte
+	FileName string `json:"filename"`
+	Content  []byte `json:"content"`
 }
 
 type ResumeDeckRequest struct {

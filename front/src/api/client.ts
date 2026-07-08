@@ -321,8 +321,8 @@ function toPptGenerateFormData(body: PptGeneratePayload) {
     formData.append('agent_config_id', String(body.agent_config_id))
   }
   formData.append('description', body.description)
-  if (body.source_file) {
-    formData.append('source_file', body.source_file)
+  for (const file of body.source_files ?? []) {
+    formData.append('source_files', file)
   }
   return formData
 }

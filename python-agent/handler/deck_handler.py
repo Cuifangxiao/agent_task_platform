@@ -1,7 +1,7 @@
 """Deck RPC handler."""
 
 from api import provider_pb2
-from core.deck.contract import DeckNodeModelConfig, GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
+from core.deck.contract import DeckNodeModelConfig, DeckSourceFile, GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
 from core.deck.service import DeckService
 
 
@@ -17,6 +17,13 @@ class DeckHandler:
                 user_description=req.user_description,
                 source_file_filename=req.source_file_filename,
                 source_file=req.source_file,
+                source_files=[
+                    DeckSourceFile(
+                        filename=item.filename,
+                        content=item.content,
+                    )
+                    for item in req.source_files
+                ],
                 node_model_configs=[
                     DeckNodeModelConfig(
                         node_key=item.node_key,

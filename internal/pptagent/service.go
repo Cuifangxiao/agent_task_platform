@@ -94,7 +94,7 @@ func (s *Service) GenerateDeck(
 		user.UserID,
 		selectedConfig,
 		description,
-		strings.TrimSpace(req.SourceFileName),
+		sourceFileNames(req),
 	)
 	if err != nil {
 		return nil, err
@@ -109,6 +109,7 @@ func (s *Service) GenerateDeck(
 		Description:      description,
 		SourceFileName:   strings.TrimSpace(req.SourceFileName),
 		SourceFile:       req.SourceFile,
+		SourceFiles:      normalizeSourceFiles(req),
 		NodeModelConfigs: runtimeModels,
 	})
 	if err != nil {
@@ -288,7 +289,7 @@ func (s *Service) startConversation(
 	userID int64,
 	config *agentconfig.AgentConfig,
 	description string,
-	fileName string,
+	fileNames []string,
 ) (*Conversation, int64, error) {
 	conversation, err := s.historyRepo.CreateConversation(ctx, Conversation{
 		UserID:          userID,
@@ -301,11 +302,16 @@ func (s *Service) startConversation(
 		return nil, 0, err
 	}
 
+	userContent := map[string]any{"text": description}
+	if len(fileNames) > 0 {
+		userContent["fileNames"] = fileNames
+	}
+
 	if _, err := s.historyRepo.CreateMessage(ctx, ConversationMessage{
 		ConversationID: conversation.ID,
 		Role:           "user",
 		Kind:           "user",
-		ContentJSON:    mustMarshalJSON(map[string]any{"text": description, "fileName": emptyToNil(fileName)}),
+		ContentJSON:    mustMarshalJSON(userContent),
 	}); err != nil {
 		return nil, 0, err
 	}
@@ -880,12 +886,39 @@ func deriveConversationTitle(description string) string {
 	return string(runes[:48]) + "..."
 }
 
-func emptyToNil(value string) any {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
+func normalizeSourceFiles(req GenerateDeckRequest) []SourceFile {
+	sourceFiles := make([]SourceFile, 0, len(req.SourceFiles)+1)
+	for _, file := range req.SourceFiles {
+		fileName := strings.TrimSpace(file.FileName)
+		if fileName == "" || len(file.Content) == 0 {
+			continue
+		}
+		sourceFiles = append(sourceFiles, SourceFile{
+			FileName: fileName,
+			Content:  file.Content,
+		})
 	}
-	return value
+
+	if len(sourceFiles) == 0 && len(req.SourceFile) > 0 {
+		fileName := strings.TrimSpace(req.SourceFileName)
+		if fileName == "" {
+			fileName = "uploaded-file"
+		}
+		sourceFiles = append(sourceFiles, SourceFile{
+			FileName: fileName,
+			Content:  req.SourceFile,
+		})
+	}
+	return sourceFiles
+}
+
+func sourceFileNames(req GenerateDeckRequest) []string {
+	sourceFiles := normalizeSourceFiles(req)
+	names := make([]string, 0, len(sourceFiles))
+	for _, file := range sourceFiles {
+		names = append(names, file.FileName)
+	}
+	return names
 }
 
 func decodeConversationMessage(message *ConversationMessage) (map[string]any, error) {

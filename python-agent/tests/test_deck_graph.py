@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
+from core.deck.contract import DeckSourceFile, GenerateDeckInput
 from core.deck.graph import _outline_prompt, build_deck_graph
+from core.deck.service import _parse_uploaded_files
 
 
 OUTLINE_MARKDOWN = """# PPTAgent MVP
@@ -127,9 +129,29 @@ def test_outline_prompt_adds_uploaded_file_section_only_when_present():
         {
             **state,
             "uploaded_file_name": "report.pdf",
-            "uploaded_file_text": "Parsed file body.",
+            "uploaded_file_text": "### report.pdf\nParsed file body.",
         }
     )
-    assert "Uploaded file: report.pdf" in prompt_with_file
-    assert "File content:" in prompt_with_file
+    assert "Uploaded documents:" in prompt_with_file
+    assert "### report.pdf" in prompt_with_file
     assert "Parsed file body." in prompt_with_file
+
+
+def test_parse_uploaded_files_combines_multiple_documents():
+    names, text = _parse_uploaded_files(
+        GenerateDeckInput(
+            user_id=1,
+            username="tester",
+            user_description="Create a deck",
+            source_files=[
+                DeckSourceFile(filename="one.md", content=b"# One\nhello"),
+                DeckSourceFile(filename="two.txt", content="第二份资料".encode("utf-8")),
+            ],
+        )
+    )
+
+    assert names == "one.md, two.txt"
+    assert "### one.md" in text
+    assert "hello" in text
+    assert "### two.txt" in text
+    assert "第二份资料" in text

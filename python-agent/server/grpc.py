@@ -16,7 +16,7 @@ from handler.container import AgentHandlers
 
 logger = logging.getLogger(__name__)
 
-MAX_DECK_GRPC_MESSAGE_BYTES = 25 * 1024 * 1024
+MAX_DECK_GRPC_MESSAGE_BYTES = 300 * 1024 * 1024
 
 
 class ProviderRuntimeServicer(provider_pb2_grpc.ProviderRuntimeServiceServicer):

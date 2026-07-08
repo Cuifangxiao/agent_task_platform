@@ -45,7 +45,7 @@ interface UserMessage {
   role: 'user'
   kind: 'user'
   text: string
-  fileName?: string
+  fileNames?: string[]
 }
 
 interface StatusMessage {
@@ -85,7 +85,7 @@ type ChatMessage = UserMessage | StatusMessage | OutlineMessage | ResultMessage
 
 const composer = reactive({
   text: '',
-  file: null as File | null,
+  files: [] as File[],
 })
 
 const abortController = ref<AbortController | null>(null)
@@ -221,7 +221,7 @@ function normalizeStoredMessage(item: Record<string, unknown>): ChatMessage {
       role: 'user',
       kind: 'user',
       text: String(item.text ?? ''),
-      fileName: typeof item.fileName === 'string' ? item.fileName : undefined,
+      fileNames: normalizeStoredFileNames(item),
     }
   }
 
@@ -261,6 +261,13 @@ function normalizeStoredMessage(item: Record<string, unknown>): ChatMessage {
     state: normalizeStatusState(item.state),
     steps: normalizeStoredSteps(item.steps),
   }
+}
+
+function normalizeStoredFileNames(item: Record<string, unknown>) {
+  if (Array.isArray(item.fileNames)) {
+    return item.fileNames.map((fileName) => String(fileName)).filter(Boolean)
+  }
+  return typeof item.fileName === 'string' && item.fileName ? [item.fileName] : []
 }
 
 function normalizeStatusState(value: unknown): StatusMessage['state'] {
@@ -317,12 +324,15 @@ async function startGeneration() {
     resetDraftConversation(true)
   }
 
+  const selectedFiles = [...composer.files]
+  const fileNames = selectedFiles.map((file) => file.name)
+
   pushMessage({
     id: nextMessageId(),
     role: 'user',
     kind: 'user',
     text: description,
-    fileName: composer.file?.name,
+    ...(fileNames.length ? { fileNames } : {}),
   })
 
   currentStatusMessageId.value = createStatusMessage(
@@ -333,7 +343,7 @@ async function startGeneration() {
   const payload: PptGeneratePayload = {
     agent_config_id: config.id,
     description,
-    source_file: composer.file,
+    source_files: selectedFiles,
   }
 
   composer.text = ''
@@ -508,12 +518,17 @@ function stop() {
 
 function onSourceFileChange(event: Event) {
   const input = event.target as HTMLInputElement
-  composer.file = input.files?.[0] ?? null
+  composer.files = [...composer.files, ...Array.from(input.files ?? [])]
+  input.value = ''
   error.value = ''
 }
 
+function removeSelectedFile(index: number) {
+  composer.files = composer.files.filter((_, currentIndex) => currentIndex !== index)
+}
+
 function clearSelectedFile() {
-  composer.file = null
+  composer.files = []
   if (fileInput.value) {
     fileInput.value.value = ''
   }
@@ -1048,9 +1063,11 @@ function formatHistoryTime(value: string) {
 
               <template v-if="message.kind === 'user'">
                 <p class="chat-text preserve-lines">{{ message.text }}</p>
-                <div v-if="message.fileName" class="file-chip readonly">
-                  <Paperclip :size="14" />
-                  <span>{{ message.fileName }}</span>
+                <div v-if="message.fileNames?.length" class="file-chip-list">
+                  <div v-for="fileName in message.fileNames" :key="fileName" class="file-chip readonly">
+                    <Paperclip :size="14" />
+                    <span>{{ fileName }}</span>
+                  </div>
                 </div>
               </template>
 
@@ -1138,14 +1155,16 @@ function formatHistoryTime(value: string) {
                 placeholder="例如：帮我做一份 AI Agent 平台 MVP 汇报，面向投资人，风格简洁专业，控制在 10 页左右。"
               />
 
-              <div v-if="composer.file" class="file-chip">
-                <div class="file-chip-main">
-                  <Paperclip :size="14" />
-                  <span>{{ composer.file.name }}</span>
+              <div v-if="composer.files.length" class="file-chip-list">
+                <div v-for="(file, index) in composer.files" :key="`${file.name}-${index}`" class="file-chip">
+                  <div class="file-chip-main">
+                    <Paperclip :size="14" />
+                    <span>{{ file.name }}</span>
+                  </div>
+                  <button class="chip-close" type="button" @click="removeSelectedFile(index)">
+                    <X :size="14" />
+                  </button>
                 </div>
-                <button class="chip-close" type="button" @click="clearSelectedFile">
-                  <X :size="14" />
-                </button>
               </div>
             </div>
 
@@ -1164,6 +1183,7 @@ function formatHistoryTime(value: string) {
                   <input
                     ref="fileInput"
                     type="file"
+                    multiple
                     accept=".pdf,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     @change="onSourceFileChange"
                   />

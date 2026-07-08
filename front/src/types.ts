@@ -143,7 +143,7 @@ export interface CredentialTestResponse {
 export interface PptGeneratePayload {
   agent_config_id?: number
   description: string
-  source_file?: File | null
+  source_files?: File[]
 }
 
 export interface PptResumePayload {

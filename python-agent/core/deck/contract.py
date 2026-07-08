@@ -16,12 +16,19 @@ class DeckNodeModelConfig:
 
 
 @dataclass(frozen=True)
+class DeckSourceFile:
+    filename: str
+    content: bytes
+
+
+@dataclass(frozen=True)
 class GenerateDeckInput:
     user_id: int
     username: str
     user_description: str
     source_file_filename: str = ""
     source_file: bytes = b""
+    source_files: list[DeckSourceFile] = field(default_factory=list)
     node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
 
 

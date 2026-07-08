@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const maxDeckGRPCMessageBytes = 25 << 20
+const maxDeckGRPCMessageBytes = 300 << 20
 
 type Client struct {
 	grpcClient providerv1.ProviderRuntimeServiceClient
@@ -169,6 +169,14 @@ func (c *Client) GenerateDeck(
 		})
 	}
 
+	sourceFiles := make([]*providerv1.DeckSourceFile, 0, len(req.SourceFiles))
+	for _, file := range req.SourceFiles {
+		sourceFiles = append(sourceFiles, &providerv1.DeckSourceFile{
+			Filename: file.FileName,
+			Content:  file.Content,
+		})
+	}
+
 	stream, err := c.grpcClient.GenerateDeck(callCtx, &providerv1.GenerateDeckRequest{
 		User: &providerv1.UserContext{
 			UserId:    user.UserID,
@@ -180,6 +188,7 @@ func (c *Client) GenerateDeck(
 		SourceFileFilename: req.SourceFileName,
 		SourceFile:         req.SourceFile,
 		NodeModelConfigs:   nodeModelConfigs,
+		SourceFiles:        sourceFiles,
 	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
 	if err != nil {
 		cancel()

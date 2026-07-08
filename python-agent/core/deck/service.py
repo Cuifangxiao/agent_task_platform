@@ -14,7 +14,7 @@ from typing import Any
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from core.deck.contract import DeckNodeModelConfig, GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
+from core.deck.contract import DeckNodeModelConfig, DeckSourceFile, GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
 from core.deck.graph import build_deck_graph
 from core.provider.model_utils import provider_config_manager
 from core.tools.document_parser import parse_uploaded_document
@@ -36,17 +36,17 @@ class DeckService:
 
             llms = _build_deck_llms(inp)
             graph = build_deck_graph(llms, _artifact_dir(), self._checkpointer)
-            uploaded_file_text = _parse_uploaded_file(inp)
+            uploaded_file_names, uploaded_file_text = _parse_uploaded_files(inp)
             deck_title = _derive_deck_title(
                 description,
-                inp.source_file_filename,
+                uploaded_file_names,
                 uploaded_file_text,
             )
 
             initial_state = {
                 "request_id": request_id,
                 "deck_title": deck_title,
-                "uploaded_file_name": inp.source_file_filename,
+                "uploaded_file_name": uploaded_file_names,
                 "uploaded_file_text": uploaded_file_text,
                 "user_description": description,
             }
@@ -227,10 +227,63 @@ def _decode_provider_options(raw: str) -> dict[str, Any]:
     return decoded
 
 
-def _parse_uploaded_file(inp: GenerateDeckInput) -> str:
-    if not inp.source_file:
-        return ""
-    return parse_uploaded_document(inp.source_file_filename, inp.source_file)
+def _parse_uploaded_files(inp: GenerateDeckInput, *, max_total_chars: int = 60000, max_chars_per_file: int = 20000) -> tuple[str, str]:
+    source_files = _collect_source_files(inp)
+    if not source_files:
+        return "", ""
+
+    sections: list[str] = []
+    remaining = max_total_chars
+    for index, source_file in enumerate(source_files):
+        filename = source_file.filename.strip() or "uploaded-file"
+
+        if remaining <= 0:
+            omitted_count = len(source_files) - index
+            sections.append(f"[{omitted_count} additional attachment(s) omitted because the context budget was reached.]")
+            break
+
+        text = parse_uploaded_document(
+            filename,
+            source_file.content,
+            max_chars=min(max_chars_per_file, remaining),
+        ).strip()
+        if not text:
+            continue
+
+        sections.append(f"### {filename}\n{text}")
+        remaining -= len(text)
+
+    return _join_source_file_names(source_files), "\n\n".join(sections)
+
+
+def _collect_source_files(inp: GenerateDeckInput) -> list[DeckSourceFile]:
+    source_files = [
+        DeckSourceFile(filename=item.filename.strip(), content=item.content)
+        for item in inp.source_files
+        if item.content
+    ]
+    if not source_files and inp.source_file:
+        source_files.append(
+            DeckSourceFile(
+                filename=(inp.source_file_filename or "uploaded-file").strip(),
+                content=inp.source_file,
+            )
+        )
+    return source_files
+
+
+def _join_source_file_names(source_files: list[DeckSourceFile], *, max_chars: int = 2000) -> str:
+    names: list[str] = []
+    used = 0
+    for index, source_file in enumerate(source_files):
+        name = source_file.filename.strip() or "uploaded-file"
+        next_used = used + len(name) + (2 if names else 0)
+        if next_used > max_chars:
+            names.append(f"... (+{len(source_files) - index} more)")
+            break
+        names.append(name)
+        used = next_used
+    return ", ".join(names)
 
 
 def _derive_deck_title(description: str, file_name: str, uploaded_file_text: str) -> str:
