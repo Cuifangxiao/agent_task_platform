@@ -39,7 +39,7 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
         writer = get_stream_writer()
         writer(
             {
-                "event_type": "progress",
+                "event_type": "stage_started",
                 "stage": "brief",
                 "message": "Normalizing deck brief",
             }
@@ -57,7 +57,7 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
         writer = get_stream_writer()
         writer(
             {
-                "event_type": "progress",
+                "event_type": "stage_started",
                 "stage": "outline",
                 "message": "Generating deck outline",
             }
@@ -98,29 +98,82 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
 
     def generate_slides(state: DeckGraphState) -> dict[str, Any]:
         writer = get_stream_writer()
+        plan_slides = _plan_slide_outlines(state)
+        slide_llm = _llm_for_node(llm_registry, "slides")
+        total = len(plan_slides)
         writer(
             {
-                "event_type": "progress",
+                "event_type": "stage_started",
                 "stage": "slides",
-                "message": "Generating slide specs",
+                "message": f"Generating {total} slide specs",
+                "payload": {"total": total},
             }
         )
 
-        slides = _normalize_slides(
-            _invoke_json(
-                _llm_for_node(llm_registry, "slides"),
-                system=_load_node_prompt("slides"),
-                user=_slides_prompt(state),
-            ),
-            state,
-        )
-        for slide in slides:
+        slides: list[dict[str, Any]] = []
+        for index, outline in enumerate(plan_slides, start=1):
+            title = str(outline.get("title") or _fallback_slide_title(index, state)).strip()
             writer(
                 {
-                    "event_type": "slide",
+                    "event_type": "slide_started",
                     "stage": "slides",
-                    "message": f"Slide {slide['index']} ready",
-                    "payload": slide,
+                    "message": f"Generating slide {index}/{total}: {title}",
+                    "payload": _slide_event_payload(
+                        {
+                            "index": index,
+                            "title": title,
+                            "key_message": str(outline.get("key_message") or "").strip(),
+                            "layout": _normalize_layout(str(outline.get("layout") or ("title" if index == 1 else "content"))),
+                            "bullets": [],
+                            "visual_suggestion": str(outline.get("visual_suggestion") or "").strip(),
+                            "speaker_notes": "",
+                        },
+                        status="running",
+                    ),
+                }
+            )
+
+            generation_warnings: list[str] = []
+            try:
+                raw_slide = _invoke_json(
+                    slide_llm,
+                    system=_load_node_prompt("slide"),
+                    user=_slide_prompt(state, outline, slides, total),
+                )
+            except ValueError as exc:
+                raw_slide = {}
+                generation_warnings.append(f"Slide {index} JSON could not be parsed; used outline fallback.")
+                writer(
+                    {
+                        "event_type": "stage_progress",
+                        "stage": "slides",
+                        "message": f"Slide {index} needed fallback cleanup: {exc}",
+                        "payload": {
+                            "index": index,
+                            "status": "warning",
+                            "warning": generation_warnings[-1],
+                        },
+                    }
+                )
+
+            slide = _normalize_slide(raw_slide, state, index, outline)
+            slides.append(slide)
+            writer(
+                {
+                    "event_type": "slide_ready",
+                    "stage": "slides",
+                    "message": f"Slide {slide['index']} ready: {slide['title']}",
+                    "payload": _slide_event_payload(slide, status="ready"),
+                }
+            )
+
+            slide_review = _review_slide(slide, outline, generation_warnings)
+            writer(
+                {
+                    "event_type": "slide_reviewed",
+                    "stage": "slides",
+                    "message": _slide_review_message(slide, slide_review),
+                    "payload": slide_review,
                 }
             )
         return {"slides": slides}
@@ -130,7 +183,7 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
         outline_markdown = str(state.get("outline_markdown") or "").strip()
         writer(
             {
-                "event_type": "progress",
+                "event_type": "stage_progress",
                 "stage": "outline_review",
                 "message": "Waiting for outline confirmation",
             }
@@ -162,6 +215,15 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
                     user=_review_prompt(state),
                 )
             )
+        for warning in review.get("warnings") or []:
+            writer(
+                {
+                    "event_type": "stage_progress",
+                    "stage": "review",
+                    "message": str(warning),
+                    "payload": {"status": "warning", "warning": str(warning)},
+                }
+            )
         writer(
             {
                 "event_type": "review",
@@ -176,7 +238,7 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
         writer = get_stream_writer()
         writer(
             {
-                "event_type": "progress",
+                "event_type": "stage_started",
                 "stage": "render",
                 "message": "Rendering PPTX file",
             }
@@ -259,7 +321,6 @@ def _outline_prompt(state: DeckGraphState) -> str:
             "deck_title_hint": state.get("deck_title", ""),
             "user_description": state.get("user_description", ""),
         },
-        uploaded_file_name=state.get("uploaded_file_name", ""),
         uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
@@ -271,7 +332,25 @@ def _slides_prompt(state: DeckGraphState) -> str:
             "user_description": state.get("user_description", ""),
             "outline_markdown": state.get("outline_markdown", ""),
         },
-        uploaded_file_name=state.get("uploaded_file_name", ""),
+        uploaded_file_text=state.get("uploaded_file_text", ""),
+    )
+
+
+def _slide_prompt(
+    state: DeckGraphState,
+    current_slide_outline: dict[str, Any],
+    previous_slides: list[dict[str, Any]],
+    total_slides: int,
+) -> str:
+    return _compose_context_prompt(
+        {
+            "deck_title": state.get("deck_title", ""),
+            "user_description": state.get("user_description", ""),
+            "outline_markdown": state.get("outline_markdown", ""),
+            "total_slides": total_slides,
+            "current_slide_outline": current_slide_outline,
+            "previous_slides": previous_slides,
+        },
         uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
@@ -284,7 +363,6 @@ def _review_prompt(state: DeckGraphState) -> str:
             "outline_markdown": state.get("outline_markdown", ""),
             "slides": state.get("slides") or [],
         },
-        uploaded_file_name=state.get("uploaded_file_name", ""),
         uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
@@ -292,7 +370,6 @@ def _review_prompt(state: DeckGraphState) -> str:
 def _compose_context_prompt(
     payload: dict[str, Any],
     *,
-    uploaded_file_name: str,
     uploaded_file_text: str,
 ) -> str:
     parts = [
@@ -346,12 +423,15 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.IGNORECASE | re.MULTILINE).strip()
     try:
         parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start < 0 or end < start:
-            raise ValueError("model did not return a JSON object")
-        parsed = json.loads(cleaned[start : end + 1])
+            raise ValueError("model did not return a JSON object") from exc
+        try:
+            parsed = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError as fallback_exc:
+            raise ValueError("model did not return a JSON object") from fallback_exc
 
     if not isinstance(parsed, dict):
         raise ValueError("model JSON output must be an object")
@@ -459,30 +539,134 @@ def _clean_markdown_inline(value: str) -> str:
 def _normalize_slides(raw: dict[str, Any], state: DeckGraphState) -> list[dict[str, Any]]:
     raw_slides = raw.get("slides") if isinstance(raw.get("slides"), list) else []
     page_count = _target_slide_count(state, raw_slides)
-    plan_slides = (state.get("plan") or {}).get("slides") or []
+    plan_slides = _plan_slide_outlines(state)
     slides: list[dict[str, Any]] = []
 
     for index in range(page_count):
         outline = plan_slides[index] if index < len(plan_slides) and isinstance(plan_slides[index], dict) else {}
         source = raw_slides[index] if index < len(raw_slides) and isinstance(raw_slides[index], dict) else {}
-        layout = _normalize_layout(str(source.get("layout") or outline.get("layout") or ("title" if index == 0 else "content")))
-        bullets = _normalize_bullets(source.get("bullets"))
-        if not bullets and layout not in {"title", "section"}:
-            bullets = _fallback_bullets(index + 1, state)
-
-        slides.append(
-            {
-                "index": index + 1,
-                "title": str(source.get("title") or outline.get("title") or _fallback_slide_title(index + 1, state)).strip(),
-                "key_message": str(source.get("key_message") or outline.get("key_message") or "").strip(),
-                "layout": layout,
-                "bullets": bullets[:5],
-                "visual_suggestion": str(source.get("visual_suggestion") or outline.get("visual_suggestion") or "").strip(),
-                "speaker_notes": str(source.get("speaker_notes") or "").strip(),
-            }
-        )
+        slides.append(_normalize_slide(source, state, index + 1, outline))
 
     return slides
+
+
+def _plan_slide_outlines(state: DeckGraphState) -> list[dict[str, Any]]:
+    raw_plan_slides = (state.get("plan") or {}).get("slides") or []
+    parsed_slides = raw_plan_slides if isinstance(raw_plan_slides, list) else []
+    if not parsed_slides:
+        parsed_slides = _parse_outline_slides(str(state.get("outline_markdown") or ""))
+
+    page_count = _target_slide_count(state, parsed_slides)
+    outlines: list[dict[str, Any]] = []
+    for index in range(page_count):
+        source = parsed_slides[index] if index < len(parsed_slides) and isinstance(parsed_slides[index], dict) else {}
+        outlines.append(
+            {
+                "index": index + 1,
+                "title": str(source.get("title") or _fallback_slide_title(index + 1, state)).strip(),
+                "key_message": str(source.get("key_message") or "").strip(),
+                "layout": _normalize_layout(str(source.get("layout") or ("title" if index == 0 else "content"))),
+                "visual_suggestion": str(source.get("visual_suggestion") or "").strip(),
+            }
+        )
+    return outlines
+
+
+def _normalize_slide(
+    raw: dict[str, Any],
+    state: DeckGraphState,
+    index: int,
+    outline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    outline = outline or {}
+    source = _extract_single_slide_source(raw, index)
+    layout = _normalize_layout(str(source.get("layout") or outline.get("layout") or ("title" if index == 1 else "content")))
+    bullets = _normalize_bullets(source.get("bullets"))
+    if not bullets and layout not in {"title", "section"}:
+        bullets = _fallback_bullets(index, state)
+
+    key_message = str(source.get("key_message") or outline.get("key_message") or "").strip()
+    if not key_message and bullets:
+        key_message = bullets[0]
+
+    return {
+        "index": index,
+        "title": str(source.get("title") or outline.get("title") or _fallback_slide_title(index, state)).strip(),
+        "key_message": key_message,
+        "layout": layout,
+        "bullets": bullets[:5],
+        "visual_suggestion": str(source.get("visual_suggestion") or outline.get("visual_suggestion") or "").strip(),
+        "speaker_notes": str(source.get("speaker_notes") or "").strip(),
+    }
+
+
+def _extract_single_slide_source(raw: dict[str, Any], index: int) -> dict[str, Any]:
+    if isinstance(raw.get("slide"), dict):
+        return raw["slide"]
+
+    raw_slides = raw.get("slides")
+    if isinstance(raw_slides, list):
+        for item in raw_slides:
+            if not isinstance(item, dict):
+                continue
+            try:
+                if int(item.get("index")) == index:
+                    return item
+            except (TypeError, ValueError):
+                continue
+        offset = index - 1
+        if 0 <= offset < len(raw_slides) and isinstance(raw_slides[offset], dict):
+            return raw_slides[offset]
+        if raw_slides and isinstance(raw_slides[0], dict):
+            return raw_slides[0]
+
+    return raw if isinstance(raw, dict) else {}
+
+
+def _slide_event_payload(slide: dict[str, Any], *, status: str) -> dict[str, Any]:
+    return {
+        "index": slide.get("index"),
+        "title": slide.get("title", ""),
+        "key_message": slide.get("key_message", ""),
+        "layout": slide.get("layout", "content"),
+        "bullets": slide.get("bullets") if isinstance(slide.get("bullets"), list) else [],
+        "visual_suggestion": slide.get("visual_suggestion", ""),
+        "speaker_notes": slide.get("speaker_notes", ""),
+        "status": status,
+    }
+
+
+def _review_slide(
+    slide: dict[str, Any],
+    outline: dict[str, Any],
+    generation_warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    warnings = list(generation_warnings or [])
+    index = slide.get("index")
+    layout = _normalize_layout(str(slide.get("layout") or outline.get("layout") or "content"))
+    bullets = _normalize_bullets(slide.get("bullets"))
+
+    if not str(slide.get("title") or "").strip():
+        warnings.append(f"Slide {index} is missing a title.")
+    if not str(slide.get("key_message") or "").strip():
+        warnings.append(f"Slide {index} is missing a key message.")
+    if layout not in {"title", "section"} and not bullets:
+        warnings.append(f"Slide {index} needs at least one bullet.")
+    if not str(slide.get("visual_suggestion") or "").strip():
+        warnings.append(f"Slide {index} is missing a visual suggestion.")
+
+    return {
+        "index": index,
+        "title": str(slide.get("title") or "").strip(),
+        "status": "warning" if warnings else "ok",
+        "warnings": warnings[:5],
+    }
+
+
+def _slide_review_message(slide: dict[str, Any], review: dict[str, Any]) -> str:
+    if review.get("status") == "warning":
+        return f"Slide {slide.get('index')} reviewed with warnings"
+    return f"Slide {slide.get('index')} passed basic review"
 
 
 def _target_slide_count(state: DeckGraphState, raw_slides: list[Any] | None = None) -> int:

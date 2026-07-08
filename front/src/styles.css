@@ -1168,6 +1168,107 @@ label {
   background: var(--danger);
 }
 
+.slide-progress-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.slide-progress-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px;
+}
+
+.slide-progress-card.is-running {
+  border-color: rgba(15, 118, 110, 0.24);
+  background: #f4fbfa;
+}
+
+.slide-progress-card.is-warning {
+  border-color: rgba(146, 64, 14, 0.28);
+  background: #fffbeb;
+}
+
+.slide-progress-card.is-error {
+  border-color: rgba(180, 35, 24, 0.24);
+  background: #fff8f7;
+}
+
+.slide-progress-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.slide-progress-head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.slide-progress-head strong {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.slide-progress-head p,
+.slide-visual {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.slide-number {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.slide-bullets {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.slide-visual {
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+}
+
+.slide-visual strong {
+  margin-right: 6px;
+  color: var(--text);
+}
+
+.slide-warnings {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 9px 10px 9px 24px;
+  border: 1px solid rgba(146, 64, 14, 0.22);
+  border-radius: 8px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 13px;
+}
+
 .outline-preview {
   margin: 0;
   border: 1px solid var(--line);
@@ -1564,5 +1665,14 @@ label {
   .composer-toolbar-actions {
     justify-self: stretch;
     text-align: left;
+  }
+
+  .slide-progress-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .slide-progress-head .status-pill {
+    grid-column: 2;
+    justify-self: start;
   }
 }

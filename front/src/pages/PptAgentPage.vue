@@ -40,6 +40,32 @@ interface ProgressStep {
   tone: 'normal' | 'error' | 'done'
 }
 
+type SlideProgressStatus = 'pending' | 'running' | 'ready' | 'reviewed' | 'warning' | 'error'
+
+interface SlideProgress {
+  index: number
+  title: string
+  keyMessage: string
+  layout: string
+  bullets: string[]
+  visualSuggestion: string
+  speakerNotes: string
+  status: SlideProgressStatus
+  warnings: string[]
+}
+
+interface SlideProgressUpdate {
+  index: number
+  title?: string
+  keyMessage?: string
+  layout?: string
+  bullets?: string[]
+  visualSuggestion?: string
+  speakerNotes?: string
+  status?: SlideProgressStatus
+  warnings?: string[]
+}
+
 interface UserMessage {
   id: number
   role: 'user'
@@ -57,6 +83,7 @@ interface StatusMessage {
   requestId?: string
   state: 'running' | 'waiting' | 'done' | 'error'
   steps: ProgressStep[]
+  slides: SlideProgress[]
 }
 
 interface OutlineMessage {
@@ -260,6 +287,7 @@ function normalizeStoredMessage(item: Record<string, unknown>): ChatMessage {
     requestId: typeof item.requestId === 'string' ? item.requestId : undefined,
     state: normalizeStatusState(item.state),
     steps: normalizeStoredSteps(item.steps),
+    slides: normalizeStoredSlides(item.slides),
   }
 }
 
@@ -298,8 +326,59 @@ function normalizeStoredSteps(value: unknown): ProgressStep[] {
   })
 }
 
+function normalizeStoredSlides(value: unknown): SlideProgress[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((item) => {
+      const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+      const index = Number(record.index)
+      if (!Number.isFinite(index) || index <= 0) {
+        return null
+      }
+      return {
+        index,
+        title: String(record.title ?? `Slide ${index}`),
+        keyMessage: String(record.keyMessage ?? record.key_message ?? ''),
+        layout: String(record.layout ?? 'content'),
+        bullets: normalizeStringList(record.bullets),
+        visualSuggestion: String(record.visualSuggestion ?? record.visual_suggestion ?? ''),
+        speakerNotes: String(record.speakerNotes ?? record.speaker_notes ?? ''),
+        status: normalizeSlideStatus(record.status),
+        warnings: normalizeStringList(record.warnings),
+      }
+    })
+    .filter((item): item is SlideProgress => Boolean(item))
+    .sort((left, right) => left.index - right.index)
+}
+
 function normalizeStepTone(value: unknown): ProgressStep['tone'] {
   return value === 'error' || value === 'done' ? value : 'normal'
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => String(item).trim()).filter(Boolean)
+}
+
+function normalizeSlideStatus(value: unknown): SlideProgressStatus {
+  switch (value) {
+    case 'pending':
+    case 'running':
+    case 'ready':
+    case 'reviewed':
+    case 'warning':
+    case 'error':
+      return value
+    case 'ok':
+      return 'reviewed'
+    default:
+      return 'pending'
+  }
 }
 
 function submitPrompt() {
@@ -384,6 +463,7 @@ function createStatusMessage(title: string, text: string) {
     text,
     state: 'running',
     steps: [],
+    slides: [],
   })
   return id
 }
@@ -400,6 +480,99 @@ function updateStatusMessage(id: number, updater: (message: StatusMessage) => vo
   updater(message)
   messages.value = [...messages.value]
   void scrollThreadToBottom()
+}
+
+function slideProgressFromChunk(data: PptStreamChunk): SlideProgressUpdate | null {
+  const trackedEvents = new Set(['slide_started', 'slide_ready', 'slide_reviewed', 'stage_progress'])
+  if (!trackedEvents.has(data.event_type ?? '')) {
+    return null
+  }
+  if (data.event_type === 'stage_progress' && data.stage !== 'slides') {
+    return null
+  }
+  if (!data.payload || typeof data.payload !== 'object') {
+    return null
+  }
+
+  const payload = data.payload as Record<string, unknown>
+  const index = Number(payload.index)
+  if (!Number.isFinite(index) || index <= 0) {
+    return null
+  }
+
+  const warnings = normalizeStringList(payload.warnings)
+  if (typeof payload.warning === 'string' && payload.warning.trim()) {
+    warnings.push(payload.warning.trim())
+  }
+
+  const statusFromEvent =
+    data.event_type === 'slide_started'
+      ? 'running'
+      : data.event_type === 'slide_ready'
+        ? 'ready'
+        : data.event_type === 'slide_reviewed' && warnings.length > 0
+          ? 'warning'
+          : undefined
+
+  return {
+    index,
+    title: typeof payload.title === 'string' ? payload.title : undefined,
+    keyMessage: typeof payload.key_message === 'string' ? payload.key_message : undefined,
+    layout: typeof payload.layout === 'string' ? payload.layout : undefined,
+    bullets: Array.isArray(payload.bullets) ? normalizeStringList(payload.bullets) : undefined,
+    visualSuggestion: typeof payload.visual_suggestion === 'string' ? payload.visual_suggestion : undefined,
+    speakerNotes: typeof payload.speaker_notes === 'string' ? payload.speaker_notes : undefined,
+    status: normalizeSlideStatus(payload.status ?? statusFromEvent),
+    warnings,
+  }
+}
+
+function upsertSlideProgress(status: StatusMessage, update: SlideProgressUpdate) {
+  let slide = status.slides.find((item) => item.index === update.index)
+  if (!slide) {
+    slide = {
+      index: update.index,
+      title: update.title || `Slide ${update.index}`,
+      keyMessage: '',
+      layout: 'content',
+      bullets: [],
+      visualSuggestion: '',
+      speakerNotes: '',
+      status: 'pending',
+      warnings: [],
+    }
+    status.slides.push(slide)
+  }
+
+  if (update.title !== undefined) {
+    slide.title = update.title || slide.title
+  }
+  if (update.keyMessage !== undefined) {
+    slide.keyMessage = update.keyMessage
+  }
+  if (update.layout !== undefined) {
+    slide.layout = update.layout || slide.layout
+  }
+  if (update.bullets !== undefined) {
+    slide.bullets = update.bullets
+  }
+  if (update.visualSuggestion !== undefined) {
+    slide.visualSuggestion = update.visualSuggestion
+  }
+  if (update.speakerNotes !== undefined) {
+    slide.speakerNotes = update.speakerNotes
+  }
+  if (update.status !== undefined && update.status !== 'pending') {
+    slide.status = update.status
+  }
+  if (update.warnings?.length) {
+    slide.warnings = [...new Set([...slide.warnings, ...update.warnings])]
+    if (slide.status !== 'error') {
+      slide.status = 'warning'
+    }
+  }
+
+  status.slides.sort((left, right) => left.index - right.index)
 }
 
 function updateOutlineMessage(id: number, updater: (message: OutlineMessage) => void) {
@@ -550,9 +723,13 @@ function handleEvent(event: ParsedSseEvent) {
     return
   }
 
+  const slideUpdate = slideProgressFromChunk(data)
   updateStatusMessage(statusId, (status) => {
     if (data.request_id) {
       status.requestId = data.request_id
+    }
+    if (slideUpdate) {
+      upsertSlideProgress(status, slideUpdate)
     }
     status.steps.push({
       id: nextStepId(),
@@ -926,6 +1103,39 @@ function statusStateLabel(state: StatusMessage['state']) {
   }
 }
 
+function slideStatusLabel(status: SlideProgressStatus) {
+  switch (status) {
+    case 'running':
+      return 'Generating'
+    case 'ready':
+      return 'Ready'
+    case 'reviewed':
+      return 'Checked'
+    case 'warning':
+      return 'Review'
+    case 'error':
+      return 'Error'
+    default:
+      return 'Queued'
+  }
+}
+
+function slideStatusPillClass(status: SlideProgressStatus) {
+  switch (status) {
+    case 'running':
+      return 'is-running'
+    case 'ready':
+    case 'reviewed':
+      return 'is-done'
+    case 'warning':
+      return 'is-waiting'
+    case 'error':
+      return 'is-error'
+    default:
+      return 'is-waiting'
+  }
+}
+
 function formatHistoryTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
@@ -1077,6 +1287,38 @@ function formatHistoryTime(value: string) {
                   <span :class="['status-pill', `is-${message.state}`]">{{ statusStateLabel(message.state) }}</span>
                 </div>
                 <p>{{ message.text }}</p>
+
+                <div v-if="message.slides.length" class="slide-progress-list">
+                  <article
+                    v-for="slide in message.slides"
+                    :key="slide.index"
+                    :class="['slide-progress-card', `is-${slide.status}`]"
+                  >
+                    <div class="slide-progress-head">
+                      <span class="slide-number">{{ slide.index }}</span>
+                      <div>
+                        <strong>{{ slide.title }}</strong>
+                        <p v-if="slide.keyMessage">{{ slide.keyMessage }}</p>
+                      </div>
+                      <span :class="['status-pill', slideStatusPillClass(slide.status)]">
+                        {{ slideStatusLabel(slide.status) }}
+                      </span>
+                    </div>
+
+                    <ul v-if="slide.bullets.length" class="slide-bullets">
+                      <li v-for="bullet in slide.bullets" :key="bullet">{{ bullet }}</li>
+                    </ul>
+
+                    <p v-if="slide.visualSuggestion" class="slide-visual">
+                      <strong>Visual</strong>
+                      {{ slide.visualSuggestion }}
+                    </p>
+
+                    <ul v-if="slide.warnings.length" class="slide-warnings">
+                      <li v-for="warning in slide.warnings" :key="warning">{{ warning }}</li>
+                    </ul>
+                  </article>
+                </div>
 
                 <details v-if="message.steps.length" class="status-details">
                   <summary>查看过程</summary>

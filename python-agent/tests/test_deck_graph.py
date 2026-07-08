@@ -25,6 +25,9 @@ OUTLINE_MARKDOWN = """# PPTAgent MVP
 
 
 class FakeLLM:
+    def __init__(self):
+        self.invoke_count = 0
+
     def stream(self, messages):
         del messages
         midpoint = len(OUTLINE_MARKDOWN) // 2
@@ -33,31 +36,30 @@ class FakeLLM:
 
     def invoke(self, messages):
         del messages
+        self.invoke_count += 1
+        slides = [
+            {
+                "index": 1,
+                "title": "PPTAgent MVP",
+                "key_message": "A focused deck generator is now possible.",
+                "layout": "title",
+                "bullets": [],
+                "visual_suggestion": "Architecture diagram",
+                "speaker_notes": "Open with the product focus.",
+            },
+            {
+                "index": 2,
+                "title": "Architecture",
+                "key_message": "Go owns HTTP, Python owns agent workflow.",
+                "layout": "content",
+                "bullets": ["Go streams SSE", "Python runs LangGraph", "Renderer writes PPTX"],
+                "visual_suggestion": "Layered system",
+                "speaker_notes": "Explain the boundary.",
+            },
+        ]
+        slide = slides[min(self.invoke_count - 1, len(slides) - 1)]
         return SimpleNamespace(
-            content=json.dumps(
-                {
-                    "slides": [
-                        {
-                            "index": 1,
-                            "title": "PPTAgent MVP",
-                            "key_message": "A focused deck generator is now possible.",
-                            "layout": "title",
-                            "bullets": [],
-                            "visual_suggestion": "Architecture diagram",
-                            "speaker_notes": "Open with the product focus.",
-                        },
-                        {
-                            "index": 2,
-                            "title": "Architecture",
-                            "key_message": "Go owns HTTP, Python owns agent workflow.",
-                            "layout": "content",
-                            "bullets": ["Go streams SSE", "Python runs LangGraph", "Renderer writes PPTX"],
-                            "visual_suggestion": "Layered system",
-                            "speaker_notes": "Explain the boundary.",
-                        },
-                    ]
-                }
-            )
+            content=json.dumps(slide)
         )
 
 
@@ -105,6 +107,18 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
         mode, data = part
         if mode == "custom":
             events.append(data)
+
+    slide_started_events = [event for event in events if event.get("event_type") == "slide_started"]
+    assert [event["payload"]["index"] for event in slide_started_events] == [1, 2]
+    assert slide_started_events[0]["payload"]["status"] == "running"
+
+    slide_ready_events = [event for event in events if event.get("event_type") == "slide_ready"]
+    assert [event["payload"]["title"] for event in slide_ready_events] == ["PPTAgent MVP", "Architecture"]
+    assert slide_ready_events[1]["payload"]["bullets"] == ["Go streams SSE", "Python runs LangGraph", "Renderer writes PPTX"]
+    assert all(event["payload"]["status"] == "ready" for event in slide_ready_events)
+
+    slide_reviewed_events = [event for event in events if event.get("event_type") == "slide_reviewed"]
+    assert [event["payload"]["status"] for event in slide_reviewed_events] == ["ok", "ok"]
 
     artifact_events = [event for event in events if event.get("event_type") == "artifact"]
     assert artifact_events

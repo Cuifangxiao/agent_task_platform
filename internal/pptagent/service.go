@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -537,12 +538,25 @@ type persistedProgressStep struct {
 	Tone    string `json:"tone"`
 }
 
+type persistedSlideProgress struct {
+	Index            int      `json:"index"`
+	Title            string   `json:"title,omitempty"`
+	KeyMessage       string   `json:"keyMessage,omitempty"`
+	Layout           string   `json:"layout,omitempty"`
+	Bullets          []string `json:"bullets,omitempty"`
+	VisualSuggestion string   `json:"visualSuggestion,omitempty"`
+	SpeakerNotes     string   `json:"speakerNotes,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	Warnings         []string `json:"warnings,omitempty"`
+}
+
 type persistedStatusContent struct {
-	Title     string                  `json:"title"`
-	Text      string                  `json:"text"`
-	RequestID string                  `json:"requestId,omitempty"`
-	State     string                  `json:"state"`
-	Steps     []persistedProgressStep `json:"steps"`
+	Title     string                   `json:"title"`
+	Text      string                   `json:"text"`
+	RequestID string                   `json:"requestId,omitempty"`
+	State     string                   `json:"state"`
+	Steps     []persistedProgressStep  `json:"steps"`
+	Slides    []persistedSlideProgress `json:"slides,omitempty"`
 }
 
 type persistedDeckStream struct {
@@ -612,6 +626,9 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 		s.statusContent.Text = snapshot.Text
 		s.statusContent.State = snapshot.State
 	}
+	if slide := persistedSlideFromChunk(chunk); slide != nil {
+		s.upsertPersistedSlide(*slide)
+	}
 	if err := s.historyRepo.UpdateMessageContent(
 		s.ctx,
 		s.statusMessageID,
@@ -646,6 +663,113 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 	}
 
 	return nil
+}
+
+func (s *persistedDeckStream) upsertPersistedSlide(incoming persistedSlideProgress) {
+	if incoming.Index <= 0 {
+		return
+	}
+	if incoming.Status == "" {
+		incoming.Status = "pending"
+	}
+
+	for index := range s.statusContent.Slides {
+		if s.statusContent.Slides[index].Index != incoming.Index {
+			continue
+		}
+		mergePersistedSlide(&s.statusContent.Slides[index], incoming)
+		return
+	}
+
+	insertAt := len(s.statusContent.Slides)
+	for index, slide := range s.statusContent.Slides {
+		if incoming.Index < slide.Index {
+			insertAt = index
+			break
+		}
+	}
+	s.statusContent.Slides = append(s.statusContent.Slides, persistedSlideProgress{})
+	copy(s.statusContent.Slides[insertAt+1:], s.statusContent.Slides[insertAt:])
+	s.statusContent.Slides[insertAt] = incoming
+}
+
+func persistedSlideFromChunk(chunk *DeckStreamChunk) *persistedSlideProgress {
+	if chunk == nil || len(chunk.Payload) == 0 {
+		return nil
+	}
+	if chunk.EventType != "slide_started" &&
+		chunk.EventType != "slide_ready" &&
+		chunk.EventType != "slide_reviewed" &&
+		!(chunk.EventType == "stage_progress" && chunk.Stage == "slides") {
+		return nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(chunk.Payload, &payload); err != nil {
+		return nil
+	}
+	index := payloadInt(payload["index"])
+	if index <= 0 {
+		return nil
+	}
+
+	warnings := payloadStringSlice(payload["warnings"])
+	if warning := payloadString(payload["warning"]); warning != "" {
+		warnings = append(warnings, warning)
+	}
+	status := normalizePersistedSlideStatus(payloadString(payload["status"]))
+	switch {
+	case chunk.EventType == "slide_started" && status == "":
+		status = "running"
+	case chunk.EventType == "slide_ready" && status == "":
+		status = "ready"
+	case chunk.EventType == "slide_reviewed" && len(warnings) > 0:
+		status = "warning"
+	case chunk.EventType == "slide_reviewed" && status == "":
+		status = "reviewed"
+	}
+
+	return &persistedSlideProgress{
+		Index:            index,
+		Title:            payloadString(payload["title"]),
+		KeyMessage:       payloadString(payload["key_message"]),
+		Layout:           payloadString(payload["layout"]),
+		Bullets:          payloadStringSlice(payload["bullets"]),
+		VisualSuggestion: payloadString(payload["visual_suggestion"]),
+		SpeakerNotes:     payloadString(payload["speaker_notes"]),
+		Status:           status,
+		Warnings:         warnings,
+	}
+}
+
+func mergePersistedSlide(existing *persistedSlideProgress, incoming persistedSlideProgress) {
+	if incoming.Title != "" {
+		existing.Title = incoming.Title
+	}
+	if incoming.KeyMessage != "" {
+		existing.KeyMessage = incoming.KeyMessage
+	}
+	if incoming.Layout != "" {
+		existing.Layout = incoming.Layout
+	}
+	if len(incoming.Bullets) > 0 {
+		existing.Bullets = incoming.Bullets
+	}
+	if incoming.VisualSuggestion != "" {
+		existing.VisualSuggestion = incoming.VisualSuggestion
+	}
+	if incoming.SpeakerNotes != "" {
+		existing.SpeakerNotes = incoming.SpeakerNotes
+	}
+	if incoming.Status != "" && incoming.Status != "pending" {
+		existing.Status = incoming.Status
+	}
+	if len(incoming.Warnings) > 0 {
+		existing.Warnings = appendUniqueStrings(existing.Warnings, incoming.Warnings...)
+		if existing.Status != "error" {
+			existing.Status = "warning"
+		}
+	}
 }
 
 func (s *persistedDeckStream) upsertOutlineMessage(requestID string, chunk *DeckStreamChunk, awaitingConfirm bool) error {
@@ -826,6 +950,84 @@ func toneForPersistence(chunk *DeckStreamChunk) string {
 		return "done"
 	}
 	return "normal"
+}
+
+func payloadString(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func payloadStringSlice(value any) []string {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		text := strings.TrimSpace(fmt.Sprint(item))
+		if text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func payloadInt(value any) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func normalizePersistedSlideStatus(value string) string {
+	switch strings.TrimSpace(value) {
+	case "pending", "running", "ready", "reviewed", "warning", "error":
+		return strings.TrimSpace(value)
+	case "ok":
+		return "reviewed"
+	default:
+		return ""
+	}
+}
+
+func appendUniqueStrings(existing []string, values ...string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(values))
+	result := make([]string, 0, len(existing)+len(values))
+	for _, value := range existing {
+		text := strings.TrimSpace(value)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		result = append(result, text)
+	}
+	for _, value := range values {
+		text := strings.TrimSpace(value)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		result = append(result, text)
+	}
+	return result
 }
 
 func extractOutlineMarkdownForPersistence(chunk *DeckStreamChunk) string {
