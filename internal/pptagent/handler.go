@@ -18,7 +18,7 @@ import (
 )
 
 const maxSourceFileBytes = 20 << 20
-const maxGenerateDeckMultipartBytes = maxSourceFileBytes + (2 << 20)
+const maxGenerateDeckMultipartBytes = 256 << 20
 
 type Handler struct {
 	service *Service
@@ -203,21 +203,15 @@ func bindGenerateDeckMultipart(c *gin.Context) (GenerateDeckRequest, error) {
 		AgentConfigID: parseOptionalInt64Form(c, "agent_config_id"),
 	}
 
-	file, header, err := sourceFileFormFile(c)
-	if err != nil {
-		if !errors.Is(err, http.ErrMissingFile) {
-			return GenerateDeckRequest{}, err
-		}
-		return req, nil
-	}
-	defer file.Close()
-
-	data, err := readSourceFile(file, header)
+	sourceFiles, err := sourceFilesFromMultipart(c)
 	if err != nil {
 		return GenerateDeckRequest{}, err
 	}
-	req.SourceFileName = header.Filename
-	req.SourceFile = data
+	req.SourceFiles = sourceFiles
+	if len(sourceFiles) > 0 {
+		req.SourceFileName = sourceFiles[0].FileName
+		req.SourceFile = sourceFiles[0].Content
+	}
 	return req, nil
 }
 
@@ -233,12 +227,42 @@ func parseOptionalInt64Form(c *gin.Context, key string) int64 {
 	return value
 }
 
-func sourceFileFormFile(c *gin.Context) (multipart.File, *multipart.FileHeader, error) {
-	file, header, err := c.Request.FormFile("source_file")
-	if err == nil || !errors.Is(err, http.ErrMissingFile) {
-		return file, header, err
+func sourceFilesFromMultipart(c *gin.Context) ([]SourceFile, error) {
+	if c.Request.MultipartForm == nil {
+		return nil, nil
 	}
-	return c.Request.FormFile("file")
+
+	var sourceFiles []SourceFile
+	for _, key := range []string{"source_files", "source_file", "file"} {
+		for _, header := range c.Request.MultipartForm.File[key] {
+			sourceFile, err := readSourceFileHeader(header)
+			if err != nil {
+				return nil, err
+			}
+			sourceFiles = append(sourceFiles, sourceFile)
+		}
+	}
+	return sourceFiles, nil
+}
+
+func readSourceFileHeader(header *multipart.FileHeader) (SourceFile, error) {
+	if header == nil {
+		return SourceFile{}, http.ErrMissingFile
+	}
+	file, err := header.Open()
+	if err != nil {
+		return SourceFile{}, err
+	}
+	defer file.Close()
+
+	data, err := readSourceFile(file, header)
+	if err != nil {
+		return SourceFile{}, err
+	}
+	return SourceFile{
+		FileName: header.Filename,
+		Content:  data,
+	}, nil
 }
 
 func readSourceFile(file multipart.File, header *multipart.FileHeader) ([]byte, error) {

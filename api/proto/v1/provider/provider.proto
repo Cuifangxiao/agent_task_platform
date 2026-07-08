@@ -67,12 +67,18 @@ message DeckNodeModelConfig {
   int32 max_tokens = 8;
 }
 
+message DeckSourceFile {
+  string filename = 1;
+  bytes content = 2;
+}
+
 message GenerateDeckRequest {
   UserContext user = 1;
   string user_description = 2;
   string source_file_filename = 3;
   bytes source_file = 4;
   repeated DeckNodeModelConfig node_model_configs = 5;
+  repeated DeckSourceFile source_files = 6;
 }
 
 message ResumeDeckRequest {

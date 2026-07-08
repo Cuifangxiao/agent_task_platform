@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
-import { Database, KeyRound, Plus, Save, Trash2 } from '@lucide/vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { Database, KeyRound, Plus, Save, Trash2, X } from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -33,6 +33,7 @@ interface Draft {
 }
 
 const draft = reactive<Draft>(emptyDraft())
+const isEditorOpen = ref(false)
 
 const selectedProvider = computed(() => props.providers.find((item) => item.name === draft.provider) ?? null)
 const selectedModel = computed(
@@ -123,6 +124,7 @@ function edit(model: ModelConfig) {
     is_default: model.is_default,
     status: model.status,
   })
+  isEditorOpen.value = true
 }
 
 function reset() {
@@ -131,6 +133,11 @@ function reset() {
     draft.provider = props.providers[0].name
     syncProviderDefaults()
   }
+  isEditorOpen.value = true
+}
+
+function closeEditor() {
+  isEditorOpen.value = false
 }
 
 function submit() {
@@ -155,138 +162,147 @@ function submit() {
 </script>
 
 <template>
-  <section class="page two-column">
-    <div>
-      <div class="page-head">
-        <div>
-          <h1>Model Config</h1>
-          <p>把模型凭证和调用参数保存成用户可理解的名称。</p>
-        </div>
-        <button class="btn" type="button" @click="reset">
-          <Plus :size="18" />
-          新建
-        </button>
+  <section class="page">
+    <div class="page-head">
+      <div>
+        <h1>Model Config</h1>
+        <p>把模型凭证和调用参数保存成用户可理解的名称。</p>
       </div>
-
-      <EmptyState
-        v-if="models.length === 0"
-        :icon="Database"
-        title="还没有模型配置"
-        text="先创建一个 active Model Config，之后才能给 Agent 节点绑定模型。"
-      />
-
-      <div v-else class="list-stack">
-        <button v-for="model in models" :key="model.id" class="list-item" type="button" @click="edit(model)">
-          <div>
-            <strong>{{ model.name }}</strong>
-            <span>{{ model.provider }} / {{ model.model_name }}</span>
-          </div>
-          <div class="row-actions">
-            <StatusBadge v-if="model.is_default" tone="blue" label="默认" />
-            <StatusBadge :tone="model.status === 'active' ? 'green' : 'gray'" :label="model.status" />
-          </div>
-        </button>
-      </div>
+      <button class="btn" type="button" @click="reset">
+        <Plus :size="18" />
+        新建
+      </button>
     </div>
 
-    <form class="editor-panel" @submit.prevent="submit">
-      <div class="panel-head">
+    <EmptyState
+      v-if="models.length === 0"
+      :icon="Database"
+      title="还没有模型配置"
+      text="先创建一个 active Model Config，之后才能给 Agent 节点绑定模型。"
+    />
+
+    <div v-else class="list-stack">
+      <button v-for="model in models" :key="model.id" class="list-item" type="button" @click="edit(model)">
         <div>
-          <h2>{{ draft.id ? '编辑模型配置' : '新建模型配置' }}</h2>
-          <p v-if="draft.id">留空 API Key 会保留原密钥。</p>
+          <strong>{{ model.name }}</strong>
+          <span>{{ model.provider }} / {{ model.model_name }}</span>
         </div>
-        <button v-if="draft.id" class="icon-btn danger" type="button" title="删除" @click="emit('delete', draft.id)">
-          <Trash2 :size="18" />
-        </button>
+        <div class="row-actions">
+          <StatusBadge v-if="model.is_default" tone="blue" label="默认" />
+          <StatusBadge :tone="model.status === 'active' ? 'green' : 'gray'" :label="model.status" />
+        </div>
+      </button>
+    </div>
+
+    <Teleport to="body">
+      <div v-if="isEditorOpen" class="modal-backdrop" @click.self="closeEditor">
+        <form class="modal-panel config-modal" role="dialog" aria-modal="true" @submit.prevent="submit">
+          <div class="modal-head">
+            <div>
+              <h2>{{ draft.id ? '编辑模型配置' : '新建模型配置' }}</h2>
+              <p>{{ draft.id ? '留空 API Key 会保留原密钥。' : '填写模型凭证和默认调用参数。' }}</p>
+            </div>
+            <div class="modal-head-actions">
+              <button v-if="draft.id" class="icon-btn danger" type="button" title="删除" @click="emit('delete', draft.id)">
+                <Trash2 :size="18" />
+              </button>
+              <button class="icon-btn" type="button" title="关闭" @click="closeEditor">
+                <X :size="18" />
+              </button>
+            </div>
+          </div>
+
+          <div class="modal-body">
+            <label>
+              配置名称
+              <input v-model="draft.name" required maxlength="64" placeholder="例如：高级模型" />
+            </label>
+
+            <div class="form-grid">
+              <label>
+                Provider
+                <select v-model="draft.provider" required>
+                  <option v-for="provider in providers" :key="provider.name" :value="provider.name">
+                    {{ provider.display_name || provider.name }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                Model
+                <select v-model="draft.model_name" required>
+                  <option v-for="model in selectedProvider?.models ?? []" :key="model.id" :value="model.model_name">
+                    {{ model.display_name || model.model_name }}
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <label>
+              Base URL
+              <input v-model="draft.base_url" placeholder="https://api.example.com" />
+            </label>
+
+            <label>
+              API Key
+              <input v-model="draft.api_key" type="password" :required="!draft.id" placeholder="sk-..." />
+            </label>
+
+            <div class="form-grid">
+              <label>
+                Temperature
+                <input v-model.number="draft.temperature" type="number" min="0" max="2" step="0.1" />
+              </label>
+              <label>
+                Max tokens
+                <input v-model.number="draft.max_tokens" type="number" min="1" step="1" />
+              </label>
+            </div>
+
+            <div v-if="dynamicParameters.length" class="subsection">
+              <h3>Provider Options</h3>
+              <label v-for="parameter in dynamicParameters" :key="parameter.name">
+                {{ parameter.display_name || parameter.name }}
+                <select v-if="parameter.type === 'enum'" v-model="draft.provider_options[parameter.name]">
+                  <option v-for="option in parameter.options" :key="option" :value="option">{{ option }}</option>
+                </select>
+                <select v-else-if="parameter.type === 'boolean'" v-model="draft.provider_options[parameter.name]">
+                  <option :value="true">true</option>
+                  <option :value="false">false</option>
+                </select>
+                <input
+                  v-else
+                  v-model="draft.provider_options[parameter.name]"
+                  :type="parameter.type === 'integer' || parameter.type === 'number' ? 'number' : 'text'"
+                  :min="parameter.min"
+                  :max="parameter.max"
+                />
+              </label>
+            </div>
+
+            <div class="check-row">
+              <label><input v-model="draft.is_default" type="checkbox" /> 设为默认</label>
+              <label>
+                状态
+                <select v-model="draft.status">
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button class="btn ghost" type="button" :disabled="!draft.provider || !draft.api_key" @click="emit('testCredential', draft.provider, draft.api_key, draft.base_url)">
+              <KeyRound :size="18" />
+              测试凭证
+            </button>
+            <button class="btn primary" type="submit" :disabled="saving">
+              <Save :size="18" />
+              保存 Model Config
+            </button>
+          </div>
+        </form>
       </div>
-
-      <label>
-        配置名称
-        <input v-model="draft.name" required maxlength="64" placeholder="例如：高级模型" />
-      </label>
-
-      <div class="form-grid">
-        <label>
-          Provider
-          <select v-model="draft.provider" required>
-            <option v-for="provider in providers" :key="provider.name" :value="provider.name">
-              {{ provider.display_name || provider.name }}
-            </option>
-          </select>
-        </label>
-        <label>
-          Model
-          <select v-model="draft.model_name" required>
-            <option v-for="model in selectedProvider?.models ?? []" :key="model.id" :value="model.model_name">
-              {{ model.display_name || model.model_name }}
-            </option>
-          </select>
-        </label>
-      </div>
-
-      <label>
-        Base URL
-        <input v-model="draft.base_url" placeholder="https://api.example.com" />
-      </label>
-
-      <label>
-        API Key
-        <input v-model="draft.api_key" type="password" :required="!draft.id" placeholder="sk-..." />
-      </label>
-
-      <div class="form-grid">
-        <label>
-          Temperature
-          <input v-model.number="draft.temperature" type="number" min="0" max="2" step="0.1" />
-        </label>
-        <label>
-          Max tokens
-          <input v-model.number="draft.max_tokens" type="number" min="1" step="1" />
-        </label>
-      </div>
-
-      <div v-if="dynamicParameters.length" class="subsection">
-        <h3>Provider Options</h3>
-        <label v-for="parameter in dynamicParameters" :key="parameter.name">
-          {{ parameter.display_name || parameter.name }}
-          <select v-if="parameter.type === 'enum'" v-model="draft.provider_options[parameter.name]">
-            <option v-for="option in parameter.options" :key="option" :value="option">{{ option }}</option>
-          </select>
-          <select v-else-if="parameter.type === 'boolean'" v-model="draft.provider_options[parameter.name]">
-            <option :value="true">true</option>
-            <option :value="false">false</option>
-          </select>
-          <input
-            v-else
-            v-model="draft.provider_options[parameter.name]"
-            :type="parameter.type === 'integer' || parameter.type === 'number' ? 'number' : 'text'"
-            :min="parameter.min"
-            :max="parameter.max"
-          />
-        </label>
-      </div>
-
-      <div class="check-row">
-        <label><input v-model="draft.is_default" type="checkbox" /> 设为默认</label>
-        <label>
-          状态
-          <select v-model="draft.status">
-            <option value="active">active</option>
-            <option value="inactive">inactive</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="button-row">
-        <button class="btn ghost" type="button" :disabled="!draft.provider || !draft.api_key" @click="emit('testCredential', draft.provider, draft.api_key, draft.base_url)">
-          <KeyRound :size="18" />
-          测试凭证
-        </button>
-        <button class="btn primary" type="submit" :disabled="saving">
-          <Save :size="18" />
-          保存 Model Config
-        </button>
-      </div>
-    </form>
+    </Teleport>
   </section>
 </template>

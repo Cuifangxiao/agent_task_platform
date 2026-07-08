@@ -12,13 +12,20 @@ type GenerateDeckRequest struct {
 	Description    string `json:"description" binding:"required,min=1,max=5000"`
 	SourceFileName string `json:"source_file_name"`
 	SourceFile     []byte `json:"-"`
+	SourceFiles    []SourceFile
 }
 
 type RuntimeGenerateDeckRequest struct {
 	Description      string
 	SourceFileName   string
 	SourceFile       []byte
+	SourceFiles      []SourceFile
 	NodeModelConfigs []RuntimeNodeModelConfig
+}
+
+type SourceFile struct {
+	FileName string
+	Content  []byte
 }
 
 type ResumeDeckRequest struct {
