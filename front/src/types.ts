@@ -148,7 +148,7 @@ export interface PptGeneratePayload {
 
 export interface PptResumePayload {
   request_id: string
-  outline: unknown
+  outline_markdown: string
 }
 
 export interface ParsedSseEvent {
@@ -162,6 +162,10 @@ export interface PptStreamChunk {
   event_type?: string
   stage?: string
   message?: string
+  channel?: string
+  text_delta?: string
+  content?: string
+  outline_markdown?: string
   payload?: unknown
   artifact_url?: string
   done?: boolean

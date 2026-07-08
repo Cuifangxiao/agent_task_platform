@@ -30,7 +30,7 @@ class ResumeDeckInput:
     user_id: int
     username: str
     request_id: str
-    outline_json: str = ""
+    outline_markdown: str = ""
     node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
 
 
@@ -40,6 +40,10 @@ class GenerateDeckOutput:
     event_type: str
     stage: str = ""
     message: str = ""
+    channel: str = ""
+    text_delta: str = ""
+    content: str = ""
+    outline_markdown: str = ""
     payload_json: str = ""
     artifact_path: str = ""
     done: bool = False

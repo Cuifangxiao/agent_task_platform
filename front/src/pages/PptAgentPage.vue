@@ -33,18 +33,6 @@ const props = defineProps<{
   resumePpt: (payload: PptResumePayload, onEvent: (event: ParsedSseEvent) => void, signal: AbortSignal) => Promise<void>
 }>()
 
-interface OutlineSlide {
-  index: number
-  title: string
-  keyMessage: string
-}
-
-interface OutlinePlan {
-  title: string
-  narrative: string
-  slides: OutlineSlide[]
-}
-
 interface ProgressStep {
   id: number
   label: string
@@ -78,8 +66,7 @@ interface OutlineMessage {
   title: string
   text: string
   requestId: string
-  outline: OutlinePlan | null
-  outlineJson: string
+  outlineMarkdown: string
   awaitingConfirm: boolean
   showEditor: boolean
 }
@@ -246,8 +233,7 @@ function normalizeStoredMessage(item: Record<string, unknown>): ChatMessage {
       title: String(item.title ?? 'PPT 大纲'),
       text: String(item.text ?? ''),
       requestId: String(item.requestId ?? ''),
-      outline: toOutlinePlan(item.outline),
-      outlineJson: String(item.outlineJson ?? '{}'),
+      outlineMarkdown: String(item.outlineMarkdown ?? ''),
       awaitingConfirm: Boolean(item.awaitingConfirm),
       showEditor: Boolean(item.showEditor),
     }
@@ -459,11 +445,13 @@ function markCurrentRunAsFailed(message: string) {
 async function confirmOutline(message: OutlineMessage) {
   error.value = ''
 
-  let outline: unknown
+  const outlineMarkdown = message.outlineMarkdown.trim()
   try {
-    outline = JSON.parse(message.outlineJson)
+    if (!outlineMarkdown) {
+      throw new Error('empty outline')
+    }
   } catch {
-    error.value = '大纲 JSON 格式不正确，请检查后再继续。'
+    error.value = '请先补充大纲内容。'
     updateOutlineMessage(message.id, (draft) => {
       draft.showEditor = true
     })
@@ -494,7 +482,7 @@ async function confirmOutline(message: OutlineMessage) {
     await props.resumePpt(
       {
         request_id: message.requestId,
-        outline,
+        outline_markdown: outlineMarkdown,
       },
       handleEvent,
       controller.signal,
@@ -542,6 +530,11 @@ function handleEvent(event: ParsedSseEvent) {
     currentConversationId.value = data.conversation_id
   }
 
+  if (data.event_type === 'text_delta' && data.channel === 'outline_markdown') {
+    upsertOutlineDelta(data)
+    return
+  }
+
   updateStatusMessage(statusId, (status) => {
     if (data.request_id) {
       status.requestId = data.request_id
@@ -560,8 +553,11 @@ function handleEvent(event: ParsedSseEvent) {
     }
   })
 
+  if (data.event_type === 'outline') {
+    upsertOutlineMessage(data, false)
+  }
   if (data.event_type === 'interrupt') {
-    upsertOutlineMessage(data)
+    upsertOutlineMessage(data, true)
   }
   if (data.event_type === 'artifact') {
     upsertResultMessage(data)
@@ -586,24 +582,18 @@ function normalizeChunk(value: unknown): PptStreamChunk {
   return { message: String(value) }
 }
 
-function upsertOutlineMessage(data: PptStreamChunk) {
+function upsertOutlineDelta(data: PptStreamChunk) {
   const requestId = data.request_id?.trim()
-  if (!requestId) {
+  const delta = data.text_delta ?? ''
+  if (!requestId || !delta) {
     return
   }
 
-  const outlineSource = extractOutlineSource(data)
-  const outlineJson = JSON.stringify(outlineSource ?? {}, null, 2)
-  const outline = toOutlinePlan(outlineSource)
   const existing = messages.value.find((item) => item.kind === 'outline' && item.requestId === requestId)
-
   if (existing && existing.kind === 'outline') {
     updateOutlineMessage(existing.id, (message) => {
-      message.title = outline?.title || 'PPT 大纲'
-      message.text = '我先给你一版大纲，确认后继续生成完整 PPT。'
-      message.outline = outline
-      message.outlineJson = outlineJson
-      message.awaitingConfirm = true
+      message.outlineMarkdown += delta
+      message.title = outlineTitle(message.outlineMarkdown)
     })
     return
   }
@@ -612,12 +602,46 @@ function upsertOutlineMessage(data: PptStreamChunk) {
     id: nextMessageId(),
     role: 'assistant',
     kind: 'outline',
-    title: outline?.title || 'PPT 大纲',
+    title: outlineTitle(delta),
+    text: '正在生成 Markdown 大纲，确认后继续生成完整 PPT。',
+    requestId,
+    outlineMarkdown: delta,
+    awaitingConfirm: false,
+    showEditor: false,
+  })
+}
+
+function upsertOutlineMessage(data: PptStreamChunk, awaitingConfirm: boolean) {
+  const requestId = data.request_id?.trim()
+  if (!requestId) {
+    return
+  }
+
+  const outlineMarkdown = extractOutlineMarkdown(data)
+  const existing = messages.value.find((item) => item.kind === 'outline' && item.requestId === requestId)
+
+  if (existing && existing.kind === 'outline') {
+    updateOutlineMessage(existing.id, (message) => {
+      message.title = outlineTitle(outlineMarkdown || message.outlineMarkdown)
+      message.text = '我先给你一版大纲，确认后继续生成完整 PPT。'
+      if (outlineMarkdown) {
+        message.outlineMarkdown = outlineMarkdown
+      }
+      message.title = outlineTitle(message.outlineMarkdown)
+      message.awaitingConfirm = awaitingConfirm
+    })
+    return
+  }
+
+  pushMessage({
+    id: nextMessageId(),
+    role: 'assistant',
+    kind: 'outline',
+    title: outlineTitle(outlineMarkdown),
     text: '我先给你一版大纲，确认后继续生成完整 PPT。',
     requestId,
-    outline,
-    outlineJson,
-    awaitingConfirm: true,
+    outlineMarkdown,
+    awaitingConfirm,
     showEditor: false,
   })
 }
@@ -644,43 +668,35 @@ function upsertResultMessage(data: PptStreamChunk) {
   })
 }
 
-function extractOutlineSource(data: PptStreamChunk) {
+function extractOutlineMarkdown(data: PptStreamChunk) {
+  if (typeof data.outline_markdown === 'string' && data.outline_markdown.trim()) {
+    return data.outline_markdown
+  }
+  if (typeof data.content === 'string' && data.content.trim()) {
+    return data.content
+  }
   if (!data.payload || typeof data.payload !== 'object') {
-    return null
+    return ''
   }
   const payload = data.payload as Record<string, unknown>
-  if (payload.outline && typeof payload.outline === 'object') {
+  if (typeof payload.outline_markdown === 'string') {
+    return payload.outline_markdown
+  }
+  if (typeof payload.outlineMarkdown === 'string') {
+    return payload.outlineMarkdown
+  }
+  if (typeof payload.outline === 'string') {
     return payload.outline
   }
-  return payload
+  return ''
 }
 
-function toOutlinePlan(value: unknown): OutlinePlan | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const record = value as Record<string, unknown>
-  const rawSlides = Array.isArray(record.slides) ? record.slides : []
-  const slides = rawSlides
-    .map((item, index) => {
-      if (!item || typeof item !== 'object') {
-        return null
-      }
-      const slide = item as Record<string, unknown>
-      return {
-        index: Number(slide.index ?? index + 1),
-        title: String(slide.title ?? `第 ${index + 1} 页`),
-        keyMessage: String(slide.key_message ?? slide.keyMessage ?? ''),
-      }
-    })
-    .filter((item): item is OutlineSlide => item !== null)
-
-  return {
-    title: String(record.title ?? 'PPT 大纲'),
-    narrative: String(record.narrative ?? ''),
-    slides,
-  }
+function outlineTitle(markdown: string) {
+  const heading = markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.startsWith('# '))
+  return heading ? heading.replace(/^#\s+/, '').trim() || 'PPT 大纲' : 'PPT 大纲'
 }
 
 function extractArtifactFileName(data: PptStreamChunk) {
@@ -1068,28 +1084,11 @@ function formatHistoryTime(value: string) {
                 </div>
                 <p>{{ message.text }}</p>
 
-                <div v-if="message.outline" class="outline-preview">
-                  <p v-if="message.outline.narrative" class="outline-narrative">{{ message.outline.narrative }}</p>
-                  <ol class="outline-slides">
-                    <li
-                      v-for="slide in message.outline.slides"
-                      :key="`${message.id}-${slide.index}`"
-                      class="outline-slide"
-                    >
-                      <span>{{ slide.index }}</span>
-                      <div>
-                        <strong>{{ slide.title }}</strong>
-                        <p v-if="slide.keyMessage">{{ slide.keyMessage }}</p>
-                      </div>
-                    </li>
-                  </ol>
-                </div>
-
-                <pre v-else class="json-preview">{{ message.outlineJson }}</pre>
+                <pre class="outline-preview markdown-preview">{{ message.outlineMarkdown }}</pre>
 
                 <textarea
                   v-if="message.showEditor"
-                  v-model="message.outlineJson"
+                  v-model="message.outlineMarkdown"
                   class="outline-editor"
                   rows="12"
                   spellcheck="false"
@@ -1106,7 +1105,7 @@ function formatHistoryTime(value: string) {
                     :disabled="running"
                     @click="message.showEditor = !message.showEditor"
                   >
-                    {{ message.showEditor ? '收起 JSON' : '编辑 JSON' }}
+                    {{ message.showEditor ? '收起大纲' : '编辑大纲' }}
                   </button>
                 </div>
               </template>

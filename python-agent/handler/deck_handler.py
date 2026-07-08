@@ -40,7 +40,7 @@ class DeckHandler:
                 user_id=req.user.user_id,
                 username=req.user.username,
                 request_id=req.request_id,
-                outline_json=req.outline_json,
+                outline_markdown=req.outline_markdown,
                 node_model_configs=[
                     DeckNodeModelConfig(
                         node_key=item.node_key,
@@ -65,6 +65,10 @@ def _to_generate_deck_response(out: GenerateDeckOutput):
         event_type=out.event_type,
         stage=out.stage,
         message=out.message,
+        channel=out.channel,
+        text_delta=out.text_delta,
+        content=out.content,
+        outline_markdown=out.outline_markdown,
         payload_json=out.payload_json,
         artifact_path=out.artifact_path,
         done=out.done,

@@ -144,13 +144,12 @@ func (s *Service) ResumeDeck(
 		return nil, fmt.Errorf("%w: request_id is required", ErrInvalidRequest)
 	}
 
-	outlineJSON := strings.TrimSpace(string(req.Outline))
-	if outlineJSON == "" || outlineJSON == "null" {
-		return nil, fmt.Errorf("%w: outline is required", ErrInvalidRequest)
+	outlineMarkdown := strings.TrimSpace(req.OutlineMarkdown)
+	if outlineMarkdown == "" {
+		return nil, fmt.Errorf("%w: outline_markdown is required", ErrInvalidRequest)
 	}
-	var outline map[string]any
-	if err := json.Unmarshal([]byte(outlineJSON), &outline); err != nil {
-		return nil, fmt.Errorf("%w: outline must be a JSON object", ErrInvalidRequest)
+	if len([]rune(outlineMarkdown)) > 50000 {
+		return nil, fmt.Errorf("%w: outline_markdown must be <= 50000 characters", ErrInvalidRequest)
 	}
 
 	conversation, err := s.historyRepo.GetConversationByRequestID(ctx, user.UserID, requestID)
@@ -177,7 +176,7 @@ func (s *Service) ResumeDeck(
 
 	stream, err := s.runtimeClient.ResumeDeck(ctx, user, RuntimeResumeDeckRequest{
 		RequestID:        requestID,
-		OutlineJSON:      outlineJSON,
+		OutlineMarkdown:  outlineMarkdown,
 		NodeModelConfigs: runtimeModels,
 	})
 	if err != nil {
@@ -587,6 +586,9 @@ func (s *persistedDeckStream) Close() error {
 
 func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 	requestID := strings.TrimSpace(chunk.RequestID)
+	if chunk.EventType == "text_delta" && chunk.Stage == "outline" {
+		return nil
+	}
 	snapshot := describePersistedChunk(chunk)
 
 	step := persistedProgressStep{
@@ -626,8 +628,8 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 		return err
 	}
 
-	if chunk.EventType == "interrupt" {
-		if err := s.upsertOutlineMessage(requestID, chunk); err != nil {
+	if chunk.EventType == "outline" || chunk.EventType == "interrupt" {
+		if err := s.upsertOutlineMessage(requestID, chunk, chunk.EventType == "interrupt"); err != nil {
 			return err
 		}
 	}
@@ -640,14 +642,13 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 	return nil
 }
 
-func (s *persistedDeckStream) upsertOutlineMessage(requestID string, chunk *DeckStreamChunk) error {
+func (s *persistedDeckStream) upsertOutlineMessage(requestID string, chunk *DeckStreamChunk, awaitingConfirm bool) error {
 	content := map[string]any{
 		"title":           "PPT 大纲",
 		"text":            "我先给你一版大纲，确认后继续生成完整 PPT。",
 		"requestId":       requestID,
-		"outline":         extractOutlineSourceForPersistence(chunk.Payload),
-		"outlineJson":     prettyOutlineJSON(chunk.Payload),
-		"awaitingConfirm": true,
+		"outlineMarkdown": extractOutlineMarkdownForPersistence(chunk),
+		"awaitingConfirm": awaitingConfirm,
 		"showEditor":      false,
 	}
 
@@ -821,24 +822,31 @@ func toneForPersistence(chunk *DeckStreamChunk) string {
 	return "normal"
 }
 
-func extractOutlineSourceForPersistence(raw json.RawMessage) any {
+func extractOutlineMarkdownForPersistence(chunk *DeckStreamChunk) string {
+	if chunk == nil {
+		return ""
+	}
+	if strings.TrimSpace(chunk.OutlineMarkdown) != "" {
+		return chunk.OutlineMarkdown
+	}
+	if strings.TrimSpace(chunk.Content) != "" {
+		return chunk.Content
+	}
+	raw := chunk.Payload
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return map[string]any{}
+		return ""
 	}
-	if outline, ok := payload["outline"]; ok {
+	if outline, ok := payload["outline_markdown"].(string); ok {
 		return outline
 	}
-	return payload
-}
-
-func prettyOutlineJSON(raw json.RawMessage) string {
-	source := extractOutlineSourceForPersistence(raw)
-	data, err := json.MarshalIndent(source, "", "  ")
-	if err != nil {
-		return "{}"
+	if outline, ok := payload["outlineMarkdown"].(string); ok {
+		return outline
 	}
-	return string(data)
+	if outline, ok := payload["outline"].(string); ok {
+		return outline
+	}
+	return ""
 }
 
 func extractArtifactFileNameForPersistence(raw json.RawMessage) string {

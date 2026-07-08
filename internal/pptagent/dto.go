@@ -22,13 +22,13 @@ type RuntimeGenerateDeckRequest struct {
 }
 
 type ResumeDeckRequest struct {
-	RequestID string          `json:"request_id" binding:"required"`
-	Outline   json.RawMessage `json:"outline"`
+	RequestID       string `json:"request_id" binding:"required"`
+	OutlineMarkdown string `json:"outline_markdown" binding:"required"`
 }
 
 type RuntimeResumeDeckRequest struct {
 	RequestID        string
-	OutlineJSON      string
+	OutlineMarkdown  string
 	NodeModelConfigs []RuntimeNodeModelConfig
 }
 
@@ -44,16 +44,20 @@ type RuntimeNodeModelConfig struct {
 }
 
 type DeckStreamChunk struct {
-	ConversationID int64           `json:"conversation_id,omitempty"`
-	RequestID      string          `json:"request_id"`
-	EventType      string          `json:"event_type,omitempty"`
-	Stage          string          `json:"stage,omitempty"`
-	Message        string          `json:"message,omitempty"`
-	Payload        json.RawMessage `json:"payload,omitempty"`
-	ArtifactURL    string          `json:"artifact_url,omitempty"`
-	Done           bool            `json:"done,omitempty"`
-	Error          string          `json:"error,omitempty"`
-	Sequence       int32           `json:"sequence"`
+	ConversationID  int64           `json:"conversation_id,omitempty"`
+	RequestID       string          `json:"request_id"`
+	EventType       string          `json:"event_type,omitempty"`
+	Stage           string          `json:"stage,omitempty"`
+	Message         string          `json:"message,omitempty"`
+	Channel         string          `json:"channel,omitempty"`
+	TextDelta       string          `json:"text_delta,omitempty"`
+	Content         string          `json:"content,omitempty"`
+	OutlineMarkdown string          `json:"outline_markdown,omitempty"`
+	Payload         json.RawMessage `json:"payload,omitempty"`
+	ArtifactURL     string          `json:"artifact_url,omitempty"`
+	Done            bool            `json:"done,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	Sequence        int32           `json:"sequence"`
 }
 
 type ConversationSummaryResponse struct {

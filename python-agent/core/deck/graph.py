@@ -21,15 +21,10 @@ PROMPT_DIR = Path(__file__).with_name("prompts")
 class DeckGraphState(TypedDict, total=False):
     request_id: str
     deck_title: str
-    audience: str
-    goal: str
-    page_count: int
-    language: str
-    style: str
     user_description: str
-    source_text: str
     uploaded_file_name: str
     uploaded_file_text: str
+    outline_markdown: str
     plan: dict[str, Any]
     slides: list[dict[str, Any]]
     review: dict[str, Any]
@@ -50,15 +45,10 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
             }
         )
 
+        deck_title = str(state.get("deck_title") or "").strip() or "Untitled presentation"
         return {
-            "deck_title": str(state.get("deck_title") or "").strip(),
-            "audience": str(state.get("audience") or "general audience").strip(),
-            "goal": str(state.get("goal") or "follow the user description clearly").strip(),
-            "page_count": _clamp_page_count(state.get("page_count")),
-            "language": str(state.get("language") or "zh-CN").strip(),
-            "style": str(state.get("style") or "concise business deck").strip(),
-            "user_description": _truncate(str(state.get("user_description") or "").strip(), 4000),
-            "source_text": _truncate(str(state.get("source_text") or "").strip(), 12000),
+            "deck_title": _truncate(deck_title, 120),
+            "user_description": _truncate(str(state.get("user_description") or "").strip(), 5000),
             "uploaded_file_name": str(state.get("uploaded_file_name") or "").strip(),
             "uploaded_file_text": _truncate(str(state.get("uploaded_file_text") or "").strip(), 20000),
         }
@@ -73,23 +63,38 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
             }
         )
 
-        plan = _normalize_plan(
-            _invoke_json(
-                _llm_for_node(llm_registry, "outline"),
-                system=_load_node_prompt("outline"),
-                user=_outline_prompt(state),
-            ),
-            state,
-        )
+        parts: list[str] = []
+        messages = [
+            ("system", _load_node_prompt("outline")),
+            ("human", _outline_prompt(state)),
+        ]
+        for delta in _stream_llm_text(_llm_for_node(llm_registry, "outline"), messages):
+            if not delta:
+                continue
+            parts.append(delta)
+            writer(
+                {
+                    "event_type": "text_delta",
+                    "stage": "outline",
+                    "message": "Streaming outline markdown",
+                    "channel": "outline_markdown",
+                    "text_delta": delta,
+                }
+            )
+
+        outline_markdown = _normalize_outline_markdown("".join(parts), state)
+        plan = _outline_markdown_to_plan(outline_markdown, state)
         writer(
             {
                 "event_type": "outline",
                 "stage": "outline",
                 "message": "Outline ready",
-                "payload": plan,
+                "content": outline_markdown,
+                "outline_markdown": outline_markdown,
+                "payload": {"outline_markdown": outline_markdown},
             }
         )
-        return {"plan": plan}
+        return {"outline_markdown": outline_markdown, "plan": plan}
 
     def generate_slides(state: DeckGraphState) -> dict[str, Any]:
         writer = get_stream_writer()
@@ -122,7 +127,7 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
 
     def review_outline(state: DeckGraphState) -> dict[str, Any]:
         writer = get_stream_writer()
-        plan = state.get("plan") or {}
+        outline_markdown = str(state.get("outline_markdown") or "").strip()
         writer(
             {
                 "event_type": "progress",
@@ -130,29 +135,25 @@ def build_deck_graph(llms: Any, output_dir: Path, checkpointer: Any = None):
                 "message": "Waiting for outline confirmation",
             }
         )
-        decision = interrupt(
-            {
-                "type": "outline_review",
-                "request_id": state.get("request_id", ""),
-                "stage": "outline_review",
-                "message": "Outline is ready for review",
-                "outline": plan,
-            }
-        )
+        decision = interrupt({"outline_markdown": outline_markdown})
 
         if isinstance(decision, dict):
             action = str(decision.get("action") or "continue").strip().lower()
             if action in {"continue", "approve", "approved"}:
-                edited_outline = decision.get("outline") or decision.get("plan")
-                if isinstance(edited_outline, dict):
-                    return {"plan": _normalize_plan(edited_outline, state)}
+                edited_outline = decision.get("outline_markdown") or decision.get("content")
+                if isinstance(edited_outline, str) and edited_outline.strip():
+                    edited_outline = _normalize_outline_markdown(edited_outline, state)
+                    return {
+                        "outline_markdown": edited_outline,
+                        "plan": _outline_markdown_to_plan(edited_outline, state),
+                    }
         return {}
 
     def review_deck(state: DeckGraphState) -> dict[str, Any]:
         writer = get_stream_writer()
         review_llm = _explicit_llm_for_node(llm_registry, "review")
         if review_llm is None:
-            review = _review(state.get("slides") or [], _clamp_page_count(state.get("page_count")))
+            review = _review(state.get("slides") or [], _target_slide_count(state))
         else:
             review = _normalize_review(
                 _invoke_json(
@@ -253,83 +254,72 @@ def _explicit_llm_for_node(registry: dict[str, Any], node_key: str) -> Any | Non
 
 
 def _outline_prompt(state: DeckGraphState) -> str:
-    return _compose_brief_prompt(
+    return _compose_context_prompt(
         {
-            "deck_title": state["deck_title"],
-            "audience": state["audience"],
-            "goal": state["goal"],
-            "page_count": state["page_count"],
-            "language": state["language"],
-            "style": state["style"],
+            "deck_title_hint": state.get("deck_title", ""),
             "user_description": state.get("user_description", ""),
         },
-        source_text=state.get("source_text", ""),
         uploaded_file_name=state.get("uploaded_file_name", ""),
         uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
 
 def _slides_prompt(state: DeckGraphState) -> str:
-    return _compose_brief_prompt(
+    return _compose_context_prompt(
         {
-            "brief": {
-                "deck_title": state["deck_title"],
-                "audience": state["audience"],
-                "goal": state["goal"],
-                "page_count": state["page_count"],
-                "language": state["language"],
-                "style": state["style"],
-                "user_description": state.get("user_description", ""),
-            },
-            "outline": state.get("plan") or {},
+            "deck_title": state.get("deck_title", ""),
+            "user_description": state.get("user_description", ""),
+            "outline_markdown": state.get("outline_markdown", ""),
         },
-        source_text=state.get("source_text", ""),
         uploaded_file_name=state.get("uploaded_file_name", ""),
         uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
 
 def _review_prompt(state: DeckGraphState) -> str:
-    return _compose_brief_prompt(
+    return _compose_context_prompt(
         {
-            "brief": {
-                "deck_title": state["deck_title"],
-                "audience": state["audience"],
-                "goal": state["goal"],
-                "page_count": state["page_count"],
-                "language": state["language"],
-                "style": state["style"],
-                "user_description": state.get("user_description", ""),
-            },
+            "deck_title": state.get("deck_title", ""),
+            "user_description": state.get("user_description", ""),
+            "outline_markdown": state.get("outline_markdown", ""),
             "slides": state.get("slides") or [],
         },
-        source_text=state.get("source_text", ""),
         uploaded_file_name=state.get("uploaded_file_name", ""),
         uploaded_file_text=state.get("uploaded_file_text", ""),
     )
 
 
-def _compose_brief_prompt(
+def _compose_context_prompt(
     payload: dict[str, Any],
     *,
-    source_text: str,
     uploaded_file_name: str,
     uploaded_file_text: str,
 ) -> str:
     parts = [
-        "请求参数如下：",
+        "Request context:",
         json.dumps(payload, ensure_ascii=False),
     ]
-    source_text = (source_text or "").strip()
-    if source_text:
-        parts.extend(["", "用户补充资料如下：", source_text])
 
     uploaded_file_text = (uploaded_file_text or "").strip()
     if uploaded_file_text:
-        file_name = (uploaded_file_name or "未命名文件").strip()
-        parts.extend(["", f"用户上传了文件：{file_name}", "文件内容如下：", uploaded_file_text])
+        file_name = (uploaded_file_name or "uploaded file").strip()
+        parts.extend(["", f"Uploaded file: {file_name}", "File content:", uploaded_file_text])
 
     return "\n".join(parts)
+
+
+def _stream_llm_text(llm: Any, messages: list[tuple[str, str]]):
+    if hasattr(llm, "stream"):
+        for chunk in llm.stream(messages):
+            text = _extract_text(chunk)
+            if text:
+                yield text
+        return
+
+    response = llm.invoke(messages)
+    text = _extract_text(response)
+    if text:
+        yield text
 
 
 def _invoke_json(llm: Any, system: str, user: str) -> dict[str, Any]:
@@ -369,34 +359,108 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     return parsed
 
 
-def _normalize_plan(raw: dict[str, Any], state: DeckGraphState) -> dict[str, Any]:
-    page_count = _clamp_page_count(state.get("page_count"))
-    raw_slides = raw.get("slides") if isinstance(raw.get("slides"), list) else []
-    slides: list[dict[str, Any]] = []
+def _normalize_outline_markdown(markdown: str, state: DeckGraphState) -> str:
+    cleaned = (markdown or "").strip()
+    cleaned = re.sub(r"^```(?:markdown|md)?\s*", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    if cleaned:
+        return cleaned
 
-    for index in range(page_count):
-        source = raw_slides[index] if index < len(raw_slides) and isinstance(raw_slides[index], dict) else {}
-        slides.append(
-            {
-                "index": index + 1,
-                "title": str(source.get("title") or _fallback_slide_title(index + 1, state["deck_title"])).strip(),
-                "key_message": str(source.get("key_message") or source.get("message") or "").strip(),
-                "layout": _normalize_layout(str(source.get("layout") or ("title" if index == 0 else "content"))),
-                "visual_suggestion": str(source.get("visual_suggestion") or "").strip(),
-            }
-        )
+    title = str(state.get("deck_title") or "Untitled presentation").strip()
+    return f"# {title}\n> Outline generated from the user request."
 
+
+def _outline_markdown_to_plan(markdown: str, state: DeckGraphState) -> dict[str, Any]:
+    title = _first_markdown_heading(markdown) or str(state.get("deck_title") or "Untitled presentation").strip()
+    narrative = _first_blockquote(markdown)
     return {
-        "title": str(raw.get("title") or state["deck_title"]).strip(),
-        "narrative": str(raw.get("narrative") or state["goal"]).strip(),
-        "slides": slides,
+        "title": title,
+        "narrative": narrative,
+        "slides": _parse_outline_slides(markdown),
     }
 
 
+def _first_markdown_heading(markdown: str) -> str:
+    for line in markdown.splitlines():
+        match = re.match(r"^#\s+(.+?)\s*$", line.strip())
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _first_blockquote(markdown: str) -> str:
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(">"):
+            return stripped.lstrip(">").strip()
+    return ""
+
+
+def _parse_outline_slides(markdown: str) -> list[dict[str, Any]]:
+    slides: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        heading = re.match(r"^##\s*(?:(\d+)[.)、-]?\s*)?(.+?)\s*$", line)
+        if heading:
+            if current is not None:
+                slides.append(current)
+            current = {
+                "index": int(heading.group(1) or (len(slides) + 1)),
+                "title": _clean_markdown_inline(heading.group(2)),
+                "key_message": "",
+                "layout": "content",
+                "visual_suggestion": "",
+            }
+            continue
+
+        if current is None or not line.startswith("-"):
+            continue
+
+        item = line.lstrip("-").strip()
+        label, value = _split_outline_field(item)
+        label_lower = label.lower()
+        if label in {"核心信息", "关键信息"} or "key" in label_lower:
+            current["key_message"] = value
+        elif label in {"版式", "布局"} or "layout" in label_lower:
+            current["layout"] = _normalize_layout(value)
+        elif label in {"视觉建议", "视觉"} or "visual" in label_lower:
+            current["visual_suggestion"] = value
+        elif not current.get("key_message"):
+            current["key_message"] = _clean_markdown_inline(item)
+
+    if current is not None:
+        slides.append(current)
+
+    return [
+        {
+            "index": index + 1,
+            "title": str(slide.get("title") or f"Slide {index + 1}").strip(),
+            "key_message": str(slide.get("key_message") or "").strip(),
+            "layout": _normalize_layout(str(slide.get("layout") or ("title" if index == 0 else "content"))),
+            "visual_suggestion": str(slide.get("visual_suggestion") or "").strip(),
+        }
+        for index, slide in enumerate(slides[:30])
+    ]
+
+
+def _split_outline_field(item: str) -> tuple[str, str]:
+    match = re.match(r"^([^:：]+)[:：]\s*(.*)$", item)
+    if not match:
+        return "", _clean_markdown_inline(item)
+    return match.group(1).strip(), _clean_markdown_inline(match.group(2))
+
+
+def _clean_markdown_inline(value: str) -> str:
+    value = re.sub(r"[*_`]+", "", value or "")
+    return value.strip()
+
+
 def _normalize_slides(raw: dict[str, Any], state: DeckGraphState) -> list[dict[str, Any]]:
-    page_count = _clamp_page_count(state.get("page_count"))
-    plan_slides = (state.get("plan") or {}).get("slides") or []
     raw_slides = raw.get("slides") if isinstance(raw.get("slides"), list) else []
+    page_count = _target_slide_count(state, raw_slides)
+    plan_slides = (state.get("plan") or {}).get("slides") or []
     slides: list[dict[str, Any]] = []
 
     for index in range(page_count):
@@ -410,7 +474,7 @@ def _normalize_slides(raw: dict[str, Any], state: DeckGraphState) -> list[dict[s
         slides.append(
             {
                 "index": index + 1,
-                "title": str(source.get("title") or outline.get("title") or _fallback_slide_title(index + 1, state["deck_title"])).strip(),
+                "title": str(source.get("title") or outline.get("title") or _fallback_slide_title(index + 1, state)).strip(),
                 "key_message": str(source.get("key_message") or outline.get("key_message") or "").strip(),
                 "layout": layout,
                 "bullets": bullets[:5],
@@ -420,6 +484,18 @@ def _normalize_slides(raw: dict[str, Any], state: DeckGraphState) -> list[dict[s
         )
 
     return slides
+
+
+def _target_slide_count(state: DeckGraphState, raw_slides: list[Any] | None = None) -> int:
+    plan_slides = (state.get("plan") or {}).get("slides") or []
+    if isinstance(plan_slides, list) and plan_slides:
+        return _clamp_slide_count(len(plan_slides))
+    if raw_slides:
+        return _clamp_slide_count(len(raw_slides))
+    parsed = _parse_outline_slides(str(state.get("outline_markdown") or ""))
+    if parsed:
+        return _clamp_slide_count(len(parsed))
+    return 8
 
 
 def _review(slides: list[dict[str, Any]], page_count: int) -> dict[str, Any]:
@@ -482,7 +558,7 @@ def _normalize_layout(value: str) -> str:
 
 
 def _fallback_bullets(index: int, state: DeckGraphState) -> list[str]:
-    deck_title = state["deck_title"]
+    deck_title = str(state.get("deck_title") or "the deck")
     return [
         f"Key point {index} for {deck_title}",
         "Why it matters to the audience",
@@ -490,13 +566,14 @@ def _fallback_bullets(index: int, state: DeckGraphState) -> list[str]:
     ]
 
 
-def _fallback_slide_title(index: int, deck_title: str) -> str:
+def _fallback_slide_title(index: int, state: DeckGraphState) -> str:
+    deck_title = str(state.get("deck_title") or "Untitled presentation")
     if index == 1:
         return deck_title
     return f"{deck_title} - Part {index}"
 
 
-def _clamp_page_count(value: Any) -> int:
+def _clamp_slide_count(value: Any) -> int:
     try:
         page_count = int(value)
     except (TypeError, ValueError):

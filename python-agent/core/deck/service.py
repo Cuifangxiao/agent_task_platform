@@ -46,12 +46,6 @@ class DeckService:
             initial_state = {
                 "request_id": request_id,
                 "deck_title": deck_title,
-                "audience": "general audience",
-                "goal": "create a presentation that follows the user description",
-                "page_count": 8,
-                "language": "zh-CN",
-                "style": "concise business deck",
-                "source_text": "",
                 "uploaded_file_name": inp.source_file_filename,
                 "uploaded_file_text": uploaded_file_text,
                 "user_description": description,
@@ -90,9 +84,12 @@ class DeckService:
 
             llms = _build_deck_llms(inp)
             graph = build_deck_graph(llms, _artifact_dir(), self._checkpointer)
+            outline_markdown = inp.outline_markdown.strip()
+            if not outline_markdown:
+                raise ValueError("outline_markdown is required")
             resume_payload = {
                 "action": "continue",
-                "outline": _decode_outline_json(inp.outline_json),
+                "outline_markdown": outline_markdown,
             }
 
             logger.info(
@@ -179,16 +176,15 @@ def _interrupt_event_from_update(request_id: str, update: dict[str, Any]) -> dic
         return None
     first = raw_interrupts[0]
     value = getattr(first, "value", first)
-    interrupt_id = getattr(first, "id", "")
-    payload = value if isinstance(value, dict) else {"value": value}
-    payload = dict(payload)
-    payload.setdefault("request_id", request_id)
-    if interrupt_id:
-        payload["interrupt_id"] = interrupt_id
+    raw_payload = value if isinstance(value, dict) else {"value": value}
+    raw_payload = dict(raw_payload)
+    outline_markdown = str(raw_payload.get("outline_markdown") or "")
+    payload = {"outline_markdown": outline_markdown}
     return {
         "event_type": "interrupt",
-        "stage": str(payload.get("stage") or "outline_review"),
-        "message": str(payload.get("message") or "Waiting for user input"),
+        "stage": "outline_review",
+        "message": "Outline is ready for review",
+        "outline_markdown": outline_markdown,
         "payload": payload,
         "done": True,
     }
@@ -199,28 +195,25 @@ def _custom_event_to_output(request_id: str, sequence: int, data: dict[str, Any]
     payload_json = ""
     if payload is not None:
         payload_json = json.dumps(payload, ensure_ascii=False)
+    outline_markdown = str(data.get("outline_markdown") or "")
+    if not outline_markdown and isinstance(payload, dict):
+        outline_markdown = str(payload.get("outline_markdown") or "")
 
     return GenerateDeckOutput(
         request_id=request_id,
         event_type=str(data.get("event_type") or "progress"),
         stage=str(data.get("stage") or ""),
         message=str(data.get("message") or ""),
+        channel=str(data.get("channel") or ""),
+        text_delta=str(data.get("text_delta") or ""),
+        content=str(data.get("content") or ""),
+        outline_markdown=outline_markdown,
         payload_json=payload_json,
         artifact_path=str(data.get("artifact_path") or ""),
         done=bool(data.get("done") or False),
         error=str(data.get("error") or ""),
         sequence=sequence,
     )
-
-
-def _decode_outline_json(raw: str) -> dict[str, Any]:
-    raw = (raw or "").strip()
-    if not raw:
-        return {}
-    decoded = json.loads(raw)
-    if not isinstance(decoded, dict):
-        raise ValueError("outline_json must be a JSON object")
-    return decoded
 
 
 def _decode_provider_options(raw: str) -> dict[str, Any]:

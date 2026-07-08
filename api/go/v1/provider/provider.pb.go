@@ -633,7 +633,7 @@ type ResumeDeckRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	User             *UserContext           `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
 	RequestId        string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	OutlineJson      string                 `protobuf:"bytes,3,opt,name=outline_json,json=outlineJson,proto3" json:"outline_json,omitempty"`
+	OutlineMarkdown  string                 `protobuf:"bytes,3,opt,name=outline_markdown,json=outlineMarkdown,proto3" json:"outline_markdown,omitempty"`
 	NodeModelConfigs []*DeckNodeModelConfig `protobuf:"bytes,4,rep,name=node_model_configs,json=nodeModelConfigs,proto3" json:"node_model_configs,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -683,9 +683,9 @@ func (x *ResumeDeckRequest) GetRequestId() string {
 	return ""
 }
 
-func (x *ResumeDeckRequest) GetOutlineJson() string {
+func (x *ResumeDeckRequest) GetOutlineMarkdown() string {
 	if x != nil {
-		return x.OutlineJson
+		return x.OutlineMarkdown
 	}
 	return ""
 }
@@ -698,18 +698,22 @@ func (x *ResumeDeckRequest) GetNodeModelConfigs() []*DeckNodeModelConfig {
 }
 
 type GenerateDeckResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	EventType     string                 `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
-	Stage         string                 `protobuf:"bytes,3,opt,name=stage,proto3" json:"stage,omitempty"`
-	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
-	PayloadJson   string                 `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
-	ArtifactPath  string                 `protobuf:"bytes,6,opt,name=artifact_path,json=artifactPath,proto3" json:"artifact_path,omitempty"`
-	Done          bool                   `protobuf:"varint,7,opt,name=done,proto3" json:"done,omitempty"`
-	Error         string                 `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
-	Sequence      int32                  `protobuf:"varint,9,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RequestId       string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	EventType       string                 `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
+	Stage           string                 `protobuf:"bytes,3,opt,name=stage,proto3" json:"stage,omitempty"`
+	Message         string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	Channel         string                 `protobuf:"bytes,5,opt,name=channel,proto3" json:"channel,omitempty"`
+	TextDelta       string                 `protobuf:"bytes,6,opt,name=text_delta,json=textDelta,proto3" json:"text_delta,omitempty"`
+	Content         string                 `protobuf:"bytes,7,opt,name=content,proto3" json:"content,omitempty"`
+	PayloadJson     string                 `protobuf:"bytes,8,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	ArtifactPath    string                 `protobuf:"bytes,9,opt,name=artifact_path,json=artifactPath,proto3" json:"artifact_path,omitempty"`
+	Done            bool                   `protobuf:"varint,10,opt,name=done,proto3" json:"done,omitempty"`
+	Error           string                 `protobuf:"bytes,11,opt,name=error,proto3" json:"error,omitempty"`
+	Sequence        int32                  `protobuf:"varint,12,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	OutlineMarkdown string                 `protobuf:"bytes,13,opt,name=outline_markdown,json=outlineMarkdown,proto3" json:"outline_markdown,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *GenerateDeckResponse) Reset() {
@@ -770,6 +774,27 @@ func (x *GenerateDeckResponse) GetMessage() string {
 	return ""
 }
 
+func (x *GenerateDeckResponse) GetChannel() string {
+	if x != nil {
+		return x.Channel
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetTextDelta() string {
+	if x != nil {
+		return x.TextDelta
+	}
+	return ""
+}
+
+func (x *GenerateDeckResponse) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
 func (x *GenerateDeckResponse) GetPayloadJson() string {
 	if x != nil {
 		return x.PayloadJson
@@ -803,6 +828,13 @@ func (x *GenerateDeckResponse) GetSequence() int32 {
 		return x.Sequence
 	}
 	return 0
+}
+
+func (x *GenerateDeckResponse) GetOutlineMarkdown() string {
+	if x != nil {
+		return x.OutlineMarkdown
+	}
+	return ""
 }
 
 type ProviderModelParameter struct {
@@ -1208,25 +1240,31 @@ const file_provider_proto_rawDesc = "" +
 	"\x14source_file_filename\x18\x03 \x01(\tR\x12sourceFileFilename\x12\x1f\n" +
 	"\vsource_file\x18\x04 \x01(\fR\n" +
 	"sourceFile\x12N\n" +
-	"\x12node_model_configs\x18\x05 \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\xd3\x01\n" +
+	"\x12node_model_configs\x18\x05 \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\xdb\x01\n" +
 	"\x11ResumeDeckRequest\x12,\n" +
 	"\x04user\x18\x01 \x01(\v2\x18.provider.v1.UserContextR\x04user\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x02 \x01(\tR\trequestId\x12!\n" +
-	"\foutline_json\x18\x03 \x01(\tR\voutlineJson\x12N\n" +
-	"\x12node_model_configs\x18\x04 \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\x92\x02\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12)\n" +
+	"\x10outline_markdown\x18\x03 \x01(\tR\x0foutlineMarkdown\x12N\n" +
+	"\x12node_model_configs\x18\x04 \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\x90\x03\n" +
 	"\x14GenerateDeckResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n" +
 	"\n" +
 	"event_type\x18\x02 \x01(\tR\teventType\x12\x14\n" +
 	"\x05stage\x18\x03 \x01(\tR\x05stage\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage\x12!\n" +
-	"\fpayload_json\x18\x05 \x01(\tR\vpayloadJson\x12#\n" +
-	"\rartifact_path\x18\x06 \x01(\tR\fartifactPath\x12\x12\n" +
-	"\x04done\x18\a \x01(\bR\x04done\x12\x14\n" +
-	"\x05error\x18\b \x01(\tR\x05error\x12\x1a\n" +
-	"\bsequence\x18\t \x01(\x05R\bsequence\"\x9e\x02\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12\x18\n" +
+	"\achannel\x18\x05 \x01(\tR\achannel\x12\x1d\n" +
+	"\n" +
+	"text_delta\x18\x06 \x01(\tR\ttextDelta\x12\x18\n" +
+	"\acontent\x18\a \x01(\tR\acontent\x12!\n" +
+	"\fpayload_json\x18\b \x01(\tR\vpayloadJson\x12#\n" +
+	"\rartifact_path\x18\t \x01(\tR\fartifactPath\x12\x12\n" +
+	"\x04done\x18\n" +
+	" \x01(\bR\x04done\x12\x14\n" +
+	"\x05error\x18\v \x01(\tR\x05error\x12\x1a\n" +
+	"\bsequence\x18\f \x01(\x05R\bsequence\x12)\n" +
+	"\x10outline_markdown\x18\r \x01(\tR\x0foutlineMarkdown\"\x9e\x02\n" +
 	"\x16ProviderModelParameter\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +

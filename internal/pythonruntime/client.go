@@ -221,7 +221,7 @@ func (c *Client) ResumeDeck(
 			Device:    user.Device,
 		},
 		RequestId:        req.RequestID,
-		OutlineJson:      req.OutlineJSON,
+		OutlineMarkdown:  req.OutlineMarkdown,
 		NodeModelConfigs: nodeModelConfigs,
 	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
 	if err != nil {
@@ -278,14 +278,18 @@ func (s *deckStream) Recv() (*pptagent.DeckStreamChunk, error) {
 	}
 
 	return &pptagent.DeckStreamChunk{
-		RequestID: resp.GetRequestId(),
-		EventType: resp.GetEventType(),
-		Stage:     resp.GetStage(),
-		Message:   resp.GetMessage(),
-		Payload:   parsePayload(resp.GetPayloadJson()),
-		Done:      resp.GetDone(),
-		Error:     resp.GetError(),
-		Sequence:  resp.GetSequence(),
+		RequestID:       resp.GetRequestId(),
+		EventType:       resp.GetEventType(),
+		Stage:           resp.GetStage(),
+		Message:         resp.GetMessage(),
+		Channel:         resp.GetChannel(),
+		TextDelta:       resp.GetTextDelta(),
+		Content:         resp.GetContent(),
+		OutlineMarkdown: resp.GetOutlineMarkdown(),
+		Payload:         parsePayload(resp.GetPayloadJson()),
+		Done:            resp.GetDone(),
+		Error:           resp.GetError(),
+		Sequence:        resp.GetSequence(),
 	}, nil
 }
 

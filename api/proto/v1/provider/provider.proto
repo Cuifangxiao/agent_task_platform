@@ -78,7 +78,7 @@ message GenerateDeckRequest {
 message ResumeDeckRequest {
   UserContext user = 1;
   string request_id = 2;
-  string outline_json = 3;
+  string outline_markdown = 3;
   repeated DeckNodeModelConfig node_model_configs = 4;
 }
 
@@ -87,11 +87,15 @@ message GenerateDeckResponse {
   string event_type = 2;
   string stage = 3;
   string message = 4;
-  string payload_json = 5;
-  string artifact_path = 6;
-  bool done = 7;
-  string error = 8;
-  int32 sequence = 9;
+  string channel = 5;
+  string text_delta = 6;
+  string content = 7;
+  string payload_json = 8;
+  string artifact_path = 9;
+  bool done = 10;
+  string error = 11;
+  int32 sequence = 12;
+  string outline_markdown = 13;
 }
 
 message ProviderModelParameter {

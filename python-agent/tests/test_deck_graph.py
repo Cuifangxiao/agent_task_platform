@@ -7,38 +7,30 @@ from langgraph.types import Command
 from core.deck.graph import _outline_prompt, build_deck_graph
 
 
+OUTLINE_MARKDOWN = """# PPTAgent MVP
+> Move from model plumbing to deck generation.
+
+## 1. PPTAgent MVP
+- 核心信息: A focused deck generator is now possible.
+- 版式: title
+- 视觉建议: Architecture diagram
+
+## 2. Architecture
+- 核心信息: Go owns HTTP, Python owns agent workflow.
+- 版式: content
+- 视觉建议: Layered system
+"""
+
+
 class FakeLLM:
-    def __init__(self) -> None:
-        self.calls = 0
+    def stream(self, messages):
+        del messages
+        midpoint = len(OUTLINE_MARKDOWN) // 2
+        yield SimpleNamespace(content=OUTLINE_MARKDOWN[:midpoint])
+        yield SimpleNamespace(content=OUTLINE_MARKDOWN[midpoint:])
 
     def invoke(self, messages):
         del messages
-        self.calls += 1
-        if self.calls == 1:
-            return SimpleNamespace(
-                content=json.dumps(
-                    {
-                        "title": "PPTAgent MVP",
-                        "narrative": "Move from model plumbing to deck generation.",
-                        "slides": [
-                            {
-                                "index": 1,
-                                "title": "PPTAgent MVP",
-                                "key_message": "A focused deck generator is now possible.",
-                                "layout": "title",
-                                "visual_suggestion": "Architecture diagram",
-                            },
-                            {
-                                "index": 2,
-                                "title": "Architecture",
-                                "key_message": "Go owns HTTP, Python owns agent workflow.",
-                                "layout": "content",
-                                "visual_suggestion": "Layered system",
-                            },
-                        ],
-                    }
-                )
-            )
         return SimpleNamespace(
             content=json.dumps(
                 {
@@ -67,7 +59,7 @@ class FakeLLM:
         )
 
 
-def test_deck_graph_streams_and_renders_pptx(tmp_path):
+def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     graph = build_deck_graph(FakeLLM(), tmp_path, InMemorySaver())
     events = []
     interrupts = []
@@ -77,12 +69,7 @@ def test_deck_graph_streams_and_renders_pptx(tmp_path):
         {
             "request_id": "11111111-1111-1111-1111-111111111111",
             "deck_title": "PPTAgent MVP",
-            "audience": "developer",
-            "goal": "show the first usable flow",
-            "page_count": 2,
-            "language": "en",
-            "style": "concise",
-            "source_text": "",
+            "user_description": "Show the first usable PPTAgent flow in 2 slides.",
             "uploaded_file_name": "",
             "uploaded_file_text": "",
         },
@@ -95,12 +82,21 @@ def test_deck_graph_streams_and_renders_pptx(tmp_path):
         if mode == "updates" and "__interrupt__" in data:
             interrupts.extend(data["__interrupt__"])
 
-    assert interrupts
+    text_delta_events = [event for event in events if event.get("event_type") == "text_delta"]
+    assert text_delta_events
+    assert all(event.get("channel") == "outline_markdown" for event in text_delta_events)
+    assert "".join(event.get("text_delta", "") for event in text_delta_events) == OUTLINE_MARKDOWN
+
     outline_events = [event for event in events if event.get("event_type") == "outline"]
     assert outline_events
+    assert outline_events[0]["outline_markdown"] == OUTLINE_MARKDOWN.strip()
+
+    assert interrupts
+    interrupt_payload = interrupts[0].value
+    assert interrupt_payload["outline_markdown"] == OUTLINE_MARKDOWN.strip()
 
     for part in graph.stream(
-        Command(resume={"action": "continue", "outline": outline_events[0]["payload"]}),
+        Command(resume={"action": "continue", "outline_markdown": outline_events[0]["outline_markdown"]}),
         config=config,
         stream_mode=["custom", "updates"],
     ):
@@ -117,29 +113,23 @@ def test_deck_graph_streams_and_renders_pptx(tmp_path):
 
 def test_outline_prompt_adds_uploaded_file_section_only_when_present():
     state = {
-        "deck_title": "市场汇报",
-        "audience": "管理层",
-        "goal": "说明机会",
-        "page_count": 3,
-        "language": "zh-CN",
-        "style": "concise",
-        "user_description": "生成一份市场汇报 PPT",
-        "source_text": "",
+        "deck_title": "Market report",
+        "user_description": "Create a market report deck",
         "uploaded_file_name": "",
         "uploaded_file_text": "",
     }
 
     prompt_without_file = _outline_prompt(state)
-    assert "用户上传了文件" not in prompt_without_file
-    assert "文件内容如下" not in prompt_without_file
+    assert "Uploaded file:" not in prompt_without_file
+    assert "File content:" not in prompt_without_file
 
     prompt_with_file = _outline_prompt(
         {
             **state,
             "uploaded_file_name": "report.pdf",
-            "uploaded_file_text": "这是解析后的文件正文。",
+            "uploaded_file_text": "Parsed file body.",
         }
     )
-    assert "用户上传了文件：report.pdf" in prompt_with_file
-    assert "文件内容如下：" in prompt_with_file
-    assert "这是解析后的文件正文。" in prompt_with_file
+    assert "Uploaded file: report.pdf" in prompt_with_file
+    assert "File content:" in prompt_with_file
+    assert "Parsed file body." in prompt_with_file
