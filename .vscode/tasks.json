@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "go-server",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/server", "--conf", "configs/config.yaml"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "python-agent",
+      "type": "shell",
+      "command": "${workspaceFolder}/python-agent/.venv/bin/python",
+      "args": ["main.py", "--conf", "config.yaml"],
+      "options": {
+        "cwd": "${workspaceFolder}/python-agent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "front",
+      "type": "npm",
+      "script": "dev",
+      "path": "front/",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "all",
+      "dependsOrder": "parallel",
+      "dependsOn": ["go-server", "python-agent", "front"],
+      "problemMatcher": []
+    }
+  ]
+}

@@ -35,7 +35,6 @@ htmlcov/
 .ipynb_checkpoints/
 
 # Editors
-.vscode/
 .idea/
 
 # Local environment
