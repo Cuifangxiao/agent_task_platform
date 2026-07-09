@@ -22,6 +22,7 @@ bin/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+frontend/
 
 # Test and tooling caches
 .coverage
