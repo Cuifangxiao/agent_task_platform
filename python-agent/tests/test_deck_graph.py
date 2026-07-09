@@ -5,8 +5,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from core.deck.contract import DeckSourceFile, GenerateDeckInput
-from core.deck.graph import _outline_prompt, build_deck_graph
-from core.deck.service import _parse_uploaded_files
+from core.deck.pipeline import build_deck_graph
+from core.deck.pipeline.outline import outline_prompt
+from core.deck.sources import parse_uploaded_files
 
 
 OUTLINE_MARKDOWN = """# PPTAgent MVP
@@ -158,11 +159,11 @@ def test_outline_prompt_adds_uploaded_file_section_only_when_present():
         "uploaded_file_text": "",
     }
 
-    prompt_without_file = _outline_prompt(state)
+    prompt_without_file = outline_prompt(state)
     assert "Uploaded file:" not in prompt_without_file
     assert "File content:" not in prompt_without_file
 
-    prompt_with_file = _outline_prompt(
+    prompt_with_file = outline_prompt(
         {
             **state,
             "uploaded_file_name": "report.pdf",
@@ -175,7 +176,7 @@ def test_outline_prompt_adds_uploaded_file_section_only_when_present():
 
 
 def test_parse_uploaded_files_combines_multiple_documents():
-    names, text = _parse_uploaded_files(
+    names, text = parse_uploaded_files(
         GenerateDeckInput(
             user_id=1,
             username="tester",

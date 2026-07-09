@@ -1,5 +1,5 @@
 from core.deck.spec import normalize_slide_spec
-from core.deck.validators import validate_slide_spec
+from core.deck.quality import dedupe_issue_dicts, validate_html_static, validate_slide_spec
 
 
 def test_normalize_slide_spec_accepts_legacy_slide_json_and_compacts():
@@ -39,3 +39,21 @@ def test_validate_slide_spec_rejects_placeholder_text():
 
     issues = validate_slide_spec(slide)
     assert any(issue.kind == "placeholder_text" for issue in issues)
+
+
+def test_validate_html_static_allows_plain_text_urls_but_blocks_external_resources():
+    ok_html = '<section class="slide"><p data-text>Read https://example.com for context.</p></section>'
+    blocked_html = '<section class="slide"><img src="https://example.com/a.png"><p data-text>Hello</p></section>'
+
+    assert not any(issue.kind == "unsafe_html" for issue in validate_html_static(ok_html, page=1))
+    assert any(issue.kind == "unsafe_html" for issue in validate_html_static(blocked_html, page=1))
+
+
+def test_dedupe_issue_dicts_uses_page_kind_and_description():
+    issues = [
+        {"page": 1, "kind": "density", "description": "Too much text.", "severity": "must_fix"},
+        {"page": 1, "kind": "density", "description": "Too much text.", "severity": "must_fix"},
+        {"page": 2, "kind": "density", "description": "Too much text.", "severity": "must_fix"},
+    ]
+
+    assert len(dedupe_issue_dicts(issues)) == 2

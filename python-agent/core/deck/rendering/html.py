@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import html
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from core.deck.rendering.charts import chart_is_valid, render_chart_svg
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec, ThemeTokens, default_theme
 
 
-DESIGN_SYSTEM_DIR = Path(__file__).with_name("design_system")
+DESIGN_SYSTEM_DIR = Path(__file__).resolve().parent.parent / "design_system"
+FONT_FALLBACKS = ('"Noto Sans SC"', '"Noto Sans CJK SC"', '"PingFang SC"', '"Microsoft YaHei"', "sans-serif")
 
 
 class HTMLSlideRenderer:
@@ -28,7 +31,6 @@ class HTMLSlideRenderer:
                 '<meta charset="utf-8">',
                 '<meta name="viewport" content="width=1280,height=720,initial-scale=1">',
                 "<style>",
-                self._font_faces(),
                 self._theme_css(deck.theme),
                 self._css,
                 "</style>",
@@ -104,8 +106,8 @@ class HTMLSlideRenderer:
             "--color-accent": palette.get("accent", "#2A9D8F"),
             "--color-accent2": palette.get("accent2", "#E76F51"),
             "--color-line": palette.get("line", "#D8D3C8"),
-            "--font-display": '"' + str(fonts.get("display") or "Noto Sans SC") + '"',
-            "--font-body": '"' + str(fonts.get("body") or "Noto Sans SC") + '"',
+            "--font-display": _font_stack(fonts.get("display")),
+            "--font-body": _font_stack(fonts.get("body")),
             "--font-display-weight": str(fonts.get("display_weight") or 700),
             "--type-h1": str(type_scale.get("h1") or 44) + "px",
             "--type-h2": str(type_scale.get("h2") or 30) + "px",
@@ -117,16 +119,6 @@ class HTMLSlideRenderer:
         lines.extend(f"  {name}: {value};" for name, value in variables.items())
         lines.append("}")
         return "\n".join(lines)
-
-    def _font_faces(self) -> str:
-        fonts_dir = self._design_system_dir / "fonts"
-        sans = fonts_dir / "NotoSansSC-Regular.otf"
-        if not sans.exists():
-            return ""
-        return (
-            "@font-face { font-family: 'Noto Sans SC'; "
-            "src: url('fonts/NotoSansSC-Regular.otf') format('opentype'); font-weight: 400 900; }"
-        )
 
 
 def load_theme_presets() -> list[ThemeTokens]:
@@ -167,13 +159,19 @@ def _section(slide: SlideSpec) -> str:
 
 def _content_basic(slide: SlideSpec) -> str:
     bullets = _list_items(slide.content.get("bullets"), "bullet")
+    takeaway = _content_basic_takeaway(slide)
+    side_card = (
+        f'<p class="body side-takeaway" data-text>{_text(takeaway)}</p>'
+        if takeaway
+        else '<div class="side-index" aria-hidden="true"></div>'
+    )
     return f"""
 <section class="slide" data-component="content-basic">
   {_header(slide)}
   <main class="content-grid">
     <ul class="bullet-list">{bullets}</ul>
     <aside class="panel side-card">
-      <p class="caption" data-text>{_text(_role_label(slide.role))}</p>
+      {side_card}
     </aside>
   </main>
   <div class="motif-line"></div>
@@ -279,12 +277,23 @@ def _summary_grid(slide: SlideSpec) -> str:
 
 
 def _chart_takeaway(slide: SlideSpec) -> str:
-    chart_json = _escape_attr(json.dumps(slide.chart or {}, ensure_ascii=False))
+    if not chart_is_valid(slide.chart):
+        fallback = replace(
+            slide,
+            component="content-basic",
+            content={
+                "body": str(slide.content.get("takeaway") or slide.content.get("body") or "").strip(),
+                "bullets": _string_items(slide.content.get("bullets") or slide.content.get("items")),
+            },
+        )
+        return _content_basic(fallback)
+
+    chart_svg = render_chart_svg(slide.chart, title=slide.title)
     return f"""
 <section class="slide" data-component="chart-takeaway">
   {_header(slide, subtitle=False)}
   <main class="content-grid">
-    <div class="panel side-card" data-chart="{chart_json}"></div>
+    <div class="panel chart-card">{chart_svg}</div>
     <aside class="panel side-card"><p class="body" data-text>{_text(slide.content.get("takeaway"))}</p></aside>
   </main>
   <div class="footer-number">{slide.index}</div>
@@ -349,21 +358,30 @@ def _string_items(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _role_label(role: str) -> str:
-    return {
-        "hook": "Hook",
-        "context": "Context",
-        "evidence": "Evidence",
-        "turn": "Decision point",
-        "solution": "Solution",
-        "action": "Action",
-        "summary": "Summary",
-    }.get(role, "Evidence")
-
-
 def _text(value: Any) -> str:
     return html.escape(str(value or "").strip())
 
 
 def _escape_attr(value: Any) -> str:
     return html.escape(str(value or "").strip(), quote=True)
+
+
+def _font_stack(primary: Any) -> str:
+    fonts = []
+    primary_text = str(primary or "").strip()
+    if primary_text:
+        fonts.append(f'"{primary_text}"')
+    for fallback in FONT_FALLBACKS:
+        if fallback not in fonts:
+            fonts.append(fallback)
+    return ", ".join(fonts)
+
+
+def _content_basic_takeaway(slide: SlideSpec) -> str:
+    content = slide.content
+    for key in ("body", "takeaway", "subtitle"):
+        value = str(content.get(key) or "").strip()
+        if value:
+            return value
+    bullets = _string_items(content.get("bullets") or content.get("items"))
+    return bullets[0] if bullets else ""

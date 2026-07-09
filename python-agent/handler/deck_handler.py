@@ -2,7 +2,7 @@
 
 from api import provider_pb2
 from core.deck.contract import DeckNodeModelConfig, DeckSourceFile, GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
-from core.deck.service import DeckService
+from core.deck import DeckService
 
 
 class DeckHandler:

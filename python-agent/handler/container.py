@@ -5,7 +5,7 @@
 
 from dataclasses import dataclass
 
-from core.deck.service import DeckService
+from core.deck import DeckService
 from core.provider.service import ProviderService
 from handler.deck_handler import DeckHandler
 from handler.provider_handler import ProviderHandler

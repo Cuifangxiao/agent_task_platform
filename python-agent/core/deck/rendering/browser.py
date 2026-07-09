@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import shutil
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,10 +13,13 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from core.deck.export.text_layer import HIDE_TEXT_JS, TEXT_LAYER_JS
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, SlideSpec, ThemeTokens
-from core.deck.validators import ValidationIssue, validate_html_static
+from core.deck.quality.rules import DOM_VALIDATION_JS, ValidationIssue, validate_dom_result, validate_html_static
 
 logger = logging.getLogger(__name__)
+THUMB_MAX_BYTES = 60_000
+RENDER_TIMEOUT_MS = 10_000
 
 
 @dataclass
@@ -31,9 +35,79 @@ class SlideArtifact:
     renderer: str
 
 
+class BrowserSession:
+    """Request-scoped Playwright browser/page; do not share across threads."""
+
+    def __init__(self) -> None:
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._page: Any = None
+
+    def capture(self, html: str, png_path: Path, *, device_scale_factor: int = 2) -> None:
+        page = self._get_page(device_scale_factor=device_scale_factor)
+        page.set_content(html, wait_until="load")
+        page.screenshot(path=str(png_path), full_page=False)
+
+    def inspect_dom(self, page_index: int) -> list[ValidationIssue]:
+        page = self._page
+        if page is None:
+            return []
+        return validate_dom_result(page.evaluate(DOM_VALIDATION_JS), page=page_index)
+
+    def extract_hidden_text_background(self, html: str, bg_path: Path) -> list[dict[str, Any]]:
+        page = self._get_page(device_scale_factor=2)
+        page.set_content(html, wait_until="load")
+        text_layer = page.evaluate(TEXT_LAYER_JS)
+        page.evaluate(HIDE_TEXT_JS)
+        page.screenshot(path=str(bg_path), full_page=False)
+        return text_layer if isinstance(text_layer, list) else []
+
+    def extract_text_layer(self, html: str) -> list[dict[str, Any]]:
+        page = self._get_page(device_scale_factor=1)
+        page.set_content(html, wait_until="load")
+        result = page.evaluate(TEXT_LAYER_JS)
+        return result if isinstance(result, list) else []
+
+    def close(self) -> None:
+        page = self._page
+        browser = self._browser
+        playwright = self._playwright
+        self._page = None
+        self._browser = None
+        self._playwright = None
+        for resource in (page, browser, playwright):
+            if resource is None:
+                continue
+            try:
+                stop = getattr(resource, "stop", None)
+                if callable(stop):
+                    stop()
+                else:
+                    resource.close()
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.debug("browser session resource close failed", exc_info=True)
+
+    def _get_page(self, *, device_scale_factor: int) -> Any:
+        if self._page is not None:
+            return self._page
+        from playwright.sync_api import sync_playwright  # type: ignore
+
+        self._playwright = sync_playwright().start()
+        self._browser = self._playwright.chromium.launch(headless=True)
+        self._page = self._browser.new_page(
+            viewport={"width": CANVAS_WIDTH, "height": CANVAS_HEIGHT},
+            device_scale_factor=device_scale_factor,
+        )
+        set_timeout = getattr(self._page, "set_default_timeout", None)
+        if callable(set_timeout):
+            set_timeout(RENDER_TIMEOUT_MS)
+        return self._page
+
+
 class BrowserRenderer:
-    def __init__(self, output_root: Path) -> None:
+    def __init__(self, output_root: Path, browser_session: BrowserSession | None = None) -> None:
         self._output_root = output_root
+        self._browser_session = browser_session
 
     def render_slide(
         self,
@@ -48,20 +122,27 @@ class BrowserRenderer:
         slides_dir = request_dir / "slides"
         slides_dir.mkdir(parents=True, exist_ok=True)
 
-        suffix = "" if version == 1 else f"_v{version}"
-        html_path = slides_dir / f"{slide.index}{suffix}.html"
-        png_path = slides_dir / f"{slide.index}{suffix}.png"
+        html_path = slides_dir / f"{slide.index}.html"
+        png_path = slides_dir / f"{slide.index}.png"
+        history_html_path = slides_dir / f"{slide.index}_v{version}.html" if version > 1 else None
+        history_png_path = slides_dir / f"{slide.index}_v{version}.png" if version > 1 else None
         html_path.write_text(html, encoding="utf-8")
+        if history_html_path is not None:
+            history_html_path.write_text(html, encoding="utf-8")
 
         renderer = "playwright"
+        dom_issues: list[ValidationIssue] = []
         try:
             self._capture_with_playwright(html, png_path)
+            dom_issues = self._inspect_dom(slide.index)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             renderer = "pillow-fallback"
             logger.info("slide screenshot fell back to pillow: page=%s err=%s", slide.index, exc)
             _fallback_preview_png(png_path, slide, theme)
+        if history_png_path is not None:
+            shutil.copyfile(png_path, history_png_path)
 
-        issues = validate_html_static(html, page=slide.index)
+        issues = validate_html_static(html, page=slide.index) + dom_issues
         thumb_b64 = _thumbnail_b64(png_path)
         return SlideArtifact(
             index=slide.index,
@@ -101,19 +182,20 @@ class BrowserRenderer:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    @staticmethod
-    def _capture_with_playwright(html: str, png_path: Path) -> None:
-        from playwright.sync_api import sync_playwright  # type: ignore
+    def _capture_with_playwright(self, html: str, png_path: Path) -> None:
+        if self._browser_session is not None:
+            self._browser_session.capture(html, png_path)
+            return
+        session = BrowserSession()
+        try:
+            session.capture(html, png_path)
+        finally:
+            session.close()
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            try:
-                page = browser.new_page(viewport={"width": CANVAS_WIDTH, "height": CANVAS_HEIGHT}, device_scale_factor=2)
-                page.set_content(html, wait_until="networkidle")
-                page.wait_for_timeout(300)
-                page.screenshot(path=str(png_path), full_page=False)
-            finally:
-                browser.close()
+    def _inspect_dom(self, page_index: int) -> list[ValidationIssue]:
+        if self._browser_session is not None:
+            return self._browser_session.inspect_dom(page_index)
+        return []
 
 
 def _fallback_preview_png(path: Path, slide: SlideSpec, theme: ThemeTokens | None) -> None:
@@ -210,7 +292,7 @@ def _thumbnail_b64(path: Path) -> str:
             buffer = io.BytesIO()
             image.save(buffer, format="WEBP", quality=quality)
             data = buffer.getvalue()
-            if len(data) <= 60000:
+            if len(data) <= THUMB_MAX_BYTES:
                 return base64.b64encode(data).decode("ascii")
         return base64.b64encode(data).decode("ascii")
     except Exception:  # pylint: disable=broad-exception-caught

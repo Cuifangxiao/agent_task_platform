@@ -1,6 +1,6 @@
 from PIL import Image
 
-from core.deck.exporter import DeckExporter
+from core.deck.export import DeckExporter
 from core.deck.spec import DeckSpec, SlideSpec, default_theme
 
 

@@ -15,7 +15,8 @@
     "type_scale": { "h1": 44, "h2": 30, "body": 18, "caption": 13 },
     "spacing_unit": 8,
     "radius": 12,
-    "motif": "warm editorial blocks with crisp dividers"
+    "motif": "warm editorial blocks with crisp dividers",
+    "works_best_for": "strategy narratives, board-ready summaries, and balanced analytical storytelling"
   },
   {
     "id": "clear_room",
@@ -33,7 +34,8 @@
     "type_scale": { "h1": 42, "h2": 29, "body": 18, "caption": 13 },
     "spacing_unit": 8,
     "radius": 10,
-    "motif": "quiet operating-room clarity with measured accents"
+    "motif": "quiet operating-room clarity with measured accents",
+    "works_best_for": "SaaS operations, process updates, and clear internal decision memos"
   },
   {
     "id": "civic_night",
@@ -51,6 +53,64 @@
     "type_scale": { "h1": 44, "h2": 30, "body": 18, "caption": 13 },
     "spacing_unit": 8,
     "radius": 12,
-    "motif": "dark civic dashboard with confident signal lines"
+    "motif": "dark civic dashboard with confident signal lines",
+    "works_best_for": "executive updates, operating metrics, and serious policy or infrastructure topics"
+  },
+  {
+    "id": "studio_black",
+    "name": "Studio Black",
+    "palette": {
+      "bg": "#0B0C0F",
+      "surface": "#191B21",
+      "ink": "#F5F7FA",
+      "muted": "#AEB7C4",
+      "accent": "#7DD3FC",
+      "accent2": "#F87171",
+      "line": "#343842"
+    },
+    "fonts": { "display": "Noto Sans SC", "body": "Noto Sans SC", "display_weight": 800 },
+    "type_scale": { "h1": 46, "h2": 31, "body": 18, "caption": 13 },
+    "spacing_unit": 8,
+    "radius": 8,
+    "motif": "high-contrast studio boards with crisp numeric emphasis",
+    "works_best_for": "launch reviews, technical demos, and high-stakes product narratives"
+  },
+  {
+    "id": "signal_pop",
+    "name": "Signal Pop",
+    "palette": {
+      "bg": "#FFF8F0",
+      "surface": "#FFFFFF",
+      "ink": "#16181D",
+      "muted": "#586070",
+      "accent": "#0057FF",
+      "accent2": "#FF4D00",
+      "line": "#DDE2EA"
+    },
+    "fonts": { "display": "Noto Sans SC", "body": "Noto Sans SC", "display_weight": 800 },
+    "type_scale": { "h1": 45, "h2": 30, "body": 18, "caption": 13 },
+    "spacing_unit": 8,
+    "radius": 8,
+    "motif": "bright product editorial with saturated signal accents",
+    "works_best_for": "consumer products, launch decks, and energetic campaign concepts"
+  },
+  {
+    "id": "forest_lab",
+    "name": "Forest Lab",
+    "palette": {
+      "bg": "#F2F6F1",
+      "surface": "#FFFFFF",
+      "ink": "#17312B",
+      "muted": "#52675F",
+      "accent": "#0F8B5F",
+      "accent2": "#7C4DFF",
+      "line": "#CFDAD4"
+    },
+    "fonts": { "display": "Noto Sans SC", "body": "Noto Sans SC", "display_weight": 700 },
+    "type_scale": { "h1": 43, "h2": 30, "body": 18, "caption": 13 },
+    "spacing_unit": 8,
+    "radius": 10,
+    "motif": "calm research lab with natural structure and contrast",
+    "works_best_for": "research findings, sustainability, health, and education topics"
   }
 ]

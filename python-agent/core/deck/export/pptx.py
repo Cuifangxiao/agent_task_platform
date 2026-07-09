@@ -16,6 +16,9 @@ from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 
+from core.deck.errors import ExportError
+from core.deck.export.text_layer import MIN_TEXTBOX_SIZE_PX, TEXTBOX_HEIGHT_SLACK_PX, TEXTBOX_WIDTH_SLACK
+from core.deck.rendering.browser import BrowserSession
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec
 
 logger = logging.getLogger(__name__)
@@ -24,8 +27,6 @@ PAGE_WIDTH = Inches(13.333)
 PAGE_HEIGHT = Inches(7.5)
 PX_TO_INCH = 1 / 96
 PPT_FONT = "Noto Sans SC"
-
-
 @dataclass
 class ExportResult:
     path: Path
@@ -33,8 +34,9 @@ class ExportResult:
 
 
 class DeckExporter:
-    def __init__(self, output_root: Path) -> None:
+    def __init__(self, output_root: Path, browser_session: BrowserSession | None = None) -> None:
         self._output_root = output_root
+        self._browser_session = browser_session
 
     def export(self, request_id: str, deck: DeckSpec) -> ExportResult:
         request_dir = self._output_root / request_id
@@ -59,6 +61,7 @@ class DeckExporter:
 
         path = request_dir / "deck.pptx"
         prs.save(path)
+        _validate_pptx(path, expected_slides=len(deck.slides))
         return ExportResult(path=path.resolve(), warnings=warnings)
 
     def _decorative_background_and_text(
@@ -83,94 +86,42 @@ class DeckExporter:
             f"Slide {slide.index} exported as a full-slide image because text extraction was unavailable.",
         )
 
-    @staticmethod
-    def _capture_hidden_text_background(html_path: Path, request_dir: Path, index: int) -> tuple[Path, list[dict[str, Any]]]:
-        from playwright.sync_api import sync_playwright  # type: ignore
-
+    def _capture_hidden_text_background(self, html_path: Path, request_dir: Path, index: int) -> tuple[Path, list[dict[str, Any]]]:
         html = html_path.read_text(encoding="utf-8")
         bg_path = request_dir / "slides" / f"{index}_bg.png"
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            try:
-                page = browser.new_page(viewport={"width": CANVAS_WIDTH, "height": CANVAS_HEIGHT}, device_scale_factor=2)
-                page.set_content(html, wait_until="networkidle")
-                page.wait_for_timeout(300)
-                text_layer = page.evaluate(
-                    """
-                    () => Array.from(document.querySelectorAll('[data-text]')).map((el) => {
-                      const rect = el.getBoundingClientRect();
-                      const style = window.getComputedStyle(el);
-                      return {
-                        text: el.innerText || el.textContent || '',
-                        x: rect.x,
-                        y: rect.y,
-                        width: rect.width,
-                        height: rect.height,
-                        fontSize: parseFloat(style.fontSize || '18'),
-                        fontWeight: style.fontWeight || '400',
-                        color: style.color || 'rgb(20, 33, 61)',
-                        lineHeight: parseFloat(style.lineHeight || style.fontSize || '22'),
-                        textAlign: style.textAlign || 'left',
-                        fontFamily: style.fontFamily || 'Noto Sans SC'
-                      };
-                    })
-                    """
-                )
-                page.evaluate(
-                    """
-                    () => {
-                      document.querySelectorAll('[data-text]').forEach((el) => {
-                        el.style.visibility = 'hidden';
-                      });
-                    }
-                    """
-                )
-                page.screenshot(path=str(bg_path), full_page=False)
-            finally:
-                browser.close()
-        return bg_path, text_layer if isinstance(text_layer, list) else []
+        if self._browser_session is not None:
+            return bg_path, self._browser_session.extract_hidden_text_background(html, bg_path)
+        session = BrowserSession()
+        try:
+            return bg_path, session.extract_hidden_text_background(html, bg_path)
+        finally:
+            session.close()
 
 
 def extract_text_layer(html_path: Path) -> list[dict[str, Any]]:
     """Extract editable text geometry from HTML when Playwright is available."""
 
-    from playwright.sync_api import sync_playwright  # type: ignore
-
     html = html_path.read_text(encoding="utf-8")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(viewport={"width": CANVAS_WIDTH, "height": CANVAS_HEIGHT}, device_scale_factor=1)
-            page.set_content(html, wait_until="networkidle")
-            page.wait_for_timeout(300)
-            result = page.evaluate(
-                """
-                () => Array.from(document.querySelectorAll('[data-text]')).map((el) => {
-                  const rect = el.getBoundingClientRect();
-                  const style = window.getComputedStyle(el);
-                  return {
-                    text: el.innerText || el.textContent || '',
-                    x: rect.x,
-                    y: rect.y,
-                    width: rect.width,
-                    height: rect.height,
-                    fontSize: parseFloat(style.fontSize || '18'),
-                    fontWeight: style.fontWeight || '400',
-                    color: style.color || 'rgb(20, 33, 61)',
-                    lineHeight: parseFloat(style.lineHeight || style.fontSize || '22'),
-                    textAlign: style.textAlign || 'left',
-                    fontFamily: style.fontFamily || 'Noto Sans SC'
-                  };
-                })
-                """
-            )
-            return result if isinstance(result, list) else []
-        finally:
-            browser.close()
+    session = BrowserSession()
+    try:
+        return session.extract_text_layer(html)
+    finally:
+        session.close()
 
 
 def _add_full_slide_image(slide: Any, path: Path) -> None:
     slide.shapes.add_picture(str(path), 0, 0, width=PAGE_WIDTH, height=PAGE_HEIGHT)
+
+
+def _validate_pptx(path: Path, *, expected_slides: int) -> None:
+    if not path.exists() or path.stat().st_size <= 0:
+        raise ExportError("PPTX export produced an empty file.", stage="export")
+    try:
+        actual = len(Presentation(str(path)).slides)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        raise ExportError(f"PPTX export validation failed: {exc}", stage="export") from exc
+    if actual != expected_slides:
+        raise ExportError(f"PPTX slide count mismatch: expected {expected_slides}, got {actual}.", stage="export")
 
 
 def _add_text_box(slide: Any, item: dict[str, Any]) -> None:
@@ -179,8 +130,8 @@ def _add_text_box(slide: Any, item: dict[str, Any]) -> None:
         return
     left = Inches(float(item.get("x") or 0) * PX_TO_INCH)
     top = Inches(float(item.get("y") or 0) * PX_TO_INCH)
-    width = Inches(max(4, float(item.get("width") or 1) * 1.02) * PX_TO_INCH)
-    height = Inches(max(4, float(item.get("height") or 1) + 1) * PX_TO_INCH)
+    width = Inches(max(MIN_TEXTBOX_SIZE_PX, float(item.get("width") or 1) * TEXTBOX_WIDTH_SLACK) * PX_TO_INCH)
+    height = Inches(max(MIN_TEXTBOX_SIZE_PX, float(item.get("height") or 1) + TEXTBOX_HEIGHT_SLACK_PX) * PX_TO_INCH)
     box = slide.shapes.add_textbox(left, top, width, height)
     frame = box.text_frame
     frame.clear()
@@ -191,10 +142,14 @@ def _add_text_box(slide: Any, item: dict[str, Any]) -> None:
     frame.margin_bottom = 0
     paragraph = frame.paragraphs[0]
     paragraph.alignment = _alignment(str(item.get("textAlign") or "left"))
+    font_size_px = float(item.get("fontSize") or 18)
+    line_height_px = float(item.get("lineHeight") or font_size_px * 1.45)
+    if font_size_px > 0:
+        paragraph.line_spacing = line_height_px / font_size_px
     run = paragraph.add_run()
     run.text = text
     run.font.name = PPT_FONT
-    run.font.size = Pt(round(float(item.get("fontSize") or 18) * 0.75 * 2) / 2)
+    run.font.size = Pt(round(font_size_px * 0.75 * 2) / 2)
     run.font.bold = _font_weight_is_bold(item.get("fontWeight"))
     rgb = _css_rgb_to_rgbcolor(str(item.get("color") or "rgb(20, 33, 61)"))
     if rgb:

@@ -3,22 +3,49 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
 from typing import Any
 
-from core.deck.spec import COMPONENT_LIMITS, DeckSpec, SlideSpec, has_placeholder_text, slide_text_values
+from core.deck.quality.issues import ValidationIssue
+from core.deck.rendering.charts import chart_is_valid
+from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, COMPONENT_LIMITS, DeckSpec, SlideSpec, has_placeholder_text, slide_text_values
 
+EXTERNAL_RESOURCE_RE = re.compile(
+    r"""(?:\b(?:src|href)\s*=\s*["']\s*https?://|url\(\s*["']?\s*https?://|<script\b)""",
+    flags=re.IGNORECASE,
+)
+DOM_VALIDATION_JS = """
+() => {
+  const issues = [];
+  const canvas = { width: 1280, height: 720 };
+  const elements = Array.from(document.querySelectorAll('[data-text]'));
+  const rects = elements.map((el, index) => {
+    const rect = el.getBoundingClientRect();
+    const text = (el.innerText || el.textContent || '').trim();
+    if (el.scrollHeight > el.clientHeight + 2 || el.scrollWidth > el.clientWidth + 2) {
+      issues.push({ kind: 'overflow', text, detail: 'Text content overflows its box.' });
+    }
+    if (rect.left < -2 || rect.top < -2 || rect.right > canvas.width + 2 || rect.bottom > canvas.height + 2) {
+      issues.push({ kind: 'out_of_bounds', text, detail: 'Text element extends outside the slide canvas.' });
+    }
+    return { index, text, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+  }).filter((rect) => rect.width > 1 && rect.height > 1);
 
-@dataclass
-class ValidationIssue:
-    page: int
-    severity: str
-    kind: str
-    description: str
-    suggestion: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+  for (let i = 0; i < rects.length; i += 1) {
+    for (let j = i + 1; j < rects.length; j += 1) {
+      const a = rects[i];
+      const b = rects[j];
+      const x = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+      const y = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+      const area = x * y;
+      const smaller = Math.max(1, Math.min(a.width * a.height, b.width * b.height));
+      if (area / smaller > 0.04) {
+        issues.push({ kind: 'overlap', text: `${a.text} / ${b.text}`, detail: 'Editable text elements overlap.' });
+      }
+    }
+  }
+  return issues;
+}
+"""
 
 
 def validate_deck_spec(deck: DeckSpec) -> list[ValidationIssue]:
@@ -49,6 +76,15 @@ def validate_slide_spec(slide: SlideSpec) -> list[ValidationIssue]:
         issues.append(_issue(slide, "missing_title", "Slide is missing a title.", "Write one viewpoint title."))
     if any(has_placeholder_text(value) for value in slide_text_values(slide)):
         issues.append(_issue(slide, "placeholder_text", "Slide contains placeholder text.", "Rewrite from source content."))
+    if slide.component == "chart-takeaway" and not chart_is_valid(slide.chart):
+        issues.append(
+            _nice_issue(
+                slide,
+                "chart_fallback",
+                "Chart data is missing or invalid, so the page falls back to a text layout.",
+                "Use chart schema {type, series[{label,value}], unit} with source-backed values.",
+            )
+        )
     issues.extend(_density_issues(slide))
     return issues
 
@@ -75,7 +111,7 @@ def validate_html_static(html: str, *, page: int) -> list[ValidationIssue]:
                 suggestion="Mark title, bullets, labels, and takeaway text with data-text.",
             )
         )
-    if re.search(r"https?://|<script\b(?![^>]*echarts)", html, flags=re.IGNORECASE):
+    if EXTERNAL_RESOURCE_RE.search(html):
         issues.append(
             ValidationIssue(
                 page=page,
@@ -93,6 +129,29 @@ def validate_html_static(html: str, *, page: int) -> list[ValidationIssue]:
                 kind="placeholder_text",
                 description="Rendered HTML contains placeholder text.",
                 suggestion="Replace placeholder copy with source-backed content.",
+            )
+        )
+    return issues
+
+
+def validate_dom_result(raw_issues: Any, *, page: int) -> list[ValidationIssue]:
+    if not isinstance(raw_issues, list):
+        return []
+    issues: list[ValidationIssue] = []
+    for item in raw_issues:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "dom").strip()
+        detail = str(item.get("detail") or "Rendered slide has a DOM layout issue.").strip()
+        text = str(item.get("text") or "").strip()
+        suffix = f" Text: {text[:60]}" if text else ""
+        issues.append(
+            ValidationIssue(
+                page=page,
+                severity="must_fix",
+                kind=f"dom_{kind}",
+                description=detail + suffix,
+                suggestion="Reduce text density, adjust layout, or switch to a lower-density component.",
             )
         )
     return issues
@@ -125,10 +184,6 @@ def validate_theme_contrast(deck: DeckSpec) -> list[ValidationIssue]:
             )
         )
     return issues
-
-
-def issues_to_dicts(issues: list[ValidationIssue]) -> list[dict[str, Any]]:
-    return [issue.to_dict() for issue in issues]
 
 
 def _density_issues(slide: SlideSpec) -> list[ValidationIssue]:
@@ -178,6 +233,16 @@ def _issue(slide: SlideSpec, kind: str, description: str, suggestion: str) -> Va
     return ValidationIssue(
         page=slide.index,
         severity="must_fix",
+        kind=kind,
+        description=description,
+        suggestion=suggestion,
+    )
+
+
+def _nice_issue(slide: SlideSpec, kind: str, description: str, suggestion: str) -> ValidationIssue:
+    return ValidationIssue(
+        page=slide.index,
+        severity="nice_to_have",
         kind=kind,
         description=description,
         suggestion=suggestion,

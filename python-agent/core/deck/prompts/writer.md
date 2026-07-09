@@ -30,7 +30,7 @@ Component content schemas:
 - `steps`: `{ "steps": ["step"] }`
 - `comparison`: `{ "left_title": "string", "right_title": "string", "left": ["item"], "right": ["item"] }`
 - `quadrant`: `{ "items": ["quadrant label"] }`
-- `chart-takeaway`: `{ "takeaway": "the conclusion the chart supports" }`, and include a compact `chart` object when facts support it
+- `chart-takeaway`: `{ "takeaway": "the conclusion the chart supports" }`, and include a compact `chart` object only when facts support it
 - `data-table`: `{ "columns": ["col"], "rows": [["cell"]] }`
 - `quote`: `{ "quote": "quote or principle", "speaker": "optional attribution" }`
 - `summary`: `{ "items": ["takeaway"] }`
@@ -44,6 +44,7 @@ Requirements:
 - Use short, editable text chunks; no paragraph should be dense.
 - `content-basic` has at most 4 bullets.
 - `kpi-cards` has 2-4 cards.
+- `chart-takeaway` chart schema is exactly `{"type":"bar|line|pie","series":[{"label": str, "value": number}],"unit": str}`. Values must come from the fact sheet, request, or uploaded content.
 - Use specific facts and numbers only when they are present in the fact sheet, request, or uploaded content; cite their `fact#` ids in `sources`.
 - If the fact sheet is thin, write general strategic content without fabricated numbers.
 - Never output placeholder text such as TODO, sample, example, placeholder, Key point, 示例, or 占位.
