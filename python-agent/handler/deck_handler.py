@@ -48,6 +48,8 @@ class DeckHandler:
                 username=req.user.username,
                 request_id=req.request_id,
                 outline_markdown=req.outline_markdown,
+                action=getattr(req, "action", ""),
+                payload_json=getattr(req, "payload_json", ""),
                 node_model_configs=[
                     DeckNodeModelConfig(
                         node_key=item.node_key,

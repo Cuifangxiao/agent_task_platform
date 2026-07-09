@@ -14,6 +14,19 @@ venv/
 env/
 ENV/
 
+# Frontend dependencies and caches
+node_modules/
+front/node_modules/
+front/dist/
+front/.vite/
+front/.cache/
+front/coverage/
+front/*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 # Build and packaging
 build/
 dist/

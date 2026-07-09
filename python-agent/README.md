@@ -62,6 +62,21 @@ cp .env.example .env                 # 按需填密钥
 .venv/bin/python -m pytest tests/    # 或仓库根目录 make test-python
 ```
 
+## PPT 生成运行依赖
+
+Deck 生成链路使用 HTML 中间表示: 每页会存档到 `DECK_ARTIFACTS_DIR/{request_id}/slides/{n}.html`
+和 `{n}.png`, 最终导出 `{request_id}/deck.pptx`。未配置 `DECK_ARTIFACTS_DIR` 时默认写入
+`python-agent/artifacts/decks`。
+
+部署时安装 Python 依赖后，还需要安装 Playwright Chromium:
+
+```bash
+.venv/bin/python -m playwright install chromium
+```
+
+如果运行环境缺少 Chromium，服务会降级为 Pillow 预览与整页截图导出，并在事件流中发 warning。
+生产环境建议随服务镜像放置 `core/deck/design_system/fonts/` 下的 Noto Sans SC 字体资产。
+
 ## proto 代码生成
 
 proto 唯一真源在仓库根 `api/proto/v1/provider/provider.proto`, 在仓库根目录执行:

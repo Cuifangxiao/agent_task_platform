@@ -283,13 +283,18 @@ func readSourceFile(file multipart.File, header *multipart.FileHeader) ([]byte, 
 }
 
 func (h *Handler) DownloadArtifact(c *gin.Context) {
-	path, err := h.service.ArtifactPath(c.Param("request_id"))
+	assetPath := strings.TrimPrefix(c.Param("asset_path"), "/")
+	path, err := h.service.ArtifactAssetPath(c.Param("request_id"), assetPath)
 	if err != nil {
 		h.respondError(c, err)
 		return
 	}
 
-	c.FileAttachment(path, "deck-"+c.Param("request_id")+".pptx")
+	if assetPath == "" || strings.HasSuffix(strings.ToLower(path), ".pptx") {
+		c.FileAttachment(path, "deck-"+c.Param("request_id")+".pptx")
+		return
+	}
+	c.File(path)
 }
 
 func (h *Handler) respondError(c *gin.Context, err error) {

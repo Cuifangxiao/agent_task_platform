@@ -23,21 +23,45 @@ INSERT IGNORE INTO agents (
     'Python PPT deck generation agent.',
     JSON_ARRAY(
         JSON_OBJECT(
+            'key', 'brief',
+            'display_name', 'Brief Research',
+            'description', 'Extract the audience, goal, language, and fact sheet used by downstream nodes.',
+            'requires_model', true
+        ),
+        JSON_OBJECT(
             'key', 'outline',
             'display_name', 'Outline Planning',
             'description', 'Build the presentation storyline, section order, and slide-level key points.',
             'requires_model', true
         ),
         JSON_OBJECT(
-            'key', 'slides',
-            'display_name', 'Slide Content',
-            'description', 'Expand the outline into slide titles, bullets, visual hints, and speaker notes.',
+            'key', 'style',
+            'display_name', 'Art Direction',
+            'description', 'Prepare visual theme tokens and style samples.',
+            'requires_model', true
+        ),
+        JSON_OBJECT(
+            'key', 'writer',
+            'display_name', 'Slide Writer',
+            'description', 'Expand each outline item into structured SlideSpec v2 content.',
+            'requires_model', true
+        ),
+        JSON_OBJECT(
+            'key', 'designer',
+            'display_name', 'Slide Designer',
+            'description', 'Render slide specs through the HTML design system and repair page-level issues.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'review',
-            'display_name', 'Quality Review',
-            'description', 'Check slide count, repeated titles, completeness, and improvement suggestions.',
+            'display_name', 'Visual Review',
+            'description', 'Review slide previews for visual and layout issues.',
+            'requires_model', true
+        ),
+        JSON_OBJECT(
+            'key', 'coherence',
+            'display_name', 'Coherence Pass',
+            'description', 'Check cross-page consistency, repeated titles, and narrative flow.',
             'requires_model', true
         )
     ),

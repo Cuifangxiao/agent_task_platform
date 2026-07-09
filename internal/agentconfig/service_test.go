@@ -89,9 +89,13 @@ func TestCreateValidatesAndSavesAgentConfigBindings(t *testing.T) {
 		Description: "balanced node models",
 		IsDefault:   true,
 		NodeBindings: []NodeBindingRequest{
+			{NodeKey: "brief", ModelConfigID: 1},
 			{NodeKey: "outline", ModelConfigID: 1, Temperature: &temperature},
-			{NodeKey: "slides", ModelConfigID: 2, MaxTokens: &maxTokens},
+			{NodeKey: "style", ModelConfigID: 2},
+			{NodeKey: "writer", ModelConfigID: 2, MaxTokens: &maxTokens},
+			{NodeKey: "designer", ModelConfigID: 2},
 			{NodeKey: "review", ModelConfigID: 3},
+			{NodeKey: "coherence", ModelConfigID: 1},
 		},
 	})
 	if err != nil {
@@ -104,8 +108,8 @@ func TestCreateValidatesAndSavesAgentConfigBindings(t *testing.T) {
 	if repo.lastCreated.AgentID != 1 {
 		t.Fatalf("expected agent id 1, got %d", repo.lastCreated.AgentID)
 	}
-	if len(resp.NodeBindings) != 3 {
-		t.Fatalf("expected 3 node bindings, got %d", len(resp.NodeBindings))
+	if len(resp.NodeBindings) != 7 {
+		t.Fatalf("expected 7 node bindings, got %d", len(resp.NodeBindings))
 	}
 }
 
@@ -123,7 +127,7 @@ func TestCreateRejectsMissingRequiredNode(t *testing.T) {
 		Name:    "incomplete",
 		NodeBindings: []NodeBindingRequest{
 			{NodeKey: "outline", ModelConfigID: 1},
-			{NodeKey: "slides", ModelConfigID: 2},
+			{NodeKey: "writer", ModelConfigID: 2},
 		},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
@@ -145,9 +149,13 @@ func TestCreateRejectsInactiveModelConfig(t *testing.T) {
 		AgentID: 1,
 		Name:    "inactive model",
 		NodeBindings: []NodeBindingRequest{
+			{NodeKey: "brief", ModelConfigID: 1},
 			{NodeKey: "outline", ModelConfigID: 1},
-			{NodeKey: "slides", ModelConfigID: 2},
+			{NodeKey: "style", ModelConfigID: 1},
+			{NodeKey: "writer", ModelConfigID: 2},
+			{NodeKey: "designer", ModelConfigID: 1},
 			{NodeKey: "review", ModelConfigID: 3},
+			{NodeKey: "coherence", ModelConfigID: 1},
 		},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
@@ -162,9 +170,13 @@ func testPPTAgent() *AgentDefinition {
 		Name:     "PPTAgent",
 		Status:   StatusActive,
 		Nodes: []NodeDefinition{
+			{Key: "brief", RequiresModel: true},
 			{Key: "outline", RequiresModel: true},
-			{Key: "slides", RequiresModel: true},
+			{Key: "style", RequiresModel: true},
+			{Key: "writer", RequiresModel: true},
+			{Key: "designer", RequiresModel: true},
 			{Key: "review", RequiresModel: true},
+			{Key: "coherence", RequiresModel: true},
 		},
 	}
 }

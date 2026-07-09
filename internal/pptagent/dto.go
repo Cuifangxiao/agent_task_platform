@@ -29,13 +29,17 @@ type SourceFile struct {
 }
 
 type ResumeDeckRequest struct {
-	RequestID       string `json:"request_id" binding:"required"`
-	OutlineMarkdown string `json:"outline_markdown" binding:"required"`
+	RequestID       string          `json:"request_id" binding:"required"`
+	OutlineMarkdown string          `json:"outline_markdown"`
+	Action          string          `json:"action"`
+	Payload         json.RawMessage `json:"payload"`
 }
 
 type RuntimeResumeDeckRequest struct {
 	RequestID        string
 	OutlineMarkdown  string
+	Action           string
+	PayloadJSON      string
 	NodeModelConfigs []RuntimeNodeModelConfig
 }
 

@@ -1225,6 +1225,15 @@ label {
   font-size: 13px;
 }
 
+.slide-preview-thumb {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
 .slide-number {
   width: 28px;
   height: 28px;
@@ -1267,6 +1276,43 @@ label {
   background: var(--warning-soft);
   color: var(--warning);
   font-size: 13px;
+}
+
+.style-options {
+  display: grid;
+  gap: 12px;
+}
+
+.style-option-card {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px;
+}
+
+.style-option-card img {
+  width: 168px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.style-option-card strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.style-option-card p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .outline-preview {
@@ -1674,5 +1720,13 @@ label {
   .slide-progress-head .status-pill {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .style-option-card {
+    grid-template-columns: 1fr;
+  }
+
+  .style-option-card img {
+    width: 100%;
   }
 }

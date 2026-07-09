@@ -695,6 +695,8 @@ type ResumeDeckRequest struct {
 	RequestId        string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	OutlineMarkdown  string                 `protobuf:"bytes,3,opt,name=outline_markdown,json=outlineMarkdown,proto3" json:"outline_markdown,omitempty"`
 	NodeModelConfigs []*DeckNodeModelConfig `protobuf:"bytes,4,rep,name=node_model_configs,json=nodeModelConfigs,proto3" json:"node_model_configs,omitempty"`
+	Action           string                 `protobuf:"bytes,5,opt,name=action,proto3" json:"action,omitempty"`
+	PayloadJson      string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -755,6 +757,20 @@ func (x *ResumeDeckRequest) GetNodeModelConfigs() []*DeckNodeModelConfig {
 		return x.NodeModelConfigs
 	}
 	return nil
+}
+
+func (x *ResumeDeckRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *ResumeDeckRequest) GetPayloadJson() string {
+	if x != nil {
+		return x.PayloadJson
+	}
+	return ""
 }
 
 type GenerateDeckResponse struct {
@@ -1304,13 +1320,15 @@ const file_provider_proto_rawDesc = "" +
 	"\vsource_file\x18\x04 \x01(\fR\n" +
 	"sourceFile\x12N\n" +
 	"\x12node_model_configs\x18\x05 \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\x12>\n" +
-	"\fsource_files\x18\x06 \x03(\v2\x1b.provider.v1.DeckSourceFileR\vsourceFiles\"\xdb\x01\n" +
+	"\fsource_files\x18\x06 \x03(\v2\x1b.provider.v1.DeckSourceFileR\vsourceFiles\"\x96\x02\n" +
 	"\x11ResumeDeckRequest\x12,\n" +
 	"\x04user\x18\x01 \x01(\v2\x18.provider.v1.UserContextR\x04user\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x02 \x01(\tR\trequestId\x12)\n" +
 	"\x10outline_markdown\x18\x03 \x01(\tR\x0foutlineMarkdown\x12N\n" +
-	"\x12node_model_configs\x18\x04 \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\"\x90\x03\n" +
+	"\x12node_model_configs\x18\x04 \x03(\v2 .provider.v1.DeckNodeModelConfigR\x10nodeModelConfigs\x12\x16\n" +
+	"\x06action\x18\x05 \x01(\tR\x06action\x12!\n" +
+	"\fpayload_json\x18\x06 \x01(\tR\vpayloadJson\"\x90\x03\n" +
 	"\x14GenerateDeckResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n" +

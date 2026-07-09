@@ -146,8 +146,9 @@ func (s *Service) ResumeDeck(
 		return nil, fmt.Errorf("%w: request_id is required", ErrInvalidRequest)
 	}
 
+	action := normalizeResumeAction(req.Action)
 	outlineMarkdown := strings.TrimSpace(req.OutlineMarkdown)
-	if outlineMarkdown == "" {
+	if action == "approve_outline" && outlineMarkdown == "" {
 		return nil, fmt.Errorf("%w: outline_markdown is required", ErrInvalidRequest)
 	}
 	if len([]rune(outlineMarkdown)) > 50000 {
@@ -163,10 +164,17 @@ func (s *Service) ResumeDeck(
 	if err != nil {
 		return nil, err
 	}
-	if err := s.markOutlineConfirmed(ctx, conversation.ID, requestID); err != nil {
-		return nil, err
+	if action == "approve_outline" {
+		if err := s.markOutlineConfirmed(ctx, conversation.ID, requestID); err != nil {
+			return nil, err
+		}
 	}
-	statusMessageID, err := s.appendResumeMessages(ctx, conversation.ID, requestID)
+	if action == "choose_style" {
+		if err := s.markStyleSelected(ctx, conversation.ID, requestID); err != nil {
+			return nil, err
+		}
+	}
+	statusMessageID, err := s.appendResumeMessages(ctx, conversation.ID, requestID, action)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +187,8 @@ func (s *Service) ResumeDeck(
 	stream, err := s.runtimeClient.ResumeDeck(ctx, user, RuntimeResumeDeckRequest{
 		RequestID:        requestID,
 		OutlineMarkdown:  outlineMarkdown,
+		Action:           action,
+		PayloadJSON:      string(req.Payload),
 		NodeModelConfigs: runtimeModels,
 	})
 	if err != nil {
@@ -189,13 +199,30 @@ func (s *Service) ResumeDeck(
 }
 
 func (s *Service) ArtifactPath(requestID string) (string, error) {
+	return s.ArtifactAssetPath(requestID, "")
+}
+
+func (s *Service) ArtifactAssetPath(requestID string, relativePath string) (string, error) {
 	requestID = strings.TrimSpace(requestID)
 	if !artifactIDPattern.MatchString(requestID) {
 		return "", fmt.Errorf("%w: invalid request id", ErrInvalidRequest)
 	}
 
-	path := filepath.Join(s.artifactDir, requestID+".pptx")
 	cleanDir := filepath.Clean(s.artifactDir)
+	var path string
+	relativePath = strings.TrimPrefix(strings.TrimSpace(relativePath), "/")
+	if relativePath == "" {
+		path = filepath.Join(cleanDir, requestID, "deck.pptx")
+		if _, err := os.Stat(path); err != nil && os.IsNotExist(err) {
+			path = filepath.Join(cleanDir, requestID+".pptx")
+		}
+	} else {
+		relClean := filepath.Clean(relativePath)
+		if relClean == "." || strings.HasPrefix(relClean, "..") || filepath.IsAbs(relClean) {
+			return "", fmt.Errorf("%w: invalid artifact path", ErrInvalidRequest)
+		}
+		path = filepath.Join(cleanDir, requestID, relClean)
+	}
 	cleanPath := filepath.Clean(path)
 	rel, err := filepath.Rel(cleanDir, cleanPath)
 	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
@@ -336,20 +363,34 @@ func (s *Service) startConversation(
 	return conversation, statusMessage.ID, nil
 }
 
-func (s *Service) appendResumeMessages(ctx context.Context, conversationID int64, requestID string) (int64, error) {
+func (s *Service) appendResumeMessages(ctx context.Context, conversationID int64, requestID string, action string) (int64, error) {
+	userText := "好的，按这个大纲继续生成完整 PPT。"
+	statusTitle := "继续生成 PPT"
+	statusText := "我正在根据确认后的大纲展开每一页内容。"
+	switch action {
+	case "choose_style":
+		userText = "已选择风格，继续生成完整 PPT。"
+		statusTitle = "生成页面预览"
+		statusText = "我正在按选定风格生成每一页的 HTML 预览。"
+	case "regenerate_slide":
+		userText = "请按反馈重做这一页。"
+		statusTitle = "重做单页"
+		statusText = "我正在重做指定页面并重新导出 PPT。"
+	}
+
 	if _, err := s.historyRepo.CreateMessage(ctx, ConversationMessage{
 		ConversationID: conversationID,
 		Role:           "user",
 		Kind:           "user",
 		RequestID:      requestID,
-		ContentJSON:    mustMarshalJSON(map[string]any{"text": "好的，按这个大纲继续生成完整 PPT。"}),
+		ContentJSON:    mustMarshalJSON(map[string]any{"text": userText}),
 	}); err != nil {
 		return 0, err
 	}
 
 	statusContent := persistedStatusContent{
-		Title:     "继续生成 PPT",
-		Text:      "我正在根据确认后的大纲展开每一页内容。",
+		Title:     statusTitle,
+		Text:      statusText,
 		RequestID: requestID,
 		State:     string(ConversationStatusRunning),
 		Steps:     []persistedProgressStep{},
@@ -383,6 +424,23 @@ func (s *Service) markOutlineConfirmed(ctx context.Context, conversationID int64
 	}
 	content["awaitingConfirm"] = false
 
+	return s.historyRepo.UpdateMessageContent(ctx, message.ID, requestID, mustMarshalJSON(content))
+}
+
+func (s *Service) markStyleSelected(ctx context.Context, conversationID int64, requestID string) error {
+	message, err := s.historyRepo.GetLatestMessageByKindAndRequestID(ctx, conversationID, "style", requestID)
+	if err != nil {
+		if errors.Is(err, ErrConversationNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	var content map[string]any
+	if err := json.Unmarshal([]byte(message.ContentJSON), &content); err != nil {
+		return fmt.Errorf("decode style message: %w", err)
+	}
+	content["awaitingConfirm"] = false
 	return s.historyRepo.UpdateMessageContent(ctx, message.ID, requestID, mustMarshalJSON(content))
 }
 
@@ -475,6 +533,12 @@ func (s *Service) runtimeModelsFromConfig(
 	for _, nodeKey := range requiredNodes {
 		binding, ok := byNode[nodeKey]
 		if !ok {
+			fallbackKey := legacyModelNodeFallback(nodeKey)
+			if fallbackKey != "" {
+				binding, ok = byNode[fallbackKey]
+			}
+		}
+		if !ok {
 			return nil, fmt.Errorf("%w: agent config missing node binding '%s'", ErrInvalidRequest, nodeKey)
 		}
 
@@ -513,6 +577,19 @@ func (s *Service) runtimeModelsFromConfig(
 	return runtimeModels, nil
 }
 
+func legacyModelNodeFallback(nodeKey string) string {
+	switch strings.ToLower(strings.TrimSpace(nodeKey)) {
+	case "brief":
+		return "outline"
+	case "style", "writer", "designer", "coherence":
+		return "slides"
+	case "repair":
+		return "designer"
+	default:
+		return ""
+	}
+}
+
 func modelNodeKeys(nodes []agentconfig.NodeDefinition) []string {
 	keys := make([]string, 0, len(nodes))
 	for _, node := range nodes {
@@ -543,9 +620,14 @@ type persistedSlideProgress struct {
 	Title            string   `json:"title,omitempty"`
 	KeyMessage       string   `json:"keyMessage,omitempty"`
 	Layout           string   `json:"layout,omitempty"`
+	Component        string   `json:"component,omitempty"`
 	Bullets          []string `json:"bullets,omitempty"`
 	VisualSuggestion string   `json:"visualSuggestion,omitempty"`
 	SpeakerNotes     string   `json:"speakerNotes,omitempty"`
+	PreviewPNG       string   `json:"previewPng,omitempty"`
+	PreviewHTML      string   `json:"previewHtml,omitempty"`
+	PreviewThumb     string   `json:"previewThumb,omitempty"`
+	Version          int      `json:"version,omitempty"`
 	Status           string   `json:"status,omitempty"`
 	Warnings         []string `json:"warnings,omitempty"`
 }
@@ -567,6 +649,7 @@ type persistedDeckStream struct {
 	statusContent    persistedStatusContent
 	resultMessageID  int64
 	outlineMessageID int64
+	styleMessageID   int64
 	stream           DeckStream
 }
 
@@ -651,8 +734,13 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 		return err
 	}
 
-	if chunk.EventType == "outline" || chunk.EventType == "interrupt" {
+	if chunk.EventType == "outline" || (chunk.EventType == "interrupt" && chunk.Stage == "outline_review") {
 		if err := s.upsertOutlineMessage(requestID, chunk, chunk.EventType == "interrupt"); err != nil {
+			return err
+		}
+	}
+	if chunk.EventType == "style_options" || (chunk.EventType == "interrupt" && chunk.Stage == "style_review") {
+		if err := s.upsertStyleMessage(requestID, chunk, chunk.EventType == "interrupt"); err != nil {
 			return err
 		}
 	}
@@ -700,6 +788,8 @@ func persistedSlideFromChunk(chunk *DeckStreamChunk) *persistedSlideProgress {
 	if chunk.EventType != "slide_started" &&
 		chunk.EventType != "slide_ready" &&
 		chunk.EventType != "slide_reviewed" &&
+		chunk.EventType != "slide_spec_ready" &&
+		chunk.EventType != "slide_preview" &&
 		!(chunk.EventType == "stage_progress" && chunk.Stage == "slides") {
 		return nil
 	}
@@ -721,6 +811,10 @@ func persistedSlideFromChunk(chunk *DeckStreamChunk) *persistedSlideProgress {
 	switch {
 	case chunk.EventType == "slide_started" && status == "":
 		status = "running"
+	case chunk.EventType == "slide_spec_ready" && status == "":
+		status = "running"
+	case chunk.EventType == "slide_preview" && status == "":
+		status = "ready"
 	case chunk.EventType == "slide_ready" && status == "":
 		status = "ready"
 	case chunk.EventType == "slide_reviewed" && len(warnings) > 0:
@@ -734,9 +828,14 @@ func persistedSlideFromChunk(chunk *DeckStreamChunk) *persistedSlideProgress {
 		Title:            payloadString(payload["title"]),
 		KeyMessage:       payloadString(payload["key_message"]),
 		Layout:           payloadString(payload["layout"]),
+		Component:        payloadString(payload["component"]),
 		Bullets:          payloadStringSlice(payload["bullets"]),
 		VisualSuggestion: payloadString(payload["visual_suggestion"]),
 		SpeakerNotes:     payloadString(payload["speaker_notes"]),
+		PreviewPNG:       payloadString(payload["png"]),
+		PreviewHTML:      payloadString(payload["html"]),
+		PreviewThumb:     payloadString(payload["thumb_b64"]),
+		Version:          payloadInt(payload["version"]),
 		Status:           status,
 		Warnings:         warnings,
 	}
@@ -752,6 +851,9 @@ func mergePersistedSlide(existing *persistedSlideProgress, incoming persistedSli
 	if incoming.Layout != "" {
 		existing.Layout = incoming.Layout
 	}
+	if incoming.Component != "" {
+		existing.Component = incoming.Component
+	}
 	if len(incoming.Bullets) > 0 {
 		existing.Bullets = incoming.Bullets
 	}
@@ -760,6 +862,18 @@ func mergePersistedSlide(existing *persistedSlideProgress, incoming persistedSli
 	}
 	if incoming.SpeakerNotes != "" {
 		existing.SpeakerNotes = incoming.SpeakerNotes
+	}
+	if incoming.PreviewPNG != "" {
+		existing.PreviewPNG = incoming.PreviewPNG
+	}
+	if incoming.PreviewHTML != "" {
+		existing.PreviewHTML = incoming.PreviewHTML
+	}
+	if incoming.PreviewThumb != "" {
+		existing.PreviewThumb = incoming.PreviewThumb
+	}
+	if incoming.Version > 0 {
+		existing.Version = incoming.Version
 	}
 	if incoming.Status != "" && incoming.Status != "pending" {
 		existing.Status = incoming.Status
@@ -798,6 +912,33 @@ func (s *persistedDeckStream) upsertOutlineMessage(requestID string, chunk *Deck
 	}
 
 	return s.historyRepo.UpdateMessageContent(s.ctx, s.outlineMessageID, requestID, mustMarshalJSON(content))
+}
+
+func (s *persistedDeckStream) upsertStyleMessage(requestID string, chunk *DeckStreamChunk, awaitingConfirm bool) error {
+	content := map[string]any{
+		"title":           "选择 PPT 风格",
+		"text":            "我准备了两套视觉方向，选择后继续生成页面。",
+		"requestId":       requestID,
+		"options":         extractStyleOptionsForPersistence(chunk),
+		"awaitingConfirm": awaitingConfirm,
+	}
+
+	if s.styleMessageID == 0 {
+		message, err := s.historyRepo.CreateMessage(s.ctx, ConversationMessage{
+			ConversationID: s.conversationID,
+			Role:           "assistant",
+			Kind:           "style",
+			RequestID:      requestID,
+			ContentJSON:    mustMarshalJSON(content),
+		})
+		if err != nil {
+			return err
+		}
+		s.styleMessageID = message.ID
+		return nil
+	}
+
+	return s.historyRepo.UpdateMessageContent(s.ctx, s.styleMessageID, requestID, mustMarshalJSON(content))
 }
 
 func (s *persistedDeckStream) upsertResultMessage(requestID string, chunk *DeckStreamChunk) error {
@@ -845,6 +986,13 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 		}
 	}
 	if chunk.EventType == "interrupt" {
+		if chunk.Stage == "style_review" {
+			return &persistedChunkSnapshot{
+				Title: "等待选择风格",
+				Text:  "两套视觉方向已经准备好，选择后继续生成页面。",
+				State: string(ConversationStatusWaiting),
+			}
+		}
 		return &persistedChunkSnapshot{
 			Title: "等待确认大纲",
 			Text:  "我已经整理好一版大纲，确认后就继续生成完整 PPT。",
@@ -878,10 +1026,40 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 			Text:  "大纲已经准备好，确认后我继续生成页面内容。",
 			State: string(ConversationStatusRunning),
 		}
+	case "style":
+		return &persistedChunkSnapshot{
+			Title: "正在生成风格样张",
+			Text:  "我在准备两套视觉方向。",
+			State: string(ConversationStatusRunning),
+		}
+	case "style_review":
+		return &persistedChunkSnapshot{
+			Title: "等待选择风格",
+			Text:  "请选择一套视觉方向继续。",
+			State: string(ConversationStatusRunning),
+		}
 	case "slides":
 		return &persistedChunkSnapshot{
 			Title: "正在展开页面",
 			Text:  "我在把大纲扩展成每一页的具体内容。",
+			State: string(ConversationStatusRunning),
+		}
+	case "design_slides":
+		return &persistedChunkSnapshot{
+			Title: "正在生成页面预览",
+			Text:  "我在把结构化内容渲染成 HTML 与 PNG 预览。",
+			State: string(ConversationStatusRunning),
+		}
+	case "validate":
+		return &persistedChunkSnapshot{
+			Title: "正在校验页面",
+			Text:  "我在检查占位、密度和页面结构。",
+			State: string(ConversationStatusRunning),
+		}
+	case "coherence":
+		return &persistedChunkSnapshot{
+			Title: "正在统一全局表达",
+			Text:  "我在检查跨页连贯性。",
 			State: string(ConversationStatusRunning),
 		}
 	case "review":
@@ -890,7 +1068,7 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 			Text:  "我在检查逻辑、重复信息和内容完整性。",
 			State: string(ConversationStatusRunning),
 		}
-	case "render":
+	case "render", "export":
 		return &persistedChunkSnapshot{
 			Title: "正在导出 PPT",
 			Text:  "正在把内容渲染成可下载的 PPT 文件。",
@@ -909,11 +1087,21 @@ func stageLabelForPersistence(stage string, eventType string) string {
 		return "大纲规划"
 	case stage == "outline_review":
 		return "大纲确认"
+	case stage == "style":
+		return "风格样张"
+	case stage == "style_review":
+		return "风格选择"
 	case stage == "slides":
 		return "页面展开"
+	case stage == "design_slides":
+		return "页面预览"
+	case stage == "validate":
+		return "质量校验"
+	case stage == "coherence":
+		return "连贯检查"
 	case stage == "review":
 		return "质量检查"
-	case stage == "render":
+	case stage == "render", stage == "export":
 		return "PPT 导出"
 	case eventType == "artifact":
 		return "下载结果"
@@ -1057,6 +1245,23 @@ func extractOutlineMarkdownForPersistence(chunk *DeckStreamChunk) string {
 	return ""
 }
 
+func extractStyleOptionsForPersistence(chunk *DeckStreamChunk) []any {
+	if chunk == nil || len(chunk.Payload) == 0 {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(chunk.Payload, &payload); err != nil {
+		return nil
+	}
+	if options, ok := payload["options"].([]any); ok {
+		return options
+	}
+	if options, ok := payload["style_options"].([]any); ok {
+		return options
+	}
+	return nil
+}
+
 func extractArtifactFileNameForPersistence(raw json.RawMessage) string {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -1112,6 +1317,19 @@ func normalizeSourceFiles(req GenerateDeckRequest) []SourceFile {
 		})
 	}
 	return sourceFiles
+}
+
+func normalizeResumeAction(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "continue", "approve", "approved", "approve_outline":
+		return "approve_outline"
+	case "choose_style":
+		return "choose_style"
+	case "regenerate_slide":
+		return "regenerate_slide"
+	default:
+		return "approve_outline"
+	}
 }
 
 func sourceFileNames(req GenerateDeckRequest) []string {

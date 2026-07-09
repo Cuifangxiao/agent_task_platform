@@ -1,0 +1,14 @@
+<section class="slide">
+  <header class="slide-header"><h1 class="title" data-text>{{ title }}</h1></header>
+  <main class="comparison-grid">
+    <article class="panel comparison-panel">
+      <h3 data-text>{{ content.left_title }}</h3>
+      {% for item in content.left %}<p class="item" data-text>{{ item }}</p>{% endfor %}
+    </article>
+    <article class="panel comparison-panel">
+      <h3 data-text>{{ content.right_title }}</h3>
+      {% for item in content.right %}<p class="item" data-text>{{ item }}</p>{% endfor %}
+    </article>
+  </main>
+  <div class="footer-number">{{ index }}</div>
+</section>

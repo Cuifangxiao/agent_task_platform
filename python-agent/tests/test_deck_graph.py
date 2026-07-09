@@ -99,8 +99,27 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     interrupt_payload = interrupts[0].value
     assert interrupt_payload["outline_markdown"] == OUTLINE_MARKDOWN.strip()
 
+    style_interrupts = []
     for part in graph.stream(
-        Command(resume={"action": "continue", "outline_markdown": outline_events[0]["outline_markdown"]}),
+        Command(resume={"action": "approve_outline", "outline_markdown": outline_events[0]["outline_markdown"]}),
+        config=config,
+        stream_mode=["custom", "updates"],
+    ):
+        mode, data = part
+        if mode == "custom":
+            events.append(data)
+        if mode == "updates" and "__interrupt__" in data:
+            style_interrupts.extend(data["__interrupt__"])
+
+    style_events = [event for event in events if event.get("event_type") == "style_options"]
+    assert style_events
+    assert style_interrupts
+    style_payload = style_interrupts[0].value
+    assert style_payload["stage"] == "style_review"
+    assert len(style_payload["style_options"]) == 2
+
+    for part in graph.stream(
+        Command(resume={"action": "choose_style", "style_id": "style_1"}),
         config=config,
         stream_mode=["custom", "updates"],
     ):
@@ -112,17 +131,21 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     assert [event["payload"]["index"] for event in slide_started_events] == [1, 2]
     assert slide_started_events[0]["payload"]["status"] == "running"
 
+    slide_spec_events = [event for event in events if event.get("event_type") == "slide_spec_ready"]
+    assert [event["payload"]["component"] for event in slide_spec_events] == ["cover", "content-basic"]
+
+    slide_preview_events = [event for event in events if event.get("event_type") == "slide_preview"]
+    assert [event["payload"]["index"] for event in slide_preview_events] == [1, 2]
+    assert all(event["payload"]["png"] for event in slide_preview_events)
+
     slide_ready_events = [event for event in events if event.get("event_type") == "slide_ready"]
     assert [event["payload"]["title"] for event in slide_ready_events] == ["PPTAgent MVP", "Architecture"]
     assert slide_ready_events[1]["payload"]["bullets"] == ["Go streams SSE", "Python runs LangGraph", "Renderer writes PPTX"]
     assert all(event["payload"]["status"] == "ready" for event in slide_ready_events)
 
-    slide_reviewed_events = [event for event in events if event.get("event_type") == "slide_reviewed"]
-    assert [event["payload"]["status"] for event in slide_reviewed_events] == ["ok", "ok"]
-
     artifact_events = [event for event in events if event.get("event_type") == "artifact"]
     assert artifact_events
-    artifact_path = tmp_path / "11111111-1111-1111-1111-111111111111.pptx"
+    artifact_path = tmp_path / "11111111-1111-1111-1111-111111111111" / "deck.pptx"
     assert artifact_path.exists()
     assert artifact_path.stat().st_size > 0
 

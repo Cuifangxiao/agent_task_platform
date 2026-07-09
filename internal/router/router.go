@@ -61,4 +61,5 @@ func Register(
 	authGroup.POST("/ppt-agent/generate", pptAgentHandler.GenerateDeck)
 	authGroup.POST("/ppt-agent/resume", pptAgentHandler.ResumeDeck)
 	authGroup.GET("/ppt-agent/artifacts/:request_id", pptAgentHandler.DownloadArtifact)
+	authGroup.GET("/ppt-agent/artifacts/:request_id/*asset_path", pptAgentHandler.DownloadArtifact)
 }

@@ -148,7 +148,9 @@ export interface PptGeneratePayload {
 
 export interface PptResumePayload {
   request_id: string
-  outline_markdown: string
+  outline_markdown?: string
+  action?: 'approve_outline' | 'choose_style' | 'regenerate_slide' | string
+  payload?: Record<string, unknown>
 }
 
 export interface ParsedSseEvent {

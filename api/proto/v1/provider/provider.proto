@@ -86,6 +86,8 @@ message ResumeDeckRequest {
   string request_id = 2;
   string outline_markdown = 3;
   repeated DeckNodeModelConfig node_model_configs = 4;
+  string action = 5;
+  string payload_json = 6;
 }
 
 message GenerateDeckResponse {

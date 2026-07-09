@@ -1,0 +1,18 @@
+<section class="slide">
+  <header class="slide-header">
+    <h1 class="title" data-text>{{ title }}</h1>
+    <p class="subtitle" data-text>{{ content.body }}</p>
+  </header>
+  <main class="content-grid">
+    <ul class="bullet-list">
+      {% for bullet in content.bullets %}
+      <li class="bullet" data-text>{{ bullet }}</li>
+      {% endfor %}
+    </ul>
+    <aside class="panel side-card">
+      <p class="caption" data-text>{{ role }}</p>
+    </aside>
+  </main>
+  <div class="motif-line"></div>
+  <div class="footer-number">{{ index }}</div>
+</section>

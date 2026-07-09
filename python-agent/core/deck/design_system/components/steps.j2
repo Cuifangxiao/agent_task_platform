@@ -1,0 +1,7 @@
+<section class="slide">
+  <header class="slide-header"><h1 class="title" data-text>{{ title }}</h1></header>
+  <main class="steps">
+    {% for item in content.steps %}<article class="panel step-item"><p class="item" data-text>{{ item }}</p></article>{% endfor %}
+  </main>
+  <div class="footer-number">{{ index }}</div>
+</section>

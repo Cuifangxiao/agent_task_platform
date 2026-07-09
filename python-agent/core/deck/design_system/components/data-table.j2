@@ -1,0 +1,11 @@
+<section class="slide">
+  <header class="slide-header"><h1 class="title" data-text>{{ title }}</h1></header>
+  <table class="data-table">
+    <tbody>
+      {% for row in content.rows %}
+      <tr>{% for cell in row %}<td data-text>{{ cell }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="footer-number">{{ index }}</div>
+</section>

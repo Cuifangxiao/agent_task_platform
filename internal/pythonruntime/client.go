@@ -232,6 +232,8 @@ func (c *Client) ResumeDeck(
 		RequestId:        req.RequestID,
 		OutlineMarkdown:  req.OutlineMarkdown,
 		NodeModelConfigs: nodeModelConfigs,
+		Action:           req.Action,
+		PayloadJson:      req.PayloadJSON,
 	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
 	if err != nil {
 		cancel()

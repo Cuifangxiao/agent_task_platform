@@ -15,7 +15,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from core.deck.contract import DeckNodeModelConfig, DeckSourceFile, GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
+from core.deck.browser import BrowserRenderer
+from core.deck.exporter import DeckExporter
 from core.deck.graph import build_deck_graph
+from core.deck.html_renderer import HTMLSlideRenderer
+from core.deck.spec import DeckSpec
 from core.provider.model_utils import provider_config_manager
 from core.tools.document_parser import parse_uploaded_document
 
@@ -82,20 +86,20 @@ class DeckService:
             if not request_id:
                 raise ValueError("request_id is required")
 
+            action = _normalize_resume_action(inp)
+            if action == "regenerate_slide":
+                yield from _regenerate_slide_from_artifacts(request_id, inp)
+                return
+
             llms = _build_deck_llms(inp)
             graph = build_deck_graph(llms, _artifact_dir(), self._checkpointer)
-            outline_markdown = inp.outline_markdown.strip()
-            if not outline_markdown:
-                raise ValueError("outline_markdown is required")
-            resume_payload = {
-                "action": "continue",
-                "outline_markdown": outline_markdown,
-            }
+            resume_payload = _build_resume_payload(inp, action)
 
             logger.info(
-                "resume deck: request_id=%s user_id=%s models=%s",
+                "resume deck: request_id=%s user_id=%s action=%s models=%s",
                 request_id,
                 inp.user_id,
+                action,
                 _describe_model_assignment(inp),
             )
             yield from _stream_graph(
@@ -178,12 +182,16 @@ def _interrupt_event_from_update(request_id: str, update: dict[str, Any]) -> dic
     value = getattr(first, "value", first)
     raw_payload = value if isinstance(value, dict) else {"value": value}
     raw_payload = dict(raw_payload)
+    stage = str(raw_payload.get("stage") or "outline_review")
     outline_markdown = str(raw_payload.get("outline_markdown") or "")
-    payload = {"outline_markdown": outline_markdown}
+    payload = raw_payload
+    message = "Outline is ready for review"
+    if stage == "style_review":
+        message = "Style options are ready for review"
     return {
         "event_type": "interrupt",
-        "stage": "outline_review",
-        "message": "Outline is ready for review",
+        "stage": stage,
+        "message": message,
         "outline_markdown": outline_markdown,
         "payload": payload,
         "done": True,
@@ -225,6 +233,134 @@ def _decode_provider_options(raw: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise ValueError("provider_options_json must be a JSON object")
     return decoded
+
+
+def _normalize_resume_action(inp: ResumeDeckInput) -> str:
+    action = (inp.action or "").strip().lower()
+    if not action:
+        return "approve_outline"
+    if action in {"continue", "approve", "approved"}:
+        return "approve_outline"
+    if action in {"approve_outline", "choose_style", "regenerate_slide"}:
+        return action
+    raise ValueError(f"unsupported resume action: {inp.action}")
+
+
+def _build_resume_payload(inp: ResumeDeckInput, action: str) -> dict[str, Any]:
+    payload = _decode_payload_json(inp.payload_json)
+    if action == "approve_outline":
+        outline_markdown = inp.outline_markdown.strip()
+        if not outline_markdown:
+            raise ValueError("outline_markdown is required")
+        return {"action": action, "outline_markdown": outline_markdown}
+    if action == "choose_style":
+        style_id = str(payload.get("style_id") or payload.get("styleId") or "").strip()
+        feedback = str(payload.get("feedback") or "").strip()
+        return {"action": action, "style_id": style_id, "feedback": feedback, "payload": payload}
+    return {"action": action, "payload": payload}
+
+
+def _decode_payload_json(raw: str) -> dict[str, Any]:
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    decoded = json.loads(raw)
+    if not isinstance(decoded, dict):
+        raise ValueError("payload_json must be a JSON object")
+    return decoded
+
+
+def _regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> Iterator[GenerateDeckOutput]:
+    payload = _decode_payload_json(inp.payload_json)
+    try:
+        index = int(payload.get("index") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("payload_json.index is required for regenerate_slide") from exc
+    feedback = str(payload.get("feedback") or "").strip()
+    if index <= 0:
+        raise ValueError("payload_json.index is required for regenerate_slide")
+
+    output_root = _artifact_dir()
+    request_dir = output_root / request_id
+    spec_path = request_dir / "spec.json"
+    if not spec_path.exists():
+        raise ValueError("deck spec artifact is missing; regenerate_slide requires an exported deck")
+    deck = DeckSpec.from_dict(json.loads(spec_path.read_text(encoding="utf-8")))
+    slide = next((item for item in deck.slides if item.index == index), None)
+    if slide is None:
+        raise ValueError(f"slide {index} not found in deck spec")
+
+    if feedback:
+        slide.notes = (slide.notes + "\n\nFeedback: " + feedback).strip()
+        if slide.component == "content-basic":
+            slide.content["body"] = feedback
+        elif slide.component in {"cover", "section", "end"}:
+            slide.content["subtitle"] = feedback
+        elif isinstance(slide.content.get("items"), list) and slide.content["items"]:
+            slide.content["items"][0] = feedback
+
+    html_renderer = HTMLSlideRenderer()
+    browser = BrowserRenderer(output_root)
+    exporter = DeckExporter(output_root)
+
+    yield GenerateDeckOutput(
+        request_id=request_id,
+        event_type="repair_progress",
+        stage="repair",
+        message=f"Regenerating slide {index}",
+        payload_json=json.dumps({"index": index, "round": 1, "kind": "user_feedback"}, ensure_ascii=False),
+        sequence=1,
+    )
+    artifact = browser.render_slide(request_id, slide, html_renderer.render(deck, slide), version=_next_slide_version(request_dir, index), theme=deck.theme)
+    yield GenerateDeckOutput(
+        request_id=request_id,
+        event_type="slide_preview",
+        stage="design_slides",
+        message=f"Slide {index} preview updated",
+        payload_json=json.dumps(
+            {
+                "index": index,
+                "png": artifact.png_rel,
+                "html": artifact.html_rel,
+                "thumb_b64": artifact.thumb_b64,
+                "version": artifact.version,
+                "status": "ready" if not artifact.issues else "warning",
+            },
+            ensure_ascii=False,
+        ),
+        sequence=2,
+    )
+    result = exporter.export(request_id, deck)
+    yield GenerateDeckOutput(
+        request_id=request_id,
+        event_type="artifact",
+        stage="export",
+        message="PPTX file ready",
+        artifact_path=str(result.path),
+        payload_json=json.dumps(
+            {"request_id": request_id, "filename": result.path.name, "path": str(result.path), "relative_path": "deck.pptx", "warnings": result.warnings},
+            ensure_ascii=False,
+        ),
+        sequence=3,
+    )
+    yield GenerateDeckOutput(
+        request_id=request_id,
+        event_type="done",
+        stage="done",
+        message="Deck regeneration complete",
+        done=True,
+        sequence=4,
+    )
+
+
+def _next_slide_version(request_dir: Path, index: int) -> int:
+    slides_dir = request_dir / "slides"
+    version = 1
+    for path in slides_dir.glob(f"{index}_v*.html"):
+        match = re.search(r"_v(\d+)\.html$", path.name)
+        if match:
+            version = max(version, int(match.group(1)) + 1)
+    return max(2, version)
 
 
 def _parse_uploaded_files(inp: GenerateDeckInput, *, max_total_chars: int = 60000, max_chars_per_file: int = 20000) -> tuple[str, str]:

@@ -1,0 +1,56 @@
+[
+  {
+    "id": "editorial_signal",
+    "name": "Editorial Signal",
+    "palette": {
+      "bg": "#F7F3EA",
+      "surface": "#FFFFFF",
+      "ink": "#14213D",
+      "muted": "#58677A",
+      "accent": "#2A9D8F",
+      "accent2": "#E76F51",
+      "line": "#D8D3C8"
+    },
+    "fonts": { "display": "Noto Sans SC", "body": "Noto Sans SC", "display_weight": 700 },
+    "type_scale": { "h1": 44, "h2": 30, "body": 18, "caption": 13 },
+    "spacing_unit": 8,
+    "radius": 12,
+    "motif": "warm editorial blocks with crisp dividers"
+  },
+  {
+    "id": "clear_room",
+    "name": "Clear Room",
+    "palette": {
+      "bg": "#F4F7F9",
+      "surface": "#FFFFFF",
+      "ink": "#111827",
+      "muted": "#5B677A",
+      "accent": "#0E7C86",
+      "accent2": "#C44E38",
+      "line": "#D6DDE5"
+    },
+    "fonts": { "display": "Noto Sans SC", "body": "Noto Sans SC", "display_weight": 700 },
+    "type_scale": { "h1": 42, "h2": 29, "body": 18, "caption": 13 },
+    "spacing_unit": 8,
+    "radius": 10,
+    "motif": "quiet operating-room clarity with measured accents"
+  },
+  {
+    "id": "civic_night",
+    "name": "Civic Night",
+    "palette": {
+      "bg": "#111820",
+      "surface": "#1D2732",
+      "ink": "#F8FAFC",
+      "muted": "#B7C2D0",
+      "accent": "#56B6C2",
+      "accent2": "#F2A65A",
+      "line": "#31404F"
+    },
+    "fonts": { "display": "Noto Sans SC", "body": "Noto Sans SC", "display_weight": 700 },
+    "type_scale": { "h1": 44, "h2": 30, "body": 18, "caption": 13 },
+    "spacing_unit": 8,
+    "radius": 12,
+    "motif": "dark civic dashboard with confident signal lines"
+  }
+]

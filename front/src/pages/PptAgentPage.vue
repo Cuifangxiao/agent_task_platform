@@ -47,9 +47,14 @@ interface SlideProgress {
   title: string
   keyMessage: string
   layout: string
+  component: string
   bullets: string[]
   visualSuggestion: string
   speakerNotes: string
+  previewPng: string
+  previewHtml: string
+  previewThumb: string
+  version: number
   status: SlideProgressStatus
   warnings: string[]
 }
@@ -59,11 +64,25 @@ interface SlideProgressUpdate {
   title?: string
   keyMessage?: string
   layout?: string
+  component?: string
   bullets?: string[]
   visualSuggestion?: string
   speakerNotes?: string
+  previewPng?: string
+  previewHtml?: string
+  previewThumb?: string
+  version?: number
   status?: SlideProgressStatus
   warnings?: string[]
+}
+
+interface StyleOption {
+  styleId: string
+  name: string
+  coverPng: string
+  coverHtml: string
+  thumbB64: string
+  tokensSummary: string
 }
 
 interface UserMessage {
@@ -98,6 +117,17 @@ interface OutlineMessage {
   showEditor: boolean
 }
 
+interface StyleMessage {
+  id: number
+  role: 'assistant'
+  kind: 'style'
+  title: string
+  text: string
+  requestId: string
+  options: StyleOption[]
+  awaitingConfirm: boolean
+}
+
 interface ResultMessage {
   id: number
   role: 'assistant'
@@ -108,7 +138,7 @@ interface ResultMessage {
   fileName: string
 }
 
-type ChatMessage = UserMessage | StatusMessage | OutlineMessage | ResultMessage
+type ChatMessage = UserMessage | StatusMessage | OutlineMessage | StyleMessage | ResultMessage
 
 const composer = reactive({
   text: '',
@@ -266,6 +296,19 @@ function normalizeStoredMessage(item: Record<string, unknown>): ChatMessage {
     }
   }
 
+  if (kind === 'style') {
+    return {
+      id,
+      role: 'assistant',
+      kind: 'style',
+      title: String(item.title ?? '选择 PPT 风格'),
+      text: String(item.text ?? ''),
+      requestId: String(item.requestId ?? ''),
+      options: normalizeStyleOptions(item.options),
+      awaitingConfirm: Boolean(item.awaitingConfirm),
+    }
+  }
+
   if (kind === 'result') {
     return {
       id,
@@ -343,15 +386,43 @@ function normalizeStoredSlides(value: unknown): SlideProgress[] {
         title: String(record.title ?? `Slide ${index}`),
         keyMessage: String(record.keyMessage ?? record.key_message ?? ''),
         layout: String(record.layout ?? 'content'),
+        component: String(record.component ?? ''),
         bullets: normalizeStringList(record.bullets),
         visualSuggestion: String(record.visualSuggestion ?? record.visual_suggestion ?? ''),
         speakerNotes: String(record.speakerNotes ?? record.speaker_notes ?? ''),
+        previewPng: String(record.previewPng ?? record.png ?? ''),
+        previewHtml: String(record.previewHtml ?? record.html ?? ''),
+        previewThumb: String(record.previewThumb ?? record.thumb_b64 ?? ''),
+        version: Number(record.version ?? 0),
         status: normalizeSlideStatus(record.status),
         warnings: normalizeStringList(record.warnings),
       }
     })
     .filter((item): item is SlideProgress => Boolean(item))
     .sort((left, right) => left.index - right.index)
+}
+
+function normalizeStyleOptions(value: unknown): StyleOption[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value
+    .map((item) => {
+      const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+      const styleId = String(record.style_id ?? record.styleId ?? '')
+      if (!styleId) {
+        return null
+      }
+      return {
+        styleId,
+        name: String(record.name ?? styleId),
+        coverPng: String(record.cover_png ?? record.coverPng ?? ''),
+        coverHtml: String(record.cover_html ?? record.coverHtml ?? ''),
+        thumbB64: String(record.thumb_b64 ?? record.thumbB64 ?? ''),
+        tokensSummary: String(record.tokens_summary ?? record.tokensSummary ?? ''),
+      }
+    })
+    .filter((item): item is StyleOption => Boolean(item))
 }
 
 function normalizeStepTone(value: unknown): ProgressStep['tone'] {
@@ -483,7 +554,14 @@ function updateStatusMessage(id: number, updater: (message: StatusMessage) => vo
 }
 
 function slideProgressFromChunk(data: PptStreamChunk): SlideProgressUpdate | null {
-  const trackedEvents = new Set(['slide_started', 'slide_ready', 'slide_reviewed', 'stage_progress'])
+  const trackedEvents = new Set([
+    'slide_started',
+    'slide_spec_ready',
+    'slide_preview',
+    'slide_ready',
+    'slide_reviewed',
+    'stage_progress',
+  ])
   if (!trackedEvents.has(data.event_type ?? '')) {
     return null
   }
@@ -508,7 +586,9 @@ function slideProgressFromChunk(data: PptStreamChunk): SlideProgressUpdate | nul
   const statusFromEvent =
     data.event_type === 'slide_started'
       ? 'running'
-      : data.event_type === 'slide_ready'
+      : data.event_type === 'slide_spec_ready'
+        ? 'running'
+        : data.event_type === 'slide_preview' || data.event_type === 'slide_ready'
         ? 'ready'
         : data.event_type === 'slide_reviewed' && warnings.length > 0
           ? 'warning'
@@ -519,9 +599,14 @@ function slideProgressFromChunk(data: PptStreamChunk): SlideProgressUpdate | nul
     title: typeof payload.title === 'string' ? payload.title : undefined,
     keyMessage: typeof payload.key_message === 'string' ? payload.key_message : undefined,
     layout: typeof payload.layout === 'string' ? payload.layout : undefined,
+    component: typeof payload.component === 'string' ? payload.component : undefined,
     bullets: Array.isArray(payload.bullets) ? normalizeStringList(payload.bullets) : undefined,
     visualSuggestion: typeof payload.visual_suggestion === 'string' ? payload.visual_suggestion : undefined,
     speakerNotes: typeof payload.speaker_notes === 'string' ? payload.speaker_notes : undefined,
+    previewPng: typeof payload.png === 'string' ? payload.png : undefined,
+    previewHtml: typeof payload.html === 'string' ? payload.html : undefined,
+    previewThumb: typeof payload.thumb_b64 === 'string' ? payload.thumb_b64 : undefined,
+    version: Number.isFinite(Number(payload.version)) ? Number(payload.version) : undefined,
     status: normalizeSlideStatus(payload.status ?? statusFromEvent),
     warnings,
   }
@@ -535,9 +620,14 @@ function upsertSlideProgress(status: StatusMessage, update: SlideProgressUpdate)
       title: update.title || `Slide ${update.index}`,
       keyMessage: '',
       layout: 'content',
+      component: '',
       bullets: [],
       visualSuggestion: '',
       speakerNotes: '',
+      previewPng: '',
+      previewHtml: '',
+      previewThumb: '',
+      version: 0,
       status: 'pending',
       warnings: [],
     }
@@ -553,6 +643,9 @@ function upsertSlideProgress(status: StatusMessage, update: SlideProgressUpdate)
   if (update.layout !== undefined) {
     slide.layout = update.layout || slide.layout
   }
+  if (update.component !== undefined) {
+    slide.component = update.component || slide.component
+  }
   if (update.bullets !== undefined) {
     slide.bullets = update.bullets
   }
@@ -561,6 +654,18 @@ function upsertSlideProgress(status: StatusMessage, update: SlideProgressUpdate)
   }
   if (update.speakerNotes !== undefined) {
     slide.speakerNotes = update.speakerNotes
+  }
+  if (update.previewPng !== undefined) {
+    slide.previewPng = update.previewPng
+  }
+  if (update.previewHtml !== undefined) {
+    slide.previewHtml = update.previewHtml
+  }
+  if (update.previewThumb !== undefined) {
+    slide.previewThumb = update.previewThumb
+  }
+  if (update.version !== undefined) {
+    slide.version = update.version
   }
   if (update.status !== undefined && update.status !== 'pending') {
     slide.status = update.status
@@ -582,6 +687,20 @@ function updateOutlineMessage(id: number, updater: (message: OutlineMessage) => 
   }
   const message = messages.value[index]
   if (message.kind !== 'outline') {
+    return
+  }
+  updater(message)
+  messages.value = [...messages.value]
+  void scrollThreadToBottom()
+}
+
+function updateStyleMessage(id: number, updater: (message: StyleMessage) => void) {
+  const index = messages.value.findIndex((item) => item.id === id && item.kind === 'style')
+  if (index < 0) {
+    return
+  }
+  const message = messages.value[index]
+  if (message.kind !== 'style') {
     return
   }
   updater(message)
@@ -666,6 +785,54 @@ async function confirmOutline(message: OutlineMessage) {
       {
         request_id: message.requestId,
         outline_markdown: outlineMarkdown,
+        action: 'approve_outline',
+      },
+      handleEvent,
+      controller.signal,
+    )
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      markCurrentRunAsStopped('已停止当前生成。')
+    } else {
+      const failure = err instanceof Error ? err.message : String(err)
+      error.value = failure
+      markCurrentRunAsFailed(failure)
+    }
+  } finally {
+    running.value = false
+    abortController.value = null
+    await syncCurrentConversationFromServer()
+  }
+}
+
+async function chooseStyle(message: StyleMessage, option: StyleOption) {
+  error.value = ''
+  updateStyleMessage(message.id, (draft) => {
+    draft.awaitingConfirm = false
+  })
+
+  pushMessage({
+    id: nextMessageId(),
+    role: 'user',
+    kind: 'user',
+    text: `选择风格：${option.name}`,
+  })
+
+  currentStatusMessageId.value = createStatusMessage(
+    '生成页面预览',
+    '我正在按选定风格生成每一页的 HTML 预览。',
+  )
+  running.value = true
+
+  const controller = new AbortController()
+  abortController.value = controller
+
+  try {
+    await props.resumePpt(
+      {
+        request_id: message.requestId,
+        action: 'choose_style',
+        payload: { style_id: option.styleId },
       },
       handleEvent,
       controller.signal,
@@ -748,7 +915,13 @@ function handleEvent(event: ParsedSseEvent) {
   if (data.event_type === 'outline') {
     upsertOutlineMessage(data, false)
   }
-  if (data.event_type === 'interrupt') {
+  if (data.event_type === 'style_options') {
+    upsertStyleMessage(data, false)
+  }
+  if (data.event_type === 'interrupt' && data.stage === 'style_review') {
+    upsertStyleMessage(data, true)
+  }
+  if (data.event_type === 'interrupt' && data.stage !== 'style_review') {
     upsertOutlineMessage(data, true)
   }
   if (data.event_type === 'artifact') {
@@ -838,6 +1011,34 @@ function upsertOutlineMessage(data: PptStreamChunk, awaitingConfirm: boolean) {
   })
 }
 
+function upsertStyleMessage(data: PptStreamChunk, awaitingConfirm: boolean) {
+  const requestId = data.request_id?.trim()
+  if (!requestId) {
+    return
+  }
+  const options = extractStyleOptions(data)
+  const existing = messages.value.find((item) => item.kind === 'style' && item.requestId === requestId)
+  if (existing && existing.kind === 'style') {
+    updateStyleMessage(existing.id, (message) => {
+      if (options.length) {
+        message.options = options
+      }
+      message.awaitingConfirm = awaitingConfirm
+    })
+    return
+  }
+  pushMessage({
+    id: nextMessageId(),
+    role: 'assistant',
+    kind: 'style',
+    title: '选择 PPT 风格',
+    text: '我准备了两套视觉方向，选择后继续生成页面。',
+    requestId,
+    options,
+    awaitingConfirm,
+  })
+}
+
 function upsertResultMessage(data: PptStreamChunk) {
   const requestId = data.request_id?.trim()
   if (!requestId) {
@@ -883,6 +1084,14 @@ function extractOutlineMarkdown(data: PptStreamChunk) {
   return ''
 }
 
+function extractStyleOptions(data: PptStreamChunk): StyleOption[] {
+  if (!data.payload || typeof data.payload !== 'object') {
+    return []
+  }
+  const payload = data.payload as Record<string, unknown>
+  return normalizeStyleOptions(payload.options ?? payload.style_options)
+}
+
 function outlineTitle(markdown: string) {
   const heading = markdown
     .split('\n')
@@ -909,6 +1118,13 @@ function describeChunk(data: PptStreamChunk) {
   }
 
   if (data.event_type === 'interrupt') {
+    if (data.stage === 'style_review') {
+      return {
+        title: '等待选择风格',
+        text: '两套视觉方向已经准备好，选择后继续生成页面。',
+        state: 'waiting' as const,
+      }
+    }
     return {
       title: '等待确认大纲',
       text: '我已经整理好一版大纲，确认后就继续生成完整 PPT。',
@@ -943,10 +1159,40 @@ function describeChunk(data: PptStreamChunk) {
         text: '大纲已经准备好，确认后我继续生成页面内容。',
         state: data.done ? ('waiting' as const) : ('running' as const),
       }
+    case 'style':
+      return {
+        title: '正在生成风格样张',
+        text: '我在准备两套视觉方向。',
+        state: 'running' as const,
+      }
+    case 'style_review':
+      return {
+        title: '等待选择风格',
+        text: '请选择一套视觉方向继续。',
+        state: data.done ? ('waiting' as const) : ('running' as const),
+      }
     case 'slides':
       return {
         title: '正在展开页面',
         text: '我在把大纲扩展成每一页的具体内容。',
+        state: 'running' as const,
+      }
+    case 'design_slides':
+      return {
+        title: '正在生成页面预览',
+        text: '我在把结构化内容渲染成 HTML 与 PNG 预览。',
+        state: 'running' as const,
+      }
+    case 'validate':
+      return {
+        title: '正在校验页面',
+        text: '我在检查占位、密度和页面结构。',
+        state: 'running' as const,
+      }
+    case 'coherence':
+      return {
+        title: '正在统一全局表达',
+        text: '我在检查跨页连贯性。',
         state: 'running' as const,
       }
     case 'review':
@@ -956,6 +1202,7 @@ function describeChunk(data: PptStreamChunk) {
         state: 'running' as const,
       }
     case 'render':
+    case 'export':
       return {
         title: '正在导出 PPT',
         text: '正在把内容渲染成可下载的 PPT 文件。',
@@ -981,11 +1228,22 @@ function stageLabel(stage: string) {
       return '大纲规划'
     case 'outline_review':
       return '大纲确认'
+    case 'style':
+      return '风格样张'
+    case 'style_review':
+      return '风格选择'
     case 'slides':
       return '页面展开'
+    case 'design_slides':
+      return '页面预览'
+    case 'validate':
+      return '质量校验'
+    case 'coherence':
+      return '连贯检查'
     case 'review':
       return '质量检查'
     case 'render':
+    case 'export':
       return 'PPT 导出'
     case 'artifact':
       return '下载结果'
@@ -1134,6 +1392,23 @@ function slideStatusPillClass(status: SlideProgressStatus) {
     default:
       return 'is-waiting'
   }
+}
+
+function artifactAssetUrl(requestId: string | undefined, relativePath: string | undefined) {
+  if (!requestId || !relativePath) {
+    return ''
+  }
+  return `/ppt-agent/artifacts/${encodeURIComponent(requestId)}/${relativePath
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/')}`
+}
+
+function previewSrc(requestId: string | undefined, thumbB64: string, pngPath: string) {
+  if (thumbB64) {
+    return `data:image/webp;base64,${thumbB64}`
+  }
+  return artifactAssetUrl(requestId, pngPath)
 }
 
 function formatHistoryTime(value: string) {
@@ -1305,6 +1580,13 @@ function formatHistoryTime(value: string) {
                       </span>
                     </div>
 
+                    <img
+                      v-if="slide.previewThumb || slide.previewPng"
+                      class="slide-preview-thumb"
+                      :src="previewSrc(message.requestId, slide.previewThumb, slide.previewPng)"
+                      :alt="`Slide ${slide.index} preview`"
+                    />
+
                     <ul v-if="slide.bullets.length" class="slide-bullets">
                       <li v-for="bullet in slide.bullets" :key="bullet">{{ bullet }}</li>
                     </ul>
@@ -1366,6 +1648,40 @@ function formatHistoryTime(value: string) {
                   >
                     {{ message.showEditor ? '收起大纲' : '编辑大纲' }}
                   </button>
+                </div>
+              </template>
+
+              <template v-else-if="message.kind === 'style'">
+                <div class="status-header">
+                  <strong>{{ message.title }}</strong>
+                  <span :class="['status-pill', message.awaitingConfirm ? 'is-waiting' : 'is-done']">
+                    {{ message.awaitingConfirm ? '待选择' : '已选择' }}
+                  </span>
+                </div>
+                <p>{{ message.text }}</p>
+
+                <div class="style-options">
+                  <article v-for="option in message.options" :key="option.styleId" class="style-option-card">
+                    <img
+                      v-if="option.thumbB64 || option.coverPng"
+                      :src="previewSrc(message.requestId, option.thumbB64, option.coverPng)"
+                      :alt="option.name"
+                    />
+                    <div>
+                      <strong>{{ option.name }}</strong>
+                      <p>{{ option.tokensSummary }}</p>
+                    </div>
+                    <button
+                      v-if="message.awaitingConfirm"
+                      class="btn primary"
+                      type="button"
+                      :disabled="running"
+                      @click="chooseStyle(message, option)"
+                    >
+                      <CheckCircle2 :size="18" />
+                      选择
+                    </button>
+                  </article>
                 </div>
               </template>
 

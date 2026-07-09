@@ -39,6 +39,8 @@ class ResumeDeckInput:
     request_id: str
     outline_markdown: str = ""
     node_model_configs: list[DeckNodeModelConfig] = field(default_factory=list)
+    action: str = ""
+    payload_json: str = ""
 
 
 @dataclass(frozen=True)
