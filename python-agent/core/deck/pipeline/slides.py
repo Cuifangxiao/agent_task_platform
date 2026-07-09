@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from langgraph.config import get_stream_writer
@@ -16,6 +18,8 @@ from core.deck.rendering.browser import BrowserRenderer
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.spec import DeckSpec, SlideSpec, ThemeTokens, default_theme, normalize_slide_spec
 
+logger = logging.getLogger(__name__)
+
 
 def write_and_design_slides(
     state: DeckGraphState,
@@ -24,6 +28,7 @@ def write_and_design_slides(
     browser: BrowserRenderer,
 ) -> dict[str, Any]:
     writer = get_stream_writer()
+    request_id = str(state["request_id"])
     plan_slides = plan_slide_outlines(state)
     total = len(plan_slides)
     theme = ThemeTokens.from_dict(state.get("theme") or default_theme().to_dict())
@@ -39,6 +44,7 @@ def write_and_design_slides(
     )
     slide_llm = llm_for_node(llm_registry, "writer", aliases=("slides",))
     writer(events.stage_started("slides", f"Generating {total} HTML slide previews", {"total": total}))
+    logger.info("deck slides start: request_id=%s total=%s", request_id, total)
 
     slides: list[SlideSpec] = []
     artifacts: list[dict[str, Any]] = []
@@ -56,6 +62,8 @@ def write_and_design_slides(
             status="running",
         )
         writer(events.slide_started(f"Generating slide {index}/{total}: {title}", legacy_payload))
+        slide_started_at = time.perf_counter()
+        logger.info("deck slide writer start: request_id=%s index=%s/%s title=%s", request_id, index, total, title)
 
         raw_slide: dict[str, Any] = {}
         try:
@@ -65,7 +73,20 @@ def write_and_design_slides(
                 user=slide_prompt(state, outline, slides, total),
                 attempts=3,
             )
+            logger.info(
+                "deck slide writer done: request_id=%s index=%s elapsed=%.2fs",
+                request_id,
+                index,
+                time.perf_counter() - slide_started_at,
+            )
         except ValueError as exc:
+            logger.info(
+                "deck slide writer recovery: request_id=%s index=%s elapsed=%.2fs error=%s",
+                request_id,
+                index,
+                time.perf_counter() - slide_started_at,
+                exc,
+            )
             writer(
                 events.stage_progress(
                     "slides",
@@ -75,6 +96,7 @@ def write_and_design_slides(
             )
 
         slide = normalize_slide_spec(raw_slide, index=index, outline=outline, deck_title=deck.title, narrative=deck.narrative)
+        logger.info("deck slide normalized: request_id=%s index=%s component=%s title=%s", request_id, index, slide.component, slide.title)
         slide = repair_placeholder_slide(slide, outline, deck)
         spec_issues = validate_slide_spec(slide)
         if spec_issues:
@@ -90,7 +112,17 @@ def write_and_design_slides(
         )
 
         html = html_renderer.render(deck, slide)
-        artifact = browser.render_slide(str(state["request_id"]), slide, html, theme=theme)
+        render_started_at = time.perf_counter()
+        logger.info("deck slide render start: request_id=%s index=%s", request_id, slide.index)
+        artifact = browser.render_slide(request_id, slide, html, theme=theme)
+        logger.info(
+            "deck slide render done: request_id=%s index=%s renderer=%s issues=%s elapsed=%.2fs",
+            request_id,
+            slide.index,
+            artifact.renderer,
+            len(artifact.issues),
+            time.perf_counter() - render_started_at,
+        )
         artifact_payload = {
             "index": slide.index,
             "png": artifact.png_rel,
@@ -107,6 +139,7 @@ def write_and_design_slides(
             all_issues.extend(issues_to_dicts(artifact.issues))
 
     deck.slides = slides
+    logger.info("deck slides done: request_id=%s total=%s validation_issues=%s", request_id, len(slides), len(all_issues))
     return {
         "slides": [slide.to_dict() for slide in slides],
         "deck_spec": deck.to_dict(),

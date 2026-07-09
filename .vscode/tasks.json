@@ -14,7 +14,7 @@
     {
       "label": "python-agent",
       "type": "shell",
-      "command": "${workspaceFolder}/python-agent/.venv/bin/python",
+      "command": "${workspaceFolder}/python-agent/.venv/Scripts/python.exe",
       "args": ["main.py", "--conf", "config.yaml"],
       "options": {
         "cwd": "${workspaceFolder}/python-agent"

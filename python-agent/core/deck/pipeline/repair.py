@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any
 
 from langgraph.config import get_stream_writer
@@ -14,6 +16,8 @@ from core.deck.quality import issues_to_dicts, validate_slide_spec
 from core.deck.rendering.browser import BrowserRenderer
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.spec import DeckSpec, SlideSpec, _soft_limit, normalize_slide_spec
+
+logger = logging.getLogger(__name__)
 
 MAX_REPAIR_ROUNDS = 2
 DOWNGRADE_BODY_CHARS = 90
@@ -34,8 +38,10 @@ def repair_deck(
     browser: BrowserRenderer,
 ) -> dict[str, Any]:
     writer = get_stream_writer()
+    request_id = str(state["request_id"])
     deck = DeckSpec.from_dict(state.get("deck_spec") or {})
     if not deck.slides:
+        logger.info("deck repair skipped empty deck: request_id=%s", request_id)
         return {}
 
     round_index = int(state.get("repair_round") or 0) + 1
@@ -43,6 +49,7 @@ def repair_deck(
     pages = _fixable_pages(state)
     page_to_issues = {page: [issue for issue in issues if int(issue.get("page") or 0) == page] for page in pages}
     writer(events.repair_progress(f"Repairing {len(pages)} slide(s)", {"round": round_index, "pages": pages}))
+    logger.info("deck repair start: request_id=%s round=%s pages=%s issues=%s", request_id, round_index, pages, len(issues))
 
     repaired_pages: set[int] = set()
     new_issues: list[dict[str, Any]] = []
@@ -50,6 +57,8 @@ def repair_deck(
         if slide.index not in pages:
             continue
         original = slide
+        slide_started_at = time.perf_counter()
+        logger.info("deck repair slide start: request_id=%s round=%s index=%s issue_count=%s", request_id, round_index, slide.index, len(page_to_issues[slide.index]))
         repaired = _rewrite_with_writer(llm_registry, deck, original, page_to_issues[slide.index])
         if repaired is None:
             repaired = deterministic_downgrade(original)
@@ -61,7 +70,17 @@ def repair_deck(
                 )
             )
         deck.slides = [repaired if item.index == repaired.index else item for item in deck.slides]
-        artifact = browser.render_slide(str(state["request_id"]), repaired, html_renderer.render(deck, repaired), version=round_index + 1, theme=deck.theme)
+        logger.info("deck repair slide render start: request_id=%s round=%s index=%s", request_id, round_index, repaired.index)
+        artifact = browser.render_slide(request_id, repaired, html_renderer.render(deck, repaired), version=round_index + 1, theme=deck.theme)
+        logger.info(
+            "deck repair slide done: request_id=%s round=%s index=%s renderer=%s issues=%s elapsed=%.2fs",
+            request_id,
+            round_index,
+            repaired.index,
+            artifact.renderer,
+            len(artifact.issues),
+            time.perf_counter() - slide_started_at,
+        )
         if artifact.issues:
             new_issues.extend(issues_to_dicts(artifact.issues))
         repaired_pages.add(repaired.index)
@@ -81,6 +100,7 @@ def repair_deck(
         )
 
     retained_issues = [issue for issue in issues if int(issue.get("page") or 0) not in repaired_pages] + new_issues
+    logger.info("deck repair done: request_id=%s round=%s repaired_pages=%s retained_issues=%s", request_id, round_index, sorted(repaired_pages), len(retained_issues))
     return {
         "deck_spec": deck.to_dict(),
         "slides": [slide.to_dict() for slide in deck.slides],

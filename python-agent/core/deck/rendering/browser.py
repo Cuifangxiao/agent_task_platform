@@ -7,6 +7,7 @@ import io
 import logging
 import shutil
 import textwrap
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,9 +46,12 @@ class BrowserSession:
         self._page: Any = None
 
     def capture(self, html: str, png_path: Path) -> None:
+        started_at = time.perf_counter()
+        logger.info("deck browser capture start: png=%s html_bytes=%s", png_path, len(html.encode("utf-8")))
         page = self._get_page()
         page.set_content(html, wait_until="load")
         page.screenshot(path=str(png_path), full_page=False)
+        logger.info("deck browser capture done: png=%s bytes=%s elapsed=%.2fs", png_path, png_path.stat().st_size if png_path.exists() else 0, time.perf_counter() - started_at)
 
     def inspect_dom(self, page_index: int) -> list[ValidationIssue]:
         page = self._page
@@ -56,11 +60,15 @@ class BrowserSession:
         return validate_dom_result(page.evaluate(DOM_VALIDATION_JS), page=page_index)
 
     def extract_hidden_text_background(self, html: str, bg_path: Path) -> list[dict[str, Any]]:
+        started_at = time.perf_counter()
+        logger.info("deck browser text background start: png=%s html_bytes=%s", bg_path, len(html.encode("utf-8")))
         page = self._get_page()
         page.set_content(html, wait_until="load")
         text_layer = page.evaluate(TEXT_LAYER_JS)
         page.evaluate(HIDE_TEXT_JS)
         page.screenshot(path=str(bg_path), full_page=False)
+        text_count = len(text_layer) if isinstance(text_layer, list) else 0
+        logger.info("deck browser text background done: png=%s text_count=%s bytes=%s elapsed=%.2fs", bg_path, text_count, bg_path.stat().st_size if bg_path.exists() else 0, time.perf_counter() - started_at)
         return text_layer if isinstance(text_layer, list) else []
 
     def extract_text_layer(self, html: str) -> list[dict[str, Any]]:
@@ -302,10 +310,16 @@ def _thumbnail_b64(path: Path) -> str:
 
 def _font(size: int) -> ImageFont.ImageFont:
     for candidate in (
+        "C:/Windows/Fonts/Noto Sans SC.ttf",
+        "C:/Windows/Fonts/NotoSansSC-VF.ttf",
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ):
         try:
             return ImageFont.truetype(candidate, size * 2)

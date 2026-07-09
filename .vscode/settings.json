@@ -1,0 +1,8 @@
+{
+  "python.analysis.extraPaths": [
+    "./python-agent"
+  ],
+  "pylint.args": [
+    "--rcfile=${workspaceFolder}/.pylintrc"
+  ]
+}

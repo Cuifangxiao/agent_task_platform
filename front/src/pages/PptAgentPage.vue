@@ -6,6 +6,7 @@ import {
   Download,
   FileClock,
   Loader2,
+  Maximize2,
   MessageSquarePlus,
   Paperclip,
   Presentation,
@@ -140,6 +141,12 @@ interface ResultMessage {
 
 type ChatMessage = UserMessage | StatusMessage | OutlineMessage | StyleMessage | ResultMessage
 
+interface PreviewLightbox {
+  src: string
+  title: string
+  subtitle: string
+}
+
 const composer = reactive({
   text: '',
   files: [] as File[],
@@ -153,6 +160,7 @@ const error = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const historyLoading = ref(false)
 const messages = ref<ChatMessage[]>([])
+const previewLightbox = ref<PreviewLightbox | null>(null)
 const running = ref(false)
 const selectedConfigId = ref('')
 const threadRef = ref<HTMLElement | null>(null)
@@ -1405,10 +1413,29 @@ function artifactAssetUrl(requestId: string | undefined, relativePath: string | 
 }
 
 function previewSrc(requestId: string | undefined, thumbB64: string, pngPath: string) {
+  const pngUrl = artifactAssetUrl(requestId, pngPath)
+  if (pngUrl) {
+    return pngUrl
+  }
   if (thumbB64) {
     return `data:image/webp;base64,${thumbB64}`
   }
-  return artifactAssetUrl(requestId, pngPath)
+  return ''
+}
+
+function messageRequestId(message: ChatMessage) {
+  return 'requestId' in message ? message.requestId : undefined
+}
+
+function openPreview(src: string, title: string, subtitle: string) {
+  if (!src) {
+    return
+  }
+  previewLightbox.value = { src, title, subtitle }
+}
+
+function closePreview() {
+  previewLightbox.value = null
 }
 
 function formatHistoryTime(value: string) {
@@ -1580,12 +1607,29 @@ function formatHistoryTime(value: string) {
                       </span>
                     </div>
 
-                    <img
+                    <button
                       v-if="slide.previewThumb || slide.previewPng"
-                      class="slide-preview-thumb"
-                      :src="previewSrc(message.requestId, slide.previewThumb, slide.previewPng)"
-                      :alt="`Slide ${slide.index} preview`"
-                    />
+                      class="slide-preview-frame"
+                      type="button"
+                      @click="
+                        openPreview(
+                          previewSrc(messageRequestId(message), slide.previewThumb, slide.previewPng),
+                          `Slide ${slide.index}`,
+                          slide.title,
+                        )
+                      "
+                    >
+                      <img
+                        class="slide-preview-thumb"
+                        :src="previewSrc(messageRequestId(message), slide.previewThumb, slide.previewPng)"
+                        :alt="`Slide ${slide.index} preview`"
+                        loading="lazy"
+                      />
+                      <span class="slide-preview-action">
+                        <Maximize2 :size="14" />
+                        Full preview
+                      </span>
+                    </button>
 
                     <ul v-if="slide.bullets.length" class="slide-bullets">
                       <li v-for="bullet in slide.bullets" :key="bullet">{{ bullet }}</li>
@@ -1662,11 +1706,28 @@ function formatHistoryTime(value: string) {
 
                 <div class="style-options">
                   <article v-for="option in message.options" :key="option.styleId" class="style-option-card">
-                    <img
+                    <button
                       v-if="option.thumbB64 || option.coverPng"
-                      :src="previewSrc(message.requestId, option.thumbB64, option.coverPng)"
-                      :alt="option.name"
-                    />
+                      class="style-preview-frame"
+                      type="button"
+                      @click="
+                        openPreview(
+                          previewSrc(messageRequestId(message), option.thumbB64, option.coverPng),
+                          option.name,
+                          'Style preview',
+                        )
+                      "
+                    >
+                      <img
+                        :src="previewSrc(messageRequestId(message), option.thumbB64, option.coverPng)"
+                        :alt="option.name"
+                        loading="lazy"
+                      />
+                      <span class="slide-preview-action">
+                        <Maximize2 :size="14" />
+                        Full preview
+                      </span>
+                    </button>
                     <div>
                       <strong>{{ option.name }}</strong>
                       <p>{{ option.tokensSummary }}</p>
@@ -1775,6 +1836,23 @@ function formatHistoryTime(value: string) {
             </div>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div v-if="previewLightbox" class="preview-lightbox" role="dialog" aria-modal="true" @click.self="closePreview">
+      <div class="preview-lightbox-panel">
+        <div class="preview-lightbox-head">
+          <div>
+            <span>{{ previewLightbox.subtitle }}</span>
+            <strong>{{ previewLightbox.title }}</strong>
+          </div>
+          <button class="icon-button" type="button" aria-label="Close preview" @click="closePreview">
+            <X :size="18" />
+          </button>
+        </div>
+        <div class="preview-lightbox-stage">
+          <img :src="previewLightbox.src" :alt="previewLightbox.title" />
+        </div>
       </div>
     </div>
   </section>

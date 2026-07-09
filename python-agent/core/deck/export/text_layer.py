@@ -4,16 +4,18 @@ TEXT_LAYER_JS = """
 () => Array.from(document.querySelectorAll('[data-text]')).map((el) => {
   const rect = el.getBoundingClientRect();
   const style = window.getComputedStyle(el);
+  const fontSize = parseFloat(style.fontSize || '18');
+  const lineHeight = parseFloat(style.lineHeight || '');
   return {
     text: el.innerText || el.textContent || '',
     x: rect.x,
     y: rect.y,
     width: rect.width,
     height: rect.height,
-    fontSize: parseFloat(style.fontSize || '18'),
+    fontSize,
     fontWeight: style.fontWeight || '400',
     color: style.color || 'rgb(20, 33, 61)',
-    lineHeight: parseFloat(style.lineHeight || style.fontSize || '22'),
+    lineHeight: Number.isFinite(lineHeight) ? lineHeight : fontSize * 1.45,
     textAlign: style.textAlign || 'left',
     fontFamily: style.fontFamily || 'Noto Sans SC'
   };

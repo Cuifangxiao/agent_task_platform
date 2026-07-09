@@ -68,3 +68,36 @@ models:
         default: 4096
         min: 1
         max: 32768
+  - id: qwen3-vl-plus
+    model_name: qwen3-vl-plus
+    display_name: Qwen3 VL Plus
+    type: chat
+    parameters:
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 32768
+  - id: qwen3-vl-flash
+    model_name: qwen3-vl-flash
+    display_name: Qwen3 VL Flash
+    type: chat
+    parameters:
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 32768
+  - id: qwen-vl-plus
+    model_name: qwen-vl-plus
+    display_name: Qwen VL Plus
+    type: chat
+    parameters:
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 32768

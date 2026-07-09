@@ -22,7 +22,7 @@
       "cwd": "${workspaceFolder}/python-agent",
       "console": "integratedTerminal",
       "justMyCode": false,
-      "python": "${workspaceFolder}/python-agent/.venv/bin/python",
+      "python": "${workspaceFolder}/python-agent/.venv/Scripts/python.exe",
       "env": {
         "PYTHONPATH": "${workspaceFolder}/python-agent:${workspaceFolder}"
       }

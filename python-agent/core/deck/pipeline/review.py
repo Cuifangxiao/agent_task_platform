@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langgraph.config import get_stream_writer
@@ -11,15 +12,21 @@ from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import ValidationIssue, dedupe_issue_dicts, issues_to_dicts, validate_deck_spec, validate_theme_contrast
 from core.deck.spec import DeckSpec
 
+logger = logging.getLogger(__name__)
+
 
 def validate_deck(state: DeckGraphState) -> dict[str, Any]:
     writer = get_stream_writer()
+    request_id = str(state.get("request_id") or "")
+    logger.info("deck validate start: request_id=%s", request_id)
     deck = DeckSpec.from_dict(state.get("deck_spec") or {})
     issues = validate_theme_contrast(deck) + validate_deck_spec(deck) + validate_fact_sources(deck, state.get("brief") or {})
     current = list(state.get("validation_issues") or [])
     if issues:
         current.extend(issues_to_dicts(issues))
     current = dedupe_issue_dicts(current)
+    must_fix = sum(1 for issue in current if issue.get("severity") == "must_fix")
+    logger.info("deck validate done: request_id=%s issues=%s must_fix=%s", request_id, len(current), must_fix)
     writer(events.validation_report(current))
     return {"validation_issues": current}
 
