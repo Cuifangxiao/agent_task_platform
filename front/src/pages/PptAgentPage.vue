@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   AlertCircle,
   CheckCircle2,
@@ -38,6 +38,7 @@ interface ProgressStep {
   id: number
   label: string
   message: string
+  stage?: string
   tone: 'normal' | 'error' | 'done'
 }
 
@@ -147,6 +148,31 @@ interface PreviewLightbox {
   subtitle: string
 }
 
+type PipelineStageStatus = 'done' | 'running' | 'waiting' | 'pending' | 'error'
+
+interface PipelineStageView {
+  key: string
+  label: string
+  description: string
+  status: PipelineStageStatus
+}
+
+const pipelineStages = [
+  { key: 'brief', label: '理解需求', description: '整理目标、受众和上下文' },
+  { key: 'outline', label: '规划大纲', description: '生成 PPT 结构和每页重点' },
+  { key: 'outline_review', label: '确认大纲', description: '等待你确认或调整大纲' },
+  { key: 'style', label: '准备风格', description: '生成视觉方向和封面样张' },
+  { key: 'style_review', label: '选择风格', description: '等待选择视觉方向' },
+  { key: 'slides', label: '展开页面', description: '把大纲扩展成逐页内容' },
+  { key: 'design_slides', label: '生成预览', description: '渲染 HTML 和 PNG 预览图' },
+  { key: 'validate', label: '质量校验', description: '检查版式、密度和结构' },
+  { key: 'repair', label: '自动修复', description: '修复校验发现的问题' },
+  { key: 'coherence', label: '统一表达', description: '检查跨页连贯性' },
+  { key: 'review', label: '内容复核', description: '检查逻辑和完整性' },
+  { key: 'export', label: '导出 PPT', description: '生成可下载的 PPT 文件' },
+  { key: 'artifact', label: '完成结果', description: '准备下载文件' },
+] as const
+
 const composer = reactive({
   text: '',
   files: [] as File[],
@@ -160,12 +186,15 @@ const error = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const historyLoading = ref(false)
 const messages = ref<ChatMessage[]>([])
+const previewObjectUrls = reactive<Record<string, string>>({})
 const previewLightbox = ref<PreviewLightbox | null>(null)
 const running = ref(false)
 const selectedConfigId = ref('')
 const threadRef = ref<HTMLElement | null>(null)
 
 let messageSeed = 0
+const previewFailures = new Set<string>()
+const previewLoads = new Set<string>()
 let stepSeed = 0
 
 const defaultConfig = computed(() => props.configs.find((item) => item.is_default) ?? props.configs[0] ?? null)
@@ -187,6 +216,10 @@ const conversationCountLabel = computed(() =>
 onMounted(() => {
   syncSelectedConfig()
   void refreshHistory({ selectLatest: true })
+})
+
+onBeforeUnmount(() => {
+  Object.values(previewObjectUrls).forEach((url) => URL.revokeObjectURL(url))
 })
 
 watch(
@@ -372,6 +405,7 @@ function normalizeStoredSteps(value: unknown): ProgressStep[] {
       id: Number(record.id ?? index + 1),
       label: String(record.label ?? '处理中'),
       message: String(record.message ?? ''),
+      stage: typeof record.stage === 'string' ? normalizeProgressStage(record.stage) : undefined,
       tone: normalizeStepTone(record.tone),
     }
   })
@@ -729,6 +763,7 @@ function markCurrentRunAsStopped(message: string) {
       id: nextStepId(),
       label: '已停止',
       message,
+      stage: 'error',
       tone: 'error',
     })
   })
@@ -747,6 +782,7 @@ function markCurrentRunAsFailed(message: string) {
       id: nextStepId(),
       label: '错误',
       message,
+      stage: 'error',
       tone: 'error',
     })
   })
@@ -910,6 +946,7 @@ function handleEvent(event: ParsedSseEvent) {
       id: nextStepId(),
       label: stageLabel(data.stage || data.event_type || 'progress'),
       message: data.message || defaultStepMessage(data),
+      stage: normalizeProgressStage(data.stage || data.event_type || 'progress'),
       tone: data.error ? 'error' : data.done ? 'done' : 'normal',
     })
     const snapshot = describeChunk(data)
@@ -1354,6 +1391,74 @@ function maxStepId(items: ChatMessage[]) {
   }, 0)
 }
 
+function normalizeProgressStage(value: string | undefined) {
+  switch (value) {
+    case 'brief':
+    case 'outline':
+    case 'outline_review':
+    case 'style':
+    case 'style_review':
+    case 'slides':
+    case 'design_slides':
+    case 'validate':
+    case 'repair':
+    case 'coherence':
+    case 'review':
+    case 'export':
+    case 'artifact':
+      return value
+    case 'render':
+    case 'export_progress':
+      return 'export'
+    case 'done':
+      return 'artifact'
+    default:
+      return ''
+  }
+}
+
+function latestProgressStep(message: StatusMessage) {
+  return [...message.steps].reverse().find((step) => step.stage && step.stage !== 'error') ?? null
+}
+
+function currentProgressLabel(message: StatusMessage) {
+  const latest = latestProgressStep(message)
+  if (!latest) {
+    return message.text
+  }
+  return latest.message || message.text
+}
+
+function currentProgressStageLabel(message: StatusMessage) {
+  const latest = latestProgressStep(message)
+  if (!latest?.stage) {
+    return message.state === 'waiting' ? '等待下一步' : '准备开始'
+  }
+  return pipelineStages.find((stage) => stage.key === latest.stage)?.label ?? latest.label
+}
+
+function progressChecklist(message: StatusMessage): PipelineStageView[] {
+  const latest = latestProgressStep(message)
+  const latestKey = latest?.stage ?? ''
+  const latestIndex = pipelineStages.findIndex((stage) => stage.key === latestKey)
+  const failed = message.state === 'error'
+
+  return pipelineStages.map((stage, index) => {
+    let status: PipelineStageStatus = 'pending'
+    if (message.state === 'done') {
+      status = 'done'
+    } else if (latestIndex >= 0 && index < latestIndex) {
+      status = 'done'
+    } else if (latestIndex >= 0 && index === latestIndex) {
+      status = failed ? 'error' : message.state === 'waiting' ? 'waiting' : 'running'
+    }
+    return {
+      ...stage,
+      status,
+    }
+  })
+}
+
 function statusStateLabel(state: StatusMessage['state']) {
   switch (state) {
     case 'running':
@@ -1406,21 +1511,64 @@ function artifactAssetUrl(requestId: string | undefined, relativePath: string | 
   if (!requestId || !relativePath) {
     return ''
   }
-  return `/ppt-agent/artifacts/${encodeURIComponent(requestId)}/${relativePath
+  return `/api/ppt-agent/artifacts/${encodeURIComponent(requestId)}/${relativePath
     .split('/')
     .map((part) => encodeURIComponent(part))
     .join('/')}`
 }
 
 function previewSrc(requestId: string | undefined, thumbB64: string, pngPath: string) {
-  const pngUrl = artifactAssetUrl(requestId, pngPath)
-  if (pngUrl) {
-    return pngUrl
+  const thumbUrl = thumbB64 ? `data:image/webp;base64,${thumbB64}` : ''
+  const normalizedPngPath = pngPath.trim()
+
+  if (!normalizedPngPath) {
+    return thumbUrl
   }
-  if (thumbB64) {
-    return `data:image/webp;base64,${thumbB64}`
+
+  if (/^(data:|blob:|https?:\/\/)/i.test(normalizedPngPath)) {
+    return normalizedPngPath
   }
-  return ''
+
+  const cacheKey = `${requestId ?? ''}:${normalizedPngPath}`
+  if (previewObjectUrls[cacheKey]) {
+    return previewObjectUrls[cacheKey]
+  }
+
+  if (requestId && !previewFailures.has(cacheKey)) {
+    void loadPreviewAsset(cacheKey, requestId, normalizedPngPath)
+  }
+
+  return thumbUrl
+}
+
+async function loadPreviewAsset(cacheKey: string, requestId: string, relativePath: string) {
+  if (previewLoads.has(cacheKey)) {
+    return
+  }
+
+  const session = readSessionFromStorage()
+  if (!session?.access_token) {
+    return
+  }
+
+  previewLoads.add(cacheKey)
+  try {
+    const response = await fetch(artifactAssetUrl(requestId, relativePath), {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    })
+    if (!response.ok) {
+      previewFailures.add(cacheKey)
+      return
+    }
+    const blob = await response.blob()
+    previewObjectUrls[cacheKey] = URL.createObjectURL(blob)
+  } catch {
+    previewFailures.add(cacheKey)
+  } finally {
+    previewLoads.delete(cacheKey)
+  }
 }
 
 function messageRequestId(message: ChatMessage) {
@@ -1590,6 +1738,37 @@ function formatHistoryTime(value: string) {
                 </div>
                 <p>{{ message.text }}</p>
 
+                <div v-if="message.steps.length || message.state === 'running'" class="active-progress-card">
+                  <div class="active-progress-icon" :class="`is-${message.state}`">
+                    <Loader2 v-if="message.state === 'running'" class="spin" :size="18" />
+                    <AlertCircle v-else-if="message.state === 'error'" :size="18" />
+                    <CheckCircle2 v-else :size="18" />
+                  </div>
+                  <div>
+                    <span>当前步骤</span>
+                    <strong>{{ currentProgressStageLabel(message) }}</strong>
+                    <p>{{ currentProgressLabel(message) }}</p>
+                  </div>
+                </div>
+
+                <ol v-if="message.steps.length || message.state !== 'waiting'" class="status-checklist">
+                  <li
+                    v-for="item in progressChecklist(message)"
+                    :key="item.key"
+                    :class="`is-${item.status}`"
+                  >
+                    <span class="checklist-marker">
+                      <Loader2 v-if="item.status === 'running'" class="spin" :size="15" />
+                      <CheckCircle2 v-else-if="item.status === 'done'" :size="15" />
+                      <AlertCircle v-else-if="item.status === 'error'" :size="15" />
+                    </span>
+                    <div>
+                      <strong>{{ item.label }}</strong>
+                      <p>{{ item.description }}</p>
+                    </div>
+                  </li>
+                </ol>
+
                 <div v-if="message.slides.length" class="slide-progress-list">
                   <article
                     v-for="slide in message.slides"
@@ -1620,11 +1799,13 @@ function formatHistoryTime(value: string) {
                       "
                     >
                       <img
+                        v-if="previewSrc(messageRequestId(message), slide.previewThumb, slide.previewPng)"
                         class="slide-preview-thumb"
                         :src="previewSrc(messageRequestId(message), slide.previewThumb, slide.previewPng)"
                         :alt="`Slide ${slide.index} preview`"
                         loading="lazy"
                       />
+                      <span v-else class="slide-preview-placeholder">Loading preview</span>
                       <span class="slide-preview-action">
                         <Maximize2 :size="14" />
                         Full preview
@@ -1719,10 +1900,12 @@ function formatHistoryTime(value: string) {
                       "
                     >
                       <img
+                        v-if="previewSrc(messageRequestId(message), option.thumbB64, option.coverPng)"
                         :src="previewSrc(messageRequestId(message), option.thumbB64, option.coverPng)"
                         :alt="option.name"
                         loading="lazy"
                       />
+                      <span v-else class="slide-preview-placeholder">Loading preview</span>
                       <span class="slide-preview-action">
                         <Maximize2 :size="14" />
                         Full preview
