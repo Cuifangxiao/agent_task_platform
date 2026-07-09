@@ -15,7 +15,7 @@ def test_render_chart_svg_supports_bar_line_and_pie():
     for chart_type in ("bar", "line", "pie"):
         svg = render_chart_svg({**base, "type": chart_type}, title="Chart")
         assert "<svg" in svg
-        assert "data-text" in svg
+        assert "data-text" not in svg
         assert "A" in svg
         assert "20%" in svg
 

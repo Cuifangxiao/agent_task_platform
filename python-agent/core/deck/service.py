@@ -12,6 +12,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from core.deck.contract import GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
+from core.deck.errors import DeckError
 from core.deck.model_config import build_deck_llms, describe_model_assignment
 from core.deck.paths import artifact_dir
 from core.deck.pipeline import build_deck_graph
@@ -105,6 +106,8 @@ def _thread_config(request_id: str) -> dict[str, Any]:
 
 
 def _error_output(request_id: str, message: str, exc: Exception) -> GenerateDeckOutput:
+    if isinstance(exc, DeckError):
+        return GenerateDeckOutput(request_id=request_id, event_type="error", stage=exc.stage, message=str(exc), done=True, error=str(exc), sequence=1)
     return GenerateDeckOutput(request_id=request_id, event_type="error", stage="error", message=message, done=True, error=str(exc), sequence=1)
 
 

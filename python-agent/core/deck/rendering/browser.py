@@ -20,6 +20,7 @@ from core.deck.quality.rules import DOM_VALIDATION_JS, ValidationIssue, validate
 logger = logging.getLogger(__name__)
 THUMB_MAX_BYTES = 60_000
 RENDER_TIMEOUT_MS = 10_000
+BROWSER_DEVICE_SCALE_FACTOR = 2
 
 
 @dataclass
@@ -43,8 +44,8 @@ class BrowserSession:
         self._browser: Any = None
         self._page: Any = None
 
-    def capture(self, html: str, png_path: Path, *, device_scale_factor: int = 2) -> None:
-        page = self._get_page(device_scale_factor=device_scale_factor)
+    def capture(self, html: str, png_path: Path) -> None:
+        page = self._get_page()
         page.set_content(html, wait_until="load")
         page.screenshot(path=str(png_path), full_page=False)
 
@@ -55,7 +56,7 @@ class BrowserSession:
         return validate_dom_result(page.evaluate(DOM_VALIDATION_JS), page=page_index)
 
     def extract_hidden_text_background(self, html: str, bg_path: Path) -> list[dict[str, Any]]:
-        page = self._get_page(device_scale_factor=2)
+        page = self._get_page()
         page.set_content(html, wait_until="load")
         text_layer = page.evaluate(TEXT_LAYER_JS)
         page.evaluate(HIDE_TEXT_JS)
@@ -63,7 +64,7 @@ class BrowserSession:
         return text_layer if isinstance(text_layer, list) else []
 
     def extract_text_layer(self, html: str) -> list[dict[str, Any]]:
-        page = self._get_page(device_scale_factor=1)
+        page = self._get_page()
         page.set_content(html, wait_until="load")
         result = page.evaluate(TEXT_LAYER_JS)
         return result if isinstance(result, list) else []
@@ -87,7 +88,7 @@ class BrowserSession:
             except Exception:  # pylint: disable=broad-exception-caught
                 logger.debug("browser session resource close failed", exc_info=True)
 
-    def _get_page(self, *, device_scale_factor: int) -> Any:
+    def _get_page(self) -> Any:
         if self._page is not None:
             return self._page
         from playwright.sync_api import sync_playwright  # type: ignore
@@ -96,7 +97,7 @@ class BrowserSession:
         self._browser = self._playwright.chromium.launch(headless=True)
         self._page = self._browser.new_page(
             viewport={"width": CANVAS_WIDTH, "height": CANVAS_HEIGHT},
-            device_scale_factor=device_scale_factor,
+            device_scale_factor=BROWSER_DEVICE_SCALE_FACTOR,
         )
         set_timeout = getattr(self._page, "set_default_timeout", None)
         if callable(set_timeout):

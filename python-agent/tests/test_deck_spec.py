@@ -1,3 +1,7 @@
+import re
+from pathlib import Path
+
+from core.deck.spec import COMPONENTS
 from core.deck.spec import normalize_slide_spec
 from core.deck.quality import dedupe_issue_dicts, validate_html_static, validate_slide_spec
 
@@ -57,3 +61,10 @@ def test_dedupe_issue_dicts_uses_page_kind_and_description():
     ]
 
     assert len(dedupe_issue_dicts(issues)) == 2
+
+
+def test_components_markdown_stays_in_sync_with_spec_components():
+    components_doc = Path(__file__).resolve().parents[1] / "core" / "deck" / "design_system" / "components.md"
+    documented = set(re.findall(r"\| `([^`]+)` \|", components_doc.read_text(encoding="utf-8")))
+
+    assert documented == COMPONENTS

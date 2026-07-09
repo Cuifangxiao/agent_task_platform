@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -72,15 +73,22 @@ def parse_vlm_issues(raw: Any) -> list[ValidationIssue]:
     return issues
 
 
-def review_prompt(contact_sheet_path: Path) -> str:
+def review_prompt() -> str:
     return "\n".join(
         [
             "Review the slide contact sheet for visual quality.",
-            f"Contact sheet path: {contact_sheet_path}",
             "Return JSON: {\"issues\":[{\"page\":1,\"severity\":\"must_fix|nice_to_have\",\"kind\":\"overflow|crowding|alignment|hierarchy|style_drift|mismatch|polish\",\"description\":\"...\",\"suggestion\":\"...\"}]}",
             "Only use kinds from the enum. Use must_fix only for defects likely to hurt comprehension.",
         ]
     )
+
+
+def review_message_content(contact_sheet_path: Path) -> list[dict[str, Any]]:
+    image_b64 = base64.b64encode(contact_sheet_path.read_bytes()).decode("ascii")
+    return [
+        {"type": "text", "text": review_prompt()},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+    ]
 
 
 def _coerce_json(raw: Any) -> Any:

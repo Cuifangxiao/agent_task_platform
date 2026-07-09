@@ -13,9 +13,12 @@ from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import issues_to_dicts, validate_slide_spec
 from core.deck.rendering.browser import BrowserRenderer
 from core.deck.rendering.html import HTMLSlideRenderer
-from core.deck.spec import DeckSpec, SlideSpec, normalize_slide_spec
+from core.deck.spec import DeckSpec, SlideSpec, _soft_limit, normalize_slide_spec
 
 MAX_REPAIR_ROUNDS = 2
+DOWNGRADE_BODY_CHARS = 90
+DOWNGRADE_ITEM_CHARS = 44
+DOWNGRADE_ITEM_COUNT = 2
 
 
 def has_fixable_must_fix(state: DeckGraphState) -> bool:
@@ -89,19 +92,19 @@ def repair_deck(
 def deterministic_downgrade(slide: SlideSpec) -> SlideSpec:
     content = dict(slide.content)
     if slide.component == "content-basic":
-        content["body"] = str(content.get("body") or "")[:90].strip()
+        content["body"] = _soft_limit(str(content.get("body") or ""), DOWNGRADE_BODY_CHARS)
         if isinstance(content.get("bullets"), list):
-            content["bullets"] = [str(item)[:44].strip() for item in content["bullets"][:2]]
+            content["bullets"] = [_soft_limit(str(item), DOWNGRADE_ITEM_CHARS) for item in content["bullets"][:DOWNGRADE_ITEM_COUNT]]
     else:
         items = []
         for key in ("bullets", "items", "steps"):
             if isinstance(content.get(key), list):
-                items = [str(item)[:44].strip() for item in content[key][:2]]
+                items = [_soft_limit(str(item), DOWNGRADE_ITEM_CHARS) for item in content[key][:DOWNGRADE_ITEM_COUNT]]
                 break
-        body = str(content.get("body") or content.get("takeaway") or content.get("subtitle") or slide.title)[:90].strip()
+        body = _soft_limit(str(content.get("body") or content.get("takeaway") or content.get("subtitle") or slide.title), DOWNGRADE_BODY_CHARS)
         content = {"body": body, "bullets": items}
         slide.component = "content-basic"
-    slide.title = slide.title[:44].strip()
+    slide.title = _soft_limit(slide.title, DOWNGRADE_ITEM_CHARS)
     slide.content = content
     return slide
 

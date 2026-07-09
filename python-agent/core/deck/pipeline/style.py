@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from langgraph.config import get_stream_writer
@@ -51,11 +52,14 @@ def review_style(state: DeckGraphState, llm_registry: dict[str, Any] | None = No
         writer(events.stage_progress("style_review", f"Unknown style_id '{style_id}', selected the first style option.", {"status": "warning", "style_id": style_id}))
     theme = ThemeTokens.from_dict(selected.get("tokens") or {})
     if feedback and llm_registry and llm_registry.get("style") is not None:
-        adjusted = adjust_theme_from_feedback(theme, feedback, llm_registry["style"])
-        if theme_is_valid(adjusted):
-            theme = adjusted
-        else:
-            writer(events.stage_progress("style_review", "Style feedback produced low-contrast tokens; kept selected style.", {"status": "warning"}))
+        try:
+            adjusted = adjust_theme_from_feedback(theme, feedback, llm_registry["style"])
+            if theme_is_valid(adjusted):
+                theme = adjusted
+            else:
+                writer(events.stage_progress("style_review", "Style feedback produced low-contrast tokens; kept selected style.", {"status": "warning"}))
+        except ValueError as exc:
+            writer(events.stage_progress("style_review", f"Style feedback model output was unusable; kept selected style: {exc}", {"status": "warning"}))
     elif feedback:
         theme.motif = (theme.motif + " | " + feedback).strip(" |")
     writer(
@@ -107,7 +111,7 @@ def select_presets_with_model(state: DeckGraphState, presets: list[ThemeTokens],
         "instruction": "Choose two presets or return two complete ThemeTokens. Keep contrast accessible.",
     }
     try:
-        raw = invoke_json_with_retries(llm_registry["style"], system=load_node_prompt("style"), user=str(payload), attempts=2)
+        raw = invoke_json_with_retries(llm_registry["style"], system=load_node_prompt("style"), user=json.dumps(payload, ensure_ascii=False), attempts=2)
     except ValueError:
         return presets[:2]
     themes = _themes_from_style_output(raw, presets)
@@ -119,7 +123,7 @@ def adjust_theme_from_feedback(theme: ThemeTokens, feedback: str, style_llm: Any
     raw = invoke_json_with_retries(
         style_llm,
         system=load_node_prompt("style"),
-        user=str({"task": "Adjust this ThemeTokens object from feedback.", "theme": theme.to_dict(), "feedback": feedback}),
+        user=json.dumps({"task": "Adjust this ThemeTokens object from feedback.", "theme": theme.to_dict(), "feedback": feedback}, ensure_ascii=False),
         attempts=2,
     )
     tokens = raw.get("tokens") if isinstance(raw.get("tokens"), dict) else raw

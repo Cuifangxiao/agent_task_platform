@@ -75,8 +75,8 @@ def _bar_svg(chart: dict[str, Any], *, title: str) -> str:
             'fill="var(--color-accent)" />'.format(x=x, y=y, w=bar_width, h=bar_height)
         )
         labels.append(
-            '<text data-text x="{x:.1f}" y="{y:.1f}" class="chart-value">{value}</text>'
-            '<text data-text x="{x:.1f}" y="356" class="chart-label">{label}</text>'.format(
+            '<text x="{x:.1f}" y="{y:.1f}" class="chart-value">{value}</text>'
+            '<text x="{x:.1f}" y="356" class="chart-label">{label}</text>'.format(
                 x=x + bar_width / 2,
                 y=max(28, y - 10),
                 value=_escape(_format_value(value, unit)),
@@ -108,8 +108,8 @@ def _line_svg(chart: dict[str, Any], *, title: str) -> str:
     for (x, y), item in zip(points, series, strict=False):
         marks.append(
             '<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="var(--color-accent2)" />'
-            '<text data-text x="{x:.1f}" y="{value_y:.1f}" class="chart-value">{value}</text>'
-            '<text data-text x="{x:.1f}" y="356" class="chart-label">{label}</text>'.format(
+            '<text x="{x:.1f}" y="{value_y:.1f}" class="chart-value">{value}</text>'
+            '<text x="{x:.1f}" y="356" class="chart-label">{label}</text>'.format(
                 x=x,
                 y=y,
                 value_y=max(28, y - 14),
@@ -153,8 +153,8 @@ def _pie_svg(chart: dict[str, Any], *, title: str) -> str:
         legend_y = 112 + index * 40
         legend.append(
             '<rect x="386" y="{y}" width="18" height="18" rx="4" fill="{color}" />'
-            '<text data-text x="416" y="{text_y}" class="chart-legend">{label}</text>'
-            '<text data-text x="548" y="{text_y}" class="chart-legend value">{value}</text>'.format(
+            '<text x="416" y="{text_y}" class="chart-legend">{label}</text>'
+            '<text x="548" y="{text_y}" class="chart-legend value">{value}</text>'.format(
                 y=legend_y,
                 text_y=legend_y + 15,
                 color=palette[index % len(palette)],
@@ -168,7 +168,7 @@ def _pie_svg(chart: dict[str, Any], *, title: str) -> str:
 
 def _svg_frame(title: str, body: str) -> str:
     title_text = _escape(title)
-    heading = f'<text data-text x="34" y="34" class="chart-title">{title_text}</text>' if title_text else ""
+    heading = f'<text x="34" y="34" class="chart-title">{title_text}</text>' if title_text else ""
     return f"""
 <svg class="inline-chart" viewBox="0 0 640 400" role="img" aria-label="{title_text}">
   <style>
