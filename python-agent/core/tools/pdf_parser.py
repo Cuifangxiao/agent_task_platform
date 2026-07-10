@@ -10,7 +10,7 @@ class PDFParseError(ValueError):
     """Raised when uploaded PDF bytes cannot be converted into usable text."""
 
 
-def parse_pdf_text(data: bytes, *, max_chars: int = 60000) -> str:
+def parse_pdf_text(data: bytes, *, max_chars: int | None = 60000) -> str:
     if not data:
         return ""
 
@@ -20,7 +20,7 @@ def parse_pdf_text(data: bytes, *, max_chars: int = 60000) -> str:
     text = _normalize_text(text)
     if not text:
         raise PDFParseError("uploaded PDF did not contain extractable text")
-    return text[:max_chars]
+    return text[:max_chars] if max_chars is not None else text
 
 
 def _parse_with_pypdf(data: bytes) -> str:

@@ -33,7 +33,7 @@ TEXT_SUFFIXES = {
 }
 
 
-def parse_uploaded_document(filename: str, data: bytes, *, max_chars: int = 60000) -> str:
+def parse_uploaded_document(filename: str, data: bytes, *, max_chars: int | None = 60000) -> str:
     if not data:
         return ""
 
@@ -54,7 +54,7 @@ def parse_uploaded_document(filename: str, data: bytes, *, max_chars: int = 6000
     text = _normalize_text(text)
     if not text:
         raise DocumentParseError("uploaded file did not contain extractable text")
-    return text[:max_chars]
+    return text[:max_chars] if max_chars is not None else text
 
 
 def _looks_like_image(data: bytes) -> bool:
@@ -119,5 +119,8 @@ def _normalize_text(value: str) -> str:
     value = re.sub(r"<(script|style)\b.*?</\1>", " ", value, flags=re.IGNORECASE | re.DOTALL)
     value = re.sub(r"<[^>]+>", " ", value)
     lines = [re.sub(r"\s+", " ", line).strip() for line in value.splitlines()]
-    lines = [line for line in lines if line]
-    return "\n".join(lines)
+    normalized: list[str] = []
+    for line in lines:
+        if line or (normalized and normalized[-1] != ""):
+            normalized.append(line)
+    return "\n".join(normalized).strip()

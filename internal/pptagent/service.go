@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"agent-task-platform/internal/agentconfig"
@@ -24,13 +25,17 @@ var ErrModelConfigInactive = errors.New("model config is inactive")
 var ErrArtifactNotFound = errors.New("deck artifact not found")
 
 var artifactIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{36}$`)
+var unsafeHTMLArtifactPattern = regexp.MustCompile(`(?i)(<\s*(?:script|iframe|object|embed)\b|\bon[a-z]+\s*=|(?:src|href)\s*=\s*["']?\s*(?:https?://|javascript:|data:text/html)|url\(\s*["']?\s*https?://)`)
 
 type Service struct {
 	modelConfigRepo modelconfig.Repository
 	agentConfigRepo agentconfig.Repository
 	historyRepo     HistoryRepository
+	jobRepo         JobRepository
 	runtimeClient   RuntimeClient
 	artifactDir     string
+	cancelMu        sync.Mutex
+	jobCancels      map[string]context.CancelFunc
 }
 
 func NewService(
@@ -39,6 +44,7 @@ func NewService(
 	historyRepo HistoryRepository,
 	runtimeClient RuntimeClient,
 	artifactDir string,
+	jobRepos ...JobRepository,
 ) *Service {
 	if strings.TrimSpace(artifactDir) == "" {
 		artifactDir = filepath.Join("python-agent", "artifacts", "decks")
@@ -47,12 +53,18 @@ func NewService(
 		artifactDir = abs
 	}
 
+	var jobRepo JobRepository
+	if len(jobRepos) > 0 {
+		jobRepo = jobRepos[0]
+	}
 	return &Service{
 		modelConfigRepo: modelConfigRepo,
 		agentConfigRepo: agentConfigRepo,
 		historyRepo:     historyRepo,
+		jobRepo:         jobRepo,
 		runtimeClient:   runtimeClient,
 		artifactDir:     artifactDir,
+		jobCancels:      make(map[string]context.CancelFunc),
 	}
 }
 
@@ -61,6 +73,18 @@ func (s *Service) GenerateDeck(
 	user providercredential.UserContext,
 	req GenerateDeckRequest,
 ) (DeckStream, error) {
+	if s.jobRepo != nil {
+		job, err := s.CreateJob(ctx, user, CreateDeckJobRequest{
+			AgentConfigID: req.AgentConfigID,
+			Description:   req.Description,
+			Mode:          req.Mode,
+			SourceFiles:   normalizeSourceFiles(req),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return s.SubscribeJob(ctx, user.UserID, job.ID, 0)
+	}
 	if user.UserID <= 0 {
 		return nil, fmt.Errorf("%w: invalid user id", ErrInvalidRequest)
 	}
@@ -125,6 +149,24 @@ func (s *Service) ResumeDeck(
 	user providercredential.UserContext,
 	req ResumeDeckRequest,
 ) (DeckStream, error) {
+	if s != nil && s.jobRepo != nil {
+		requestID := strings.TrimSpace(req.RequestID)
+		if requestID == "" {
+			return nil, fmt.Errorf("%w: request_id is required", ErrInvalidRequest)
+		}
+		job, err := s.jobRepo.GetJobByRequestID(ctx, user.UserID, requestID)
+		if err != nil {
+			return nil, err
+		}
+		after := job.LastEventSequence
+		_, _, err = s.SubmitJobAction(ctx, user, job.ID, DeckJobActionRequest{
+			Action: req.Action, OutlineMarkdown: req.OutlineMarkdown, Payload: []byte(req.Payload),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return s.SubscribeJob(ctx, user.UserID, job.ID, after)
+	}
 	if s == nil {
 		return nil, fmt.Errorf("ppt agent service is not configured")
 	}
@@ -200,6 +242,35 @@ func (s *Service) ResumeDeck(
 
 func (s *Service) ArtifactPath(requestID string) (string, error) {
 	return s.ArtifactAssetPath(requestID, "")
+}
+
+func (s *Service) ArtifactAssetPathForUser(ctx context.Context, userID int64, requestID string, relativePath string) (string, error) {
+	if userID <= 0 {
+		return "", fmt.Errorf("%w: invalid user id", ErrInvalidRequest)
+	}
+	if s.jobRepo == nil {
+		return "", ErrArtifactNotFound
+	}
+	if _, err := s.jobRepo.GetJobByRequestID(ctx, userID, strings.TrimSpace(requestID)); err != nil {
+		if errors.Is(err, ErrDeckJobNotFound) {
+			return "", ErrArtifactNotFound
+		}
+		return "", err
+	}
+	path, err := s.ArtifactAssetPath(requestID, relativePath)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasSuffix(strings.ToLower(path), ".html") {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return "", readErr
+		}
+		if unsafeHTMLArtifactPattern.Match(data) {
+			return "", ErrArtifactNotFound
+		}
+	}
+	return path, nil
 }
 
 func (s *Service) ArtifactAssetPath(requestID string, relativePath string) (string, error) {
@@ -297,6 +368,14 @@ func (s *Service) GetConversation(ctx context.Context, userID int64, id int64) (
 		UpdatedAt:       conversation.UpdatedAt.Format(time.RFC3339),
 		Messages:        make([]map[string]any, 0, len(messages)),
 	}
+	if s.jobRepo != nil {
+		job, jobErr := s.jobRepo.GetLatestJobByConversation(ctx, userID, id)
+		if jobErr == nil {
+			resp.Job = deckJobResponse(job)
+		} else if !errors.Is(jobErr, ErrDeckJobNotFound) {
+			return nil, jobErr
+		}
+	}
 
 	for _, message := range messages {
 		if message == nil {
@@ -368,6 +447,10 @@ func (s *Service) appendResumeMessages(ctx context.Context, conversationID int64
 	statusTitle := "继续生成 PPT"
 	statusText := "我正在根据确认后的大纲展开每一页内容。"
 	switch action {
+	case "regenerate_outline":
+		userText = "请重新生成一版大纲。"
+		statusTitle = "重新生成大纲"
+		statusText = "我正在重新规划叙事结构和页面重点。"
 	case "choose_style":
 		userText = "已选择风格，继续生成完整 PPT。"
 		statusTitle = "生成页面预览"
@@ -571,10 +654,33 @@ func (s *Service) runtimeModelsFromConfig(
 			ProviderOptionsJSON: normalizedProviderOptions(config.ProviderOptions),
 			Temperature:         temperature,
 			MaxTokens:           maxTokens,
+			SupportsImageInput:  supportsImageInput(config.ModelName, config.ProviderOptions),
 		})
 	}
 
 	return runtimeModels, nil
+}
+
+func supportsImageInput(modelName string, providerOptions string) bool {
+	var options map[string]any
+	if json.Unmarshal([]byte(normalizedProviderOptions(providerOptions)), &options) == nil {
+		if value, ok := options["supports_image_input"].(bool); ok {
+			return value
+		}
+		if value, ok := options["supports_vision"].(bool); ok {
+			return value
+		}
+	}
+	name := strings.ToLower(modelName)
+	if strings.Contains(name, "qwen") && (strings.Contains(name, "-vl") || strings.Contains(name, "vl-")) {
+		return true
+	}
+	for _, marker := range []string{"gpt-4o", "gpt-4.1", "gpt-5", "vision", "gemini", "claude-3", "claude-4"} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func legacyModelNodeFallback(nodeKey string) string {
@@ -613,6 +719,7 @@ type persistedProgressStep struct {
 	Label   string `json:"label"`
 	Message string `json:"message"`
 	Tone    string `json:"tone"`
+	Stage   string `json:"stage,omitempty"`
 }
 
 type persistedSlideProgress struct {
@@ -699,8 +806,12 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 		Label:   stageLabelForPersistence(chunk.Stage, chunk.EventType),
 		Message: stepMessageForPersistence(chunk),
 		Tone:    toneForPersistence(chunk),
+		Stage:   normalizeDeckStage(chunk.Stage),
 	}
 	s.statusContent.Steps = append(s.statusContent.Steps, step)
+	if len(s.statusContent.Steps) > 100 {
+		s.statusContent.Steps = append([]persistedProgressStep(nil), s.statusContent.Steps[len(s.statusContent.Steps)-100:]...)
+	}
 	if requestID != "" {
 		s.statusContent.RequestID = requestID
 	}
@@ -711,6 +822,9 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 	}
 	if slide := persistedSlideFromChunk(chunk); slide != nil {
 		s.upsertPersistedSlide(*slide)
+	}
+	if chunk.EventType == "validation_report" {
+		s.applyValidationIssues(chunk.Payload)
 	}
 	if err := s.historyRepo.UpdateMessageContent(
 		s.ctx,
@@ -753,6 +867,29 @@ func (s *persistedDeckStream) persistChunk(chunk *DeckStreamChunk) error {
 	return nil
 }
 
+func (s *persistedDeckStream) applyValidationIssues(raw json.RawMessage) {
+	var payload struct {
+		Issues []struct {
+			Page        int    `json:"page"`
+			Severity    string `json:"severity"`
+			Description string `json:"description"`
+		} `json:"issues"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return
+	}
+	for _, issue := range payload.Issues {
+		if issue.Page <= 0 || strings.TrimSpace(issue.Description) == "" {
+			continue
+		}
+		status := "warning"
+		if issue.Severity == "must_fix" {
+			status = "error"
+		}
+		s.upsertPersistedSlide(persistedSlideProgress{Index: issue.Page, Status: status, Warnings: []string{issue.Description}})
+	}
+}
+
 func (s *persistedDeckStream) upsertPersistedSlide(incoming persistedSlideProgress) {
 	if incoming.Index <= 0 {
 		return
@@ -790,7 +927,7 @@ func persistedSlideFromChunk(chunk *DeckStreamChunk) *persistedSlideProgress {
 		chunk.EventType != "slide_reviewed" &&
 		chunk.EventType != "slide_spec_ready" &&
 		chunk.EventType != "slide_preview" &&
-		!(chunk.EventType == "stage_progress" && chunk.Stage == "slides") {
+		!(chunk.EventType == "stage_progress" && (chunk.Stage == "slides" || chunk.Stage == "writer" || chunk.Stage == "designer" || chunk.Stage == "repair")) {
 		return nil
 	}
 
@@ -834,7 +971,7 @@ func persistedSlideFromChunk(chunk *DeckStreamChunk) *persistedSlideProgress {
 		SpeakerNotes:     payloadString(payload["speaker_notes"]),
 		PreviewPNG:       payloadString(payload["png"]),
 		PreviewHTML:      payloadString(payload["html"]),
-		PreviewThumb:     payloadString(payload["thumb_b64"]),
+		PreviewThumb:     "",
 		Version:          payloadInt(payload["version"]),
 		Status:           status,
 		Warnings:         warnings,
@@ -943,11 +1080,25 @@ func (s *persistedDeckStream) upsertStyleMessage(requestID string, chunk *DeckSt
 
 func (s *persistedDeckStream) upsertResultMessage(requestID string, chunk *DeckStreamChunk) error {
 	fileName := extractArtifactFileNameForPersistence(chunk.Payload)
+	var payload map[string]any
+	_ = json.Unmarshal(chunk.Payload, &payload)
+	warnings := payloadStringSlice(payload["warnings"])
+	qualityStatus := payloadString(payload["quality_status"])
+	degraded, _ := payload["degraded"].(bool)
+	resultText := "整套内容已经生成完成，你可以直接下载这份 PPT。"
+	if qualityStatus == "needs_review" {
+		resultText = "PPT 已导出，但仍有必须人工复核的问题；请先查看质量警告。"
+	} else if degraded || len(warnings) > 0 {
+		resultText = "PPT 已导出，但部分页面降级为整页图片，文字可能不可编辑。"
+	}
 	content := map[string]any{
-		"title":     "PPT 已准备好",
-		"text":      "整套内容已经生成完成，你可以直接下载这份 PPT。",
-		"requestId": requestID,
-		"fileName":  fileName,
+		"title":         "PPT 已准备好",
+		"text":          resultText,
+		"requestId":     requestID,
+		"fileName":      fileName,
+		"warnings":      warnings,
+		"degraded":      degraded,
+		"qualityStatus": qualityStatus,
 	}
 
 	if s.resultMessageID == 0 {
@@ -1038,13 +1189,13 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 			Text:  "请选择一套视觉方向继续。",
 			State: string(ConversationStatusRunning),
 		}
-	case "slides":
+	case "slides", "writer":
 		return &persistedChunkSnapshot{
 			Title: "正在展开页面",
 			Text:  "我在把大纲扩展成每一页的具体内容。",
 			State: string(ConversationStatusRunning),
 		}
-	case "design_slides":
+	case "design_slides", "designer":
 		return &persistedChunkSnapshot{
 			Title: "正在生成页面预览",
 			Text:  "我在把结构化内容渲染成 HTML 与 PNG 预览。",
@@ -1062,10 +1213,16 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 			Text:  "我在检查跨页连贯性。",
 			State: string(ConversationStatusRunning),
 		}
-	case "review":
+	case "review", "review_vlm":
 		return &persistedChunkSnapshot{
 			Title: "正在检查内容",
 			Text:  "我在检查逻辑、重复信息和内容完整性。",
+			State: string(ConversationStatusRunning),
+		}
+	case "repair":
+		return &persistedChunkSnapshot{
+			Title: "正在自动修复",
+			Text:  "我在保留原始内容的前提下修复页面质量问题。",
 			State: string(ConversationStatusRunning),
 		}
 	case "render", "export":
@@ -1091,16 +1248,18 @@ func stageLabelForPersistence(stage string, eventType string) string {
 		return "风格样张"
 	case stage == "style_review":
 		return "风格选择"
-	case stage == "slides":
+	case stage == "slides", stage == "writer":
 		return "页面展开"
-	case stage == "design_slides":
+	case stage == "design_slides", stage == "designer":
 		return "页面预览"
 	case stage == "validate":
 		return "质量校验"
 	case stage == "coherence":
 		return "连贯检查"
-	case stage == "review":
+	case stage == "review", stage == "review_vlm":
 		return "质量检查"
+	case stage == "repair":
+		return "自动修复"
 	case stage == "render", stage == "export":
 		return "PPT 导出"
 	case eventType == "artifact":
@@ -1327,8 +1486,10 @@ func normalizeResumeAction(value string) string {
 		return "choose_style"
 	case "regenerate_slide":
 		return "regenerate_slide"
+	case "regenerate_outline":
+		return "regenerate_outline"
 	default:
-		return "approve_outline"
+		return strings.ToLower(strings.TrimSpace(value))
 	}
 }
 

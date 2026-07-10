@@ -166,18 +166,25 @@ func (c *Client) GenerateDeck(
 			ProviderOptionsJson: config.ProviderOptionsJSON,
 			Temperature:         config.Temperature,
 			MaxTokens:           int32(config.MaxTokens),
+			SupportsImageInput:  config.SupportsImageInput,
 		})
 	}
 
 	sourceFiles := make([]*providerv1.DeckSourceFile, 0, len(req.SourceFiles))
 	for _, file := range req.SourceFiles {
 		sourceFiles = append(sourceFiles, &providerv1.DeckSourceFile{
-			Filename: file.FileName,
-			Content:  file.Content,
+			Filename:   file.FileName,
+			Content:    file.Content,
+			ResourceId: file.ResourceID,
+			LocalPath:  file.LocalPath,
+			Sha256:     file.SHA256,
+			SizeBytes:  file.SizeBytes,
 		})
 	}
 
 	stream, err := c.grpcClient.GenerateDeck(callCtx, &providerv1.GenerateDeckRequest{
+		JobId:          req.JobID,
+		GenerationMode: req.Mode,
 		User: &providerv1.UserContext{
 			UserId:    user.UserID,
 			Username:  user.Username,
@@ -219,10 +226,12 @@ func (c *Client) ResumeDeck(
 			ProviderOptionsJson: config.ProviderOptionsJSON,
 			Temperature:         config.Temperature,
 			MaxTokens:           int32(config.MaxTokens),
+			SupportsImageInput:  config.SupportsImageInput,
 		})
 	}
 
 	stream, err := c.grpcClient.ResumeDeck(callCtx, &providerv1.ResumeDeckRequest{
+		JobId: req.JobID,
 		User: &providerv1.UserContext{
 			UserId:    user.UserID,
 			Username:  user.Username,
@@ -288,7 +297,9 @@ func (s *deckStream) Recv() (*pptagent.DeckStreamChunk, error) {
 		return nil, err
 	}
 
-	return &pptagent.DeckStreamChunk{
+	chunk := &pptagent.DeckStreamChunk{
+		EventVersion:    int(resp.GetEventVersion()),
+		JobID:           resp.GetJobId(),
 		RequestID:       resp.GetRequestId(),
 		EventType:       resp.GetEventType(),
 		Stage:           resp.GetStage(),
@@ -300,8 +311,20 @@ func (s *deckStream) Recv() (*pptagent.DeckStreamChunk, error) {
 		Payload:         parsePayload(resp.GetPayloadJson()),
 		Done:            resp.GetDone(),
 		Error:           resp.GetError(),
+		ErrorCode:       resp.GetErrorCode(),
+		StageStatus:     resp.GetStageStatus(),
+		Severity:        resp.GetSeverity(),
+		ActionRequired:  resp.GetActionRequired(),
+		Retryable:       resp.GetRetryable(),
 		Sequence:        resp.GetSequence(),
-	}, nil
+	}
+	if progress := resp.GetProgress(); progress != nil && (progress.GetCurrent() != 0 || progress.GetTotal() != 0) {
+		chunk.Progress = &pptagent.DeckProgress{Current: int(progress.GetCurrent()), Total: int(progress.GetTotal())}
+	}
+	if slide := resp.GetSlide(); slide != nil && slide.GetIndex() > 0 {
+		chunk.Slide = &pptagent.DeckSlideEvent{Index: int(slide.GetIndex()), Version: int(slide.GetVersion())}
+	}
+	return chunk, nil
 }
 
 func (s *deckStream) Close() error {

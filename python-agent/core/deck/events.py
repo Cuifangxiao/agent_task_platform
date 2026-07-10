@@ -28,11 +28,18 @@ def agent_message(stage: str, agent: str, message: str) -> dict[str, Any]:
 
 
 def artifact(stage: str, message: str, artifact_path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return event(EventType.ARTIFACT, stage, message, artifact_path=artifact_path, payload=payload)
+    severity = "warning" if payload.get("warnings") or payload.get("degraded") or payload.get("needs_review") else "info"
+    return event(EventType.ARTIFACT, stage, message, artifact_path=artifact_path, payload=payload, stage_status="done", severity=severity)
 
 
 def export_progress(message: str, current: int, total: int) -> dict[str, Any]:
-    return event(EventType.EXPORT_PROGRESS, "export", message, payload={"current": current, "total": total})
+    return event(
+        EventType.EXPORT_PROGRESS,
+        "export",
+        message,
+        progress={"current": current, "total": total},
+        payload={"current": current, "total": total},
+    )
 
 
 def fact_sheet_ready(payload: dict[str, Any]) -> dict[str, Any]:
@@ -55,19 +62,19 @@ def repair_progress(message: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def slide_preview(message: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return event(EventType.SLIDE_PREVIEW, "design_slides", message, payload=payload)
+    return event(EventType.SLIDE_PREVIEW, "designer", message, payload=payload, slide=_slide_ref(payload))
 
 
 def slide_ready(message: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return event(EventType.SLIDE_READY, "slides", message, payload=payload)
+    return event(EventType.SLIDE_READY, "writer", message, payload=payload, slide=_slide_ref(payload))
 
 
 def slide_spec_ready(message: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return event(EventType.SLIDE_SPEC_READY, "slides", message, payload=payload)
+    return event(EventType.SLIDE_SPEC_READY, "writer", message, payload=payload, slide=_slide_ref(payload))
 
 
 def slide_started(message: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return event(EventType.SLIDE_STARTED, "slides", message, payload=payload)
+    return event(EventType.SLIDE_STARTED, "writer", message, payload=payload, slide=_slide_ref(payload))
 
 
 def stage_progress(stage: str, message: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -86,8 +93,9 @@ def text_delta(stage: str, channel: str, delta: str, message: str) -> dict[str, 
     return event(EventType.TEXT_DELTA, stage, message, channel=channel, text_delta=delta)
 
 
-def validation_report(issues: list[dict[str, Any]]) -> dict[str, Any]:
-    return event(EventType.VALIDATION_REPORT, "validate", "Validation complete", payload={"issues": issues})
+def validation_report(issues: list[dict[str, Any]], *, stage: str = "validate") -> dict[str, Any]:
+    severity = "warning" if issues else "info"
+    return event(EventType.VALIDATION_REPORT, stage, "Validation complete", payload={"issues": issues}, severity=severity, stage_status="warning" if issues else "done")
 
 
 def event(
@@ -100,10 +108,35 @@ def event(
 ) -> dict[str, Any]:
     if not event_type:
         raise ValueError("event_type is required")
-    data: dict[str, Any] = {"event_type": event_type, "stage": stage, "message": message}
+    normalized_stage = {
+        "slides": "writer",
+        "design_slides": "designer",
+        "review": "review_vlm",
+        "render": "designer",
+    }.get(stage, stage)
+    payload_status = str((payload or {}).get("status") or "") if isinstance(payload, dict) else ""
+    stage_status = str(extra.pop("stage_status", "")) or (payload_status if payload_status in {"pending", "running", "waiting", "done", "warning", "error"} else "running")
+    default_severity = "error" if stage_status == "error" else "warning" if stage_status == "warning" else "info"
+    data: dict[str, Any] = {
+        "event_version": 1,
+        "event_type": event_type,
+        "stage": normalized_stage,
+        "stage_status": stage_status,
+        "message": message,
+        "severity": str(extra.pop("severity", default_severity)),
+    }
     if payload is not None:
         data["payload"] = payload
     for key, value in extra.items():
         if value is not None:
             data[key] = value
     return data
+
+
+def _slide_ref(payload: dict[str, Any]) -> dict[str, int] | None:
+    try:
+        index = int(payload.get("index") or 0)
+        version = int(payload.get("version") or 0)
+    except (TypeError, ValueError):
+        return None
+    return {"index": index, "version": version} if index > 0 else None

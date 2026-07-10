@@ -30,7 +30,7 @@
 5. **串行慢**。逐页生成串行传 `previous_slides`，页数多时耗时线性增长。
 6. **字体隐患**。`FONT_FAMILY = "Microsoft YaHei"` 在 Linux 服务器上既不存在也有授权问题。
 
-**保留的资产**（重构不许破坏）：gRPC 流式协议与 `GenerateDeckResponse` 字段语义、LangGraph + `InMemorySaver` 的中断/恢复机制、按节点下发模型的 `node_model_configs` 机制、outline 的 markdown 流式 delta（前端依赖 `channel=outline_markdown`）、上传文档解析（`core/tools/document_parser.py`）。
+**保留的资产**（重构不许破坏）：gRPC 流式协议与 `GenerateDeckResponse` 字段语义、LangGraph 的中断/恢复机制、按节点下发模型的 `node_model_configs` 机制、outline 的 markdown 流式 delta（前端依赖 `channel=outline_markdown`）、上传文档解析（`core/tools/document_parser.py`）。checkpointer 已在后续全链路重构中升级为持久化 SQLite adapter。
 
 ---
 
@@ -45,7 +45,7 @@
 - 质量闭环：规则校验 + VLM 审查发现的问题自动定点修复，有轮次上限。
 
 **非目标（本期不做，但留接口）**
-- 动画/转场、外部图库/生图接入（设计语言先用"色块+图标+排版"避免图片依赖）、用户品牌模板（.pptx 母版）导入、pptx 原生图表对象、协作编辑、checkpointer 持久化（沿用 InMemorySaver，重启丢会话与现状一致）。
+- 动画/转场、外部图库/生图接入（设计语言先用"色块+图标+排版"避免图片依赖）、用户品牌模板（.pptx 母版）导入、pptx 原生图表对象、协作编辑。checkpointer 持久化已由后续全链路重构完成。
 
 ---
 
@@ -341,7 +341,7 @@ tests/
 | VLM 误报导致修复震荡 | 只认 rubric 内类型 + must_fix 才修 + 每页 2 轮上限 + 修复后必须过规则校验才算数 |
 | 事件量变大冲击前端 | `agent_message` 节流（同 stage 500ms 合并）；大图走下载接口、payload 只带小缩略图 |
 | 中文字体体积 | 思源黑体 OFL 免版权；可选 pyftsubset 子集化（非必须） |
-| InMemorySaver 重启丢会话 | 与现状一致，不在本期解决；`spec.json` 存档使"导出后页级重做"不依赖 checkpoint 也能重放 |
+| Checkpoint 重启恢复 | 后续全链路重构已使用 SQLite-backed saver；`spec.json` 仍使导出后页级重做不依赖 checkpoint |
 
 ---
 

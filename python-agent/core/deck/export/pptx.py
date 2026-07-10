@@ -18,6 +18,7 @@ from pptx.util import Inches, Pt
 
 from core.deck.errors import ExportError
 from core.deck.export.text_layer import MIN_TEXTBOX_SIZE_PX, TEXTBOX_HEIGHT_SLACK_PX, TEXTBOX_WIDTH_SLACK
+from core.deck.runtime_metrics import record_fallback
 from core.deck.rendering.browser import BrowserSession
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec
 
@@ -31,6 +32,7 @@ PPT_FONT = "Noto Sans SC"
 class ExportResult:
     path: Path
     warnings: list[str]
+    manifest: dict[str, Any]
 
 
 class DeckExporter:
@@ -49,20 +51,50 @@ class DeckExporter:
         prs.slide_height = PAGE_HEIGHT
 
         warnings: list[str] = []
+        manifest_slides: list[dict[str, Any]] = []
         for slide_spec in deck.slides:
             slide = prs.slides.add_slide(prs.slide_layouts[6])
             background_path, text_layer, warning = self._decorative_background_and_text(request_dir, slide_spec)
             if warning:
                 warnings.append(warning)
+            unavailable_fonts = sorted(
+                {
+                    str(item.get("fontFamily") or PPT_FONT)
+                    for item in text_layer
+                    if item.get("fontAvailable") is False
+                }
+            )
+            if unavailable_fonts:
+                warnings.append(f"Slide {slide_spec.index} uses unavailable fonts: {', '.join(unavailable_fonts)}.")
             _add_full_slide_image(slide, background_path)
             for item in text_layer:
                 _add_text_box(slide, item)
             _add_speaker_notes(slide, slide_spec)
+            manifest_slides.append(
+                {
+                    "index": slide_spec.index,
+                    "editable_text_boxes": len(text_layer),
+                    "degraded": not bool(text_layer),
+                    "fonts": sorted({str(item.get("fontFamily") or PPT_FONT) for item in text_layer}),
+                    "preview": f"slides/{slide_spec.index}.png",
+                }
+            )
 
         path = request_dir / "deck.pptx"
         prs.save(path)
-        _validate_pptx(path, expected_slides=len(deck.slides))
-        return ExportResult(path=path.resolve(), warnings=warnings)
+        structure = _validate_pptx(path, expected_slides=len(deck.slides), expected_text_counts=[item["editable_text_boxes"] for item in manifest_slides])
+        degraded_pages = [item["index"] for item in manifest_slides if item["degraded"]]
+        manifest = {
+            "slide_count": len(deck.slides),
+            "degraded": bool(degraded_pages),
+            "degraded_pages": degraded_pages,
+            "fonts": sorted({font for item in manifest_slides for font in item["fonts"]}),
+            "slides": manifest_slides,
+            "structure": structure,
+            "warnings": warnings,
+        }
+        (request_dir / "export-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        return ExportResult(path=path.resolve(), warnings=warnings, manifest=manifest)
 
     def _decorative_background_and_text(
         self,
@@ -76,6 +108,7 @@ class DeckExporter:
                 bg_path, text_layer = self._capture_hidden_text_background(html_path, request_dir, slide.index)
                 return bg_path, text_layer, ""
             except Exception as exc:  # pylint: disable=broad-exception-caught
+                record_fallback()
                 logger.info("mixed export capture failed for slide %s: %s", slide.index, exc)
 
         if not preview_path.exists():
@@ -113,15 +146,39 @@ def _add_full_slide_image(slide: Any, path: Path) -> None:
     slide.shapes.add_picture(str(path), 0, 0, width=PAGE_WIDTH, height=PAGE_HEIGHT)
 
 
-def _validate_pptx(path: Path, *, expected_slides: int) -> None:
+def _validate_pptx(path: Path, *, expected_slides: int, expected_text_counts: list[int]) -> dict[str, Any]:
     if not path.exists() or path.stat().st_size <= 0:
         raise ExportError("PPTX export produced an empty file.", stage="export")
     try:
-        actual = len(Presentation(str(path)).slides)
+        presentation = Presentation(str(path))
+        actual = len(presentation.slides)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         raise ExportError(f"PPTX export validation failed: {exc}", stage="export") from exc
     if actual != expected_slides:
         raise ExportError(f"PPTX slide count mismatch: expected {expected_slides}, got {actual}.", stage="export")
+    editable_counts: list[int] = []
+    used_fonts: set[str] = set()
+    for index, slide in enumerate(presentation.slides):
+        editable = 0
+        for shape in slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            if shape.left < 0 or shape.top < 0 or shape.width <= 0 or shape.height <= 0:
+                raise ExportError(f"PPTX slide {index + 1} contains invalid editable text geometry.", stage="export")
+            if shape.left + shape.width > presentation.slide_width * 1.03 or shape.top + shape.height > presentation.slide_height * 1.03:
+                raise ExportError(f"PPTX slide {index + 1} contains an editable text box outside the canvas.", stage="export")
+            if not shape.text.strip():
+                continue
+            editable += 1
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    if run.font.name:
+                        used_fonts.add(run.font.name)
+        expected = expected_text_counts[index] if index < len(expected_text_counts) else 0
+        if expected > 0 and editable < expected:
+            raise ExportError(f"PPTX slide {index + 1} lost editable text boxes: expected {expected}, got {editable}.", stage="export")
+        editable_counts.append(editable)
+    return {"editable_text_boxes": editable_counts, "fonts": sorted(used_fonts), "openable": True}
 
 
 def _add_text_box(slide: Any, item: dict[str, Any]) -> None:
@@ -146,19 +203,42 @@ def _add_text_box(slide: Any, item: dict[str, Any]) -> None:
     line_height_px = float(item.get("lineHeight") or font_size_px * 1.45)
     if font_size_px > 0:
         paragraph.line_spacing = line_height_px / font_size_px
+    if bool(item.get("isListItem")):
+        _set_bullet(paragraph)
     run = paragraph.add_run()
     run.text = text
-    run.font.name = PPT_FONT
+    font_name = _font_family_name(str(item.get("fontFamily") or PPT_FONT))
+    run.font.name = font_name
     run.font.size = Pt(round(font_size_px * 0.75 * 2) / 2)
     run.font.bold = _font_weight_is_bold(item.get("fontWeight"))
     rgb = _css_rgb_to_rgbcolor(str(item.get("color") or "rgb(20, 33, 61)"))
     if rgb:
         run.font.color.rgb = rgb
-    _set_east_asian_font(run, PPT_FONT)
+    _set_east_asian_font(run, font_name)
+
+
+def _font_family_name(value: str) -> str:
+    first = value.split(",", 1)[0].strip().strip("\"'")
+    return first if first and first.lower() not in {"sans-serif", "serif", "monospace"} else PPT_FONT
+
+
+def _set_bullet(paragraph: Any) -> None:
+    try:
+        p_pr = paragraph._p.get_or_add_pPr()  # pylint: disable=protected-access
+        for child in list(p_pr):
+            if child.tag.endswith("buNone"):
+                p_pr.remove(child)
+        bullet = OxmlElement("a:buChar")
+        bullet.set("char", "•")
+        p_pr.append(bullet)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return
 
 
 def _add_speaker_notes(slide: Any, slide_spec: SlideSpec) -> None:
     notes = slide_spec.notes.strip()
+    if slide_spec.sources:
+        notes = (notes + "\n\nSources: " + ", ".join(slide_spec.sources)).strip()
     if not notes:
         return
     try:

@@ -115,6 +115,8 @@ class SlideSpec:
     chart: dict[str, Any] | None = None
     notes: str = ""
     sources: list[str] = field(default_factory=list)
+    layout_variant: str = "balanced"
+    design: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,6 +157,8 @@ class DeckSpec:
                     chart=item.get("chart") if isinstance(item.get("chart"), dict) else None,
                     notes=str(item.get("notes") or "").strip(),
                     sources=[str(source).strip() for source in item.get("sources") or [] if str(source).strip()],
+                    layout_variant=_normalize_layout_variant(item.get("layout_variant")),
+                    design=_normalize_design(item.get("design")),
                 )
                 for index, item in enumerate(raw.get("slides") or [])
                 if isinstance(item, dict)
@@ -187,6 +191,8 @@ DECK_SPEC_SCHEMA: dict[str, Any] = {
                 "chart": {"type": ["object", "null"]},
                 "notes": {"type": "string"},
                 "sources": {"type": "array", "items": {"type": "string"}},
+                "layout_variant": {"type": "string", "enum": ["balanced", "editorial", "split"]},
+                "design": {"type": "object"},
             },
         }
     },
@@ -251,75 +257,22 @@ def normalize_slide_spec(
     notes = str(source.get("notes") or source.get("speaker_notes") or key_message or "").strip()
     sources = [str(item).strip() for item in source.get("sources") or [] if str(item).strip()]
 
-    return compact_slide_spec(
-        SlideSpec(
-            index=index,
-            role=_normalize_role(source.get("role") or outline.get("role"), index=index),
-            component=component,
-            title=title,
-            content=content,
-            chart=source.get("chart") if isinstance(source.get("chart"), dict) else None,
-            notes=notes,
-            sources=sources,
-        )
+    return SlideSpec(
+        index=index,
+        role=_normalize_role(source.get("role") or outline.get("role"), index=index),
+        component=component,
+        title=title,
+        content=content,
+        chart=source.get("chart") if isinstance(source.get("chart"), dict) else None,
+        notes=notes,
+        sources=sources,
+        layout_variant=_normalize_layout_variant(source.get("layout_variant")),
+        design=_normalize_design(source.get("design")),
     )
 
 
 def compact_slide_spec(slide: SlideSpec) -> SlideSpec:
-    """Apply deterministic density limits without inventing new content."""
-
-    limits = COMPONENT_LIMITS.get(slide.component, {})
-    slide.title = _soft_limit(slide.title, limits.get("title_chars", 52))
-    content = dict(slide.content)
-
-    if "subtitle" in content:
-        content["subtitle"] = _soft_limit(str(content.get("subtitle") or ""), limits.get("subtitle_chars", 88))
-    if "body" in content:
-        content["body"] = _soft_limit(str(content.get("body") or ""), limits.get("body_chars", 120))
-    if "takeaway" in content:
-        content["takeaway"] = _soft_limit(str(content.get("takeaway") or ""), limits.get("takeaway_chars", 96))
-    if "quote" in content:
-        content["quote"] = _soft_limit(str(content.get("quote") or ""), limits.get("quote_chars", 120))
-    if "speaker" in content:
-        content["speaker"] = _soft_limit(str(content.get("speaker") or ""), limits.get("speaker_chars", 28))
-
-    for key in ("bullets", "items", "steps"):
-        if isinstance(content.get(key), list):
-            item_limit = limits.get("bullet_chars") or limits.get("item_chars") or 48
-            count_limit = limits.get("bullets") or limits.get("items") or limits.get("steps") or 5
-            content[key] = [_soft_limit(str(item), item_limit) for item in content[key] if str(item).strip()][:count_limit]
-
-    if isinstance(content.get("cards"), list):
-        cards = []
-        for card in content["cards"][: limits.get("items", 4)]:
-            if not isinstance(card, dict):
-                continue
-            cards.append(
-                {
-                    "value": _soft_limit(str(card.get("value") or ""), limits.get("value_chars", 10)),
-                    "label": _soft_limit(str(card.get("label") or ""), limits.get("label_chars", 20)),
-                    "caption": _soft_limit(str(card.get("caption") or ""), 36),
-                }
-            )
-        content["cards"] = cards
-
-    if isinstance(content.get("left"), list):
-        content["left"] = [_soft_limit(str(item), limits.get("item_chars", 54)) for item in content["left"][: limits.get("items", 4)]]
-    if isinstance(content.get("right"), list):
-        content["right"] = [_soft_limit(str(item), limits.get("item_chars", 54)) for item in content["right"][: limits.get("items", 4)]]
-
-    if isinstance(content.get("rows"), list):
-        max_rows = limits.get("rows", 5)
-        max_cols = limits.get("cols", 4)
-        rows = []
-        for row in content["rows"][:max_rows]:
-            if isinstance(row, dict):
-                rows.append({key: _soft_limit(str(value), limits.get("cell_chars", 24)) for key, value in list(row.items())[:max_cols]})
-            elif isinstance(row, list):
-                rows.append([_soft_limit(str(value), limits.get("cell_chars", 24)) for value in row[:max_cols]])
-        content["rows"] = rows
-
-    slide.content = content
+    """Compatibility no-op: density is validated and repaired without deleting text."""
     return slide
 
 
@@ -359,7 +312,7 @@ def _content_from_legacy(component: str, title: str, key_message: str, bullets: 
     if component == "agenda":
         return {"items": bullets or [title]}
     if component == "kpi-cards":
-        return {"cards": [{"value": str(index), "label": title, "caption": key_message}]}
+        return {"cards": [{"value": "", "label": title, "caption": key_message}]}
     if component == "steps":
         return {"steps": bullets or [key_message or title]}
     if component == "timeline":
@@ -378,7 +331,7 @@ def _content_from_legacy(component: str, title: str, key_message: str, bullets: 
     if component == "data-table":
         return {"columns": ["Item", "Signal"], "rows": [[title, key_message or ""]]}
     if component == "quadrant":
-        return {"items": bullets[:4] or [key_message or title]}
+        return {"items": bullets or [key_message or title]}
     return {"body": key_message, "bullets": bullets}
 
 
@@ -438,6 +391,28 @@ def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _normalize_layout_variant(value: Any) -> str:
+    variant = str(value or "balanced").strip().lower()
+    return variant if variant in {"balanced", "editorial", "split"} else "balanced"
+
+
+def _normalize_design(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    allowed = {
+        "emphasis": {"primary", "contrast", "left", "right", "center", "data"},
+        "density": {"airy", "balanced", "compact"},
+        "visual_hierarchy": {"headline", "evidence", "comparison", "sequence"},
+        "accent_slot": {"title", "panel", "metric", "marker"},
+    }
+    normalized: dict[str, Any] = {}
+    for key, values in allowed.items():
+        item = str(value.get(key) or "").strip().lower()
+        if item in values:
+            normalized[key] = item
+    return normalized
 
 
 def _split_comparison_items(items: list[str]) -> tuple[list[str], list[str]]:

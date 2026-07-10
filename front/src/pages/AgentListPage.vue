@@ -5,6 +5,7 @@ import { Bot, Plus, Save, Trash2, X } from '@lucide/vue'
 import EmptyState from '@/components/EmptyState.vue'
 import NodeBindingList from '@/components/NodeBindingList.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import { modelNameSupportsImageInput } from '@/pptAgentWorkflow'
 import type { AgentConfig, AgentConfigNodeBinding, AgentConfigPayload, AgentDefinition, ModelConfig, Status } from '@/types'
 
 const props = defineProps<{
@@ -115,6 +116,19 @@ function closeEditor() {
 
 function nodeMeta(nodeKey: string) {
   return requiredNodes.value.find((node) => node.key === nodeKey)
+}
+
+function bindingVisionWarning(nodeKey: string, modelConfigId: string) {
+  if (!['review', 'vlm_review', 'review_vlm'].includes(nodeKey) || !modelConfigId) {
+    return ''
+  }
+  const model = props.models.find((item) => item.id === Number(modelConfigId))
+  if (!model) return ''
+  const warning = '该模型未声明图片输入能力，视觉审查会明确进入 needs_review。'
+  const explicit = model.provider_options.supports_image_input ?? model.provider_options.supports_vision
+  if (explicit === true) return ''
+  if (explicit === false) return warning
+  return modelNameSupportsImageInput(model.model_name) ? '' : warning
 }
 
 function submit() {
@@ -267,6 +281,9 @@ function submit() {
                       {{ model.name }} / {{ model.provider }} / {{ model.model_name }}
                     </option>
                   </select>
+                  <small v-if="bindingVisionWarning(binding.node_key, binding.model_config_id)" class="form-error">
+                    {{ bindingVisionWarning(binding.node_key, binding.model_config_id) }}
+                  </small>
                 </label>
                 <div class="form-grid">
                   <label>

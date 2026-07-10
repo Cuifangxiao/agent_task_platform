@@ -10,8 +10,10 @@ import type {
   ParsedSseEvent,
   PptConversationDetail,
   PptConversationSummary,
+  PptDeckJob,
   PptGeneratePayload,
   PptResumePayload,
+  PptJobActionPayload,
   Provider,
   RequestLogEntry,
   SessionState,
@@ -237,6 +239,52 @@ export function createApiClient(options: ApiClientOptions) {
     await consumeEventStream(response.body, onEvent)
   }
 
+  async function createPptJob(body: PptGeneratePayload): Promise<PptDeckJob> {
+    const token = options.getSession()?.access_token
+    if (!token) {
+      options.onUnauthorized()
+      throw new Error('请先登录再生成 PPT。')
+    }
+    const response = await fetch(`${API_BASE}/ppt-agent/jobs`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      body: toPptGenerateFormData(body),
+    })
+    const payload = await readPayload(response)
+    options.onLog({ method: 'POST', path: '/ppt-agent/jobs', status: response.status })
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, '创建 PPT 任务失败。'))
+    }
+    return payload as PptDeckJob
+  }
+
+  async function subscribePptJob(
+    jobId: string,
+    onEvent: (event: ParsedSseEvent) => void,
+    signal: AbortSignal,
+    lastEventId = 0,
+  ) {
+    const token = options.getSession()?.access_token
+    if (!token) {
+      options.onUnauthorized()
+      throw new Error('登录状态已失效，请重新登录。')
+    }
+    const response = await fetch(`${API_BASE}/ppt-agent/jobs/${encodeURIComponent(jobId)}/events`, {
+      headers: {
+        Accept: 'text/event-stream',
+        Authorization: `Bearer ${token}`,
+        ...(lastEventId > 0 ? { 'Last-Event-ID': String(lastEventId) } : {}),
+      },
+      signal,
+    })
+    if (!response.ok || !response.body) {
+      const payload = await readPayload(response)
+      throw new Error(getErrorMessage(payload, '订阅 PPT 任务失败。'))
+    }
+    options.onLog({ method: 'GET', path: `/ppt-agent/jobs/${jobId}/events`, status: 'stream' })
+    await consumeEventStream(response.body, onEvent)
+  }
+
   return {
     login: (username: string, password: string) =>
       request<LoginResponse>('/login', {
@@ -268,6 +316,15 @@ export function createApiClient(options: ApiClientOptions) {
       request<{ message: string }>(`/agent-configs/${id}`, { method: 'DELETE', auth: true }),
     pptConversations: () => request<PptConversationSummary[]>('/ppt-agent/conversations', { auth: true }),
     pptConversation: (id: number) => request<PptConversationDetail>(`/ppt-agent/conversations/${id}`, { auth: true }),
+    createPptJob,
+    pptJob: (jobId: string) => request<PptDeckJob>(`/ppt-agent/jobs/${encodeURIComponent(jobId)}`, { auth: true }),
+    subscribePptJob,
+    pptJobAction: (jobId: string, payload: PptJobActionPayload) =>
+      request<{ job: PptDeckJob; duplicate: boolean }>(`/ppt-agent/jobs/${encodeURIComponent(jobId)}/actions`, {
+        method: 'POST', auth: true, body: payload,
+      }),
+    cancelPptJob: (jobId: string) =>
+      request<PptDeckJob>(`/ppt-agent/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST', auth: true }),
     downloadPptArtifact: (requestId: string) =>
       download(`/ppt-agent/artifacts/${encodeURIComponent(requestId)}`, { auth: true }),
     streamPpt,
@@ -321,6 +378,7 @@ function toPptGenerateFormData(body: PptGeneratePayload) {
     formData.append('agent_config_id', String(body.agent_config_id))
   }
   formData.append('description', body.description)
+  formData.append('mode', body.mode ?? 'step_by_step')
   for (const file of body.source_files ?? []) {
     formData.append('source_files', file)
   }
@@ -365,11 +423,18 @@ async function consumeEventStream(stream: ReadableStream<Uint8Array>, onEvent: (
 function parseEventBlock(block: string): ParsedSseEvent | null {
   const lines = block.split('\n')
   let event = 'message'
+  let id: number | undefined
   const data: string[] = []
 
   for (const line of lines) {
     if (line.startsWith('event:')) {
       event = line.slice(6).trim() || event
+    }
+    if (line.startsWith('id:')) {
+      const parsed = Number(line.slice(3).trim())
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        id = parsed
+      }
     }
     if (line.startsWith('data:')) {
       data.push(line.slice(5).trimStart())
@@ -382,9 +447,9 @@ function parseEventBlock(block: string): ParsedSseEvent | null {
 
   const raw = data.join('\n')
   try {
-    return { event, data: JSON.parse(raw) }
+    return { event, data: JSON.parse(raw), id }
   } catch {
-    return { event, data: raw }
+    return { event, data: raw, id }
   }
 }
 

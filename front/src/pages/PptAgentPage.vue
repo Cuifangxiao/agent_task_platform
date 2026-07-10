@@ -15,14 +15,17 @@ import {
 } from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
+import { assetCacheKey, eventSequenceDecision, interactionPhase } from '@/pptAgentWorkflow'
 import type {
   AgentConfig,
   ParsedSseEvent,
   PptConversationDetail,
   PptConversationSummary,
+  PptDeckJob,
   PptGeneratePayload,
   PptResumePayload,
   PptStreamChunk,
+  PptJobActionPayload,
 } from '@/types'
 
 const props = defineProps<{
@@ -32,6 +35,11 @@ const props = defineProps<{
   downloadArtifact?: (requestId: string) => Promise<{ blob: Blob; filename: string }>
   streamPpt: (payload: PptGeneratePayload, onEvent: (event: ParsedSseEvent) => void, signal: AbortSignal) => Promise<void>
   resumePpt: (payload: PptResumePayload, onEvent: (event: ParsedSseEvent) => void, signal: AbortSignal) => Promise<void>
+  createJob: (payload: PptGeneratePayload) => Promise<PptDeckJob>
+  getJob: (jobId: string) => Promise<PptDeckJob>
+  subscribeJob: (jobId: string, onEvent: (event: ParsedSseEvent) => void, signal: AbortSignal, lastEventId?: number) => Promise<void>
+  submitJobAction: (jobId: string, payload: PptJobActionPayload) => Promise<{ job: PptDeckJob; duplicate: boolean }>
+  cancelJob: (jobId: string) => Promise<PptDeckJob>
 }>()
 
 interface ProgressStep {
@@ -102,7 +110,7 @@ interface StatusMessage {
   title: string
   text: string
   requestId?: string
-  state: 'running' | 'waiting' | 'done' | 'error'
+  state: 'running' | 'waiting' | 'done' | 'error' | 'cancelled'
   steps: ProgressStep[]
   slides: SlideProgress[]
 }
@@ -138,6 +146,9 @@ interface ResultMessage {
   text: string
   requestId: string
   fileName: string
+  warnings: string[]
+  degraded: boolean
+  qualityStatus: string
 }
 
 type ChatMessage = UserMessage | StatusMessage | OutlineMessage | StyleMessage | ResultMessage
@@ -163,12 +174,12 @@ const pipelineStages = [
   { key: 'outline_review', label: '确认大纲', description: '等待你确认或调整大纲' },
   { key: 'style', label: '准备风格', description: '生成视觉方向和封面样张' },
   { key: 'style_review', label: '选择风格', description: '等待选择视觉方向' },
-  { key: 'slides', label: '展开页面', description: '把大纲扩展成逐页内容' },
-  { key: 'design_slides', label: '生成预览', description: '渲染 HTML 和 PNG 预览图' },
+  { key: 'writer', label: '撰写页面', description: '把大纲扩展成逐页结构化内容' },
+  { key: 'designer', label: '设计页面', description: '选择版式并渲染 HTML 和 PNG 预览' },
   { key: 'validate', label: '质量校验', description: '检查版式、密度和结构' },
   { key: 'repair', label: '自动修复', description: '修复校验发现的问题' },
+  { key: 'review_vlm', label: '视觉复核', description: '检查视觉质量和完整性' },
   { key: 'coherence', label: '统一表达', description: '检查跨页连贯性' },
-  { key: 'review', label: '内容复核', description: '检查逻辑和完整性' },
   { key: 'export', label: '导出 PPT', description: '生成可下载的 PPT 文件' },
   { key: 'artifact', label: '完成结果', description: '准备下载文件' },
 ] as const
@@ -189,17 +200,24 @@ const messages = ref<ChatMessage[]>([])
 const previewObjectUrls = reactive<Record<string, string>>({})
 const previewLightbox = ref<PreviewLightbox | null>(null)
 const running = ref(false)
+const currentJobId = ref('')
+const lastEventSequence = ref(0)
+const generationMode = ref<'quick' | 'step_by_step'>('step_by_step')
+const uploadState = ref('')
+const styleFeedback = reactive<Record<number, string>>({})
+const slideFeedback = reactive<Record<number, string>>({})
 const selectedConfigId = ref('')
 const threadRef = ref<HTMLElement | null>(null)
 
 let messageSeed = 0
 const previewFailures = new Set<string>()
 const previewLoads = new Set<string>()
+const seenEventSequences = new Set<number>()
 let stepSeed = 0
 
 const defaultConfig = computed(() => props.configs.find((item) => item.is_default) ?? props.configs[0] ?? null)
 const selectedConfig = computed(() => props.configs.find((item) => String(item.id) === selectedConfigId.value) ?? null)
-const canSubmit = computed(() => Boolean(selectedConfig.value) && composer.text.trim().length > 0 && !running.value)
+const canSubmit = computed(() => Boolean(selectedConfig.value) && composer.text.trim().length > 0 && !running.value && messages.value.length === 0)
 const currentConversationSummary = computed(() =>
   conversationList.value.find((item) => item.id === currentConversationId.value) ?? null,
 )
@@ -219,6 +237,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  abortController.value?.abort()
   Object.values(previewObjectUrls).forEach((url) => URL.revokeObjectURL(url))
 })
 
@@ -248,6 +267,9 @@ function nextStepId() {
 function resetDraftConversation(keepComposer = true) {
   currentConversationId.value = null
   currentStatusMessageId.value = null
+  currentJobId.value = ''
+  lastEventSequence.value = 0
+  seenEventSequences.clear()
   messages.value = []
   messageSeed = 0
   stepSeed = 0
@@ -291,7 +313,7 @@ async function refreshHistory(options: { selectLatest?: boolean; selectConversat
 }
 
 async function openConversation(id: number) {
-  if (running.value) {
+  if (running.value && currentConversationId.value && currentConversationId.value !== id) {
     return
   }
 
@@ -302,10 +324,23 @@ async function openConversation(id: number) {
   messageSeed = maxMessageId(messages.value)
   stepSeed = maxStepId(messages.value)
   currentStatusMessageId.value = null
-  running.value = false
+  currentJobId.value = detail.job?.job_id ?? ''
+  lastEventSequence.value = detail.job?.last_event_sequence ?? 0
+  seenEventSequences.clear()
+  const latestStatus = [...messages.value].reverse().find((item): item is StatusMessage => item.kind === 'status')
+  currentStatusMessageId.value = latestStatus?.id ?? null
+  running.value = isActiveJob(detail.job)
   error.value = ''
   clearSelectedFile()
   await scrollThreadToBottom(false)
+  if (detail.job && isActiveJob(detail.job)) {
+    void followJob(detail.job.job_id, detail.job.last_event_sequence)
+  }
+}
+
+function isActiveJob(job: PptDeckJob | undefined) {
+  if (!job) return false
+  return ['initial', 'pages'].includes(interactionPhase(job.status))
 }
 
 function normalizeStoredMessage(item: Record<string, unknown>): ChatMessage {
@@ -359,6 +394,9 @@ function normalizeStoredMessage(item: Record<string, unknown>): ChatMessage {
       text: String(item.text ?? ''),
       requestId: String(item.requestId ?? ''),
       fileName: String(item.fileName ?? ''),
+      warnings: normalizeStringList(item.warnings),
+      degraded: Boolean(item.degraded),
+      qualityStatus: String(item.qualityStatus ?? ''),
     }
   }
 
@@ -388,6 +426,8 @@ function normalizeStatusState(value: unknown): StatusMessage['state'] {
     case 'waiting':
     case 'done':
     case 'error':
+      return value
+    case 'cancelled':
       return value
     default:
       return 'waiting'
@@ -512,11 +552,20 @@ async function startGeneration() {
     return
   }
 
+  if (messages.value.some((item) => item.kind === 'result')) {
+    error.value = '当前整套修改需先点“新建对话”；已有 Deck 请在具体页面使用“重做此页”。'
+    return
+  }
   if (currentConversationId.value || messages.value.length > 0) {
     resetDraftConversation(true)
   }
 
   const selectedFiles = [...composer.files]
+  const fileError = validateSourceFiles(selectedFiles)
+  if (fileError) {
+    error.value = fileError
+    return
+  }
   const fileNames = selectedFiles.map((file) => file.name)
 
   pushMessage({
@@ -536,29 +585,92 @@ async function startGeneration() {
     agent_config_id: config.id,
     description,
     source_files: selectedFiles,
+    mode: generationMode.value,
   }
 
   composer.text = ''
   clearSelectedFile()
   running.value = true
-  const controller = new AbortController()
-  abortController.value = controller
-
+  const uploadStartedAt = performance.now()
   try {
-    await props.streamPpt(payload, handleEvent, controller.signal)
+    uploadState.value = selectedFiles.length ? '正在上传并创建后台任务…' : '正在创建后台任务…'
+    const job = await props.createJob(payload)
+    currentJobId.value = job.job_id
+    currentConversationId.value = job.conversation_id
+    lastEventSequence.value = 0
+    seenEventSequences.clear()
+    uploadState.value = selectedFiles.length ? '附件已上传，等待解析。' : '后台任务已创建。'
+    if (currentStatusMessageId.value) {
+      const uploadDuration = (performance.now() - uploadStartedAt) / 1000
+      updateStatusMessage(currentStatusMessageId.value, (status) => {
+        status.steps.push({
+          id: nextStepId(),
+          label: selectedFiles.length ? '附件上传' : '任务创建',
+          message: `${selectedFiles.length ? '附件上传完成' : '后台任务创建完成'} · ${uploadDuration.toFixed(1)}s`,
+          stage: 'brief',
+          tone: 'done',
+        })
+      })
+    }
+    await followJob(job.job_id, 0)
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      markCurrentRunAsStopped('已停止当前生成。')
-    } else {
+    if (!(err instanceof DOMException && err.name === 'AbortError')) {
       const message = err instanceof Error ? err.message : String(err)
       error.value = message
       markCurrentRunAsFailed(message)
     }
   } finally {
-    running.value = false
-    abortController.value = null
+    uploadState.value = ''
     await syncCurrentConversationFromServer()
   }
+}
+
+async function followJob(jobId: string, afterSequence: number) {
+  if (!jobId || abortController.value) {
+    return
+  }
+  const controller = new AbortController()
+  abortController.value = controller
+  running.value = true
+  try {
+    await props.subscribeJob(jobId, handleEvent, controller.signal, afterSequence)
+  } catch (err) {
+    if (!(err instanceof DOMException && err.name === 'AbortError')) {
+      const job = await props.getJob(jobId).catch(() => null)
+      if (job && isActiveJob(job)) {
+        error.value = '进度连接已断开，后台任务仍在运行，正在自动恢复。'
+        window.setTimeout(() => void followJob(jobId, lastEventSequence.value), 750)
+      } else if (job?.status === 'failed') {
+        markCurrentRunAsFailed(job.error_summary || '生成失败。')
+      }
+    }
+  } finally {
+    if (abortController.value === controller) {
+      abortController.value = null
+    }
+    const job = await props.getJob(jobId).catch(() => null)
+    running.value = Boolean(job && isActiveJob(job))
+    if (job?.status === 'cancelled') {
+      markCurrentRunAsStopped('任务已取消。')
+    }
+  }
+}
+
+function validateSourceFiles(files: File[]) {
+  const allowed = /\.(pdf|txt|md|markdown|csv|json|ya?ml|docx)$/i
+  const maxSingle = 20 * 1024 * 1024
+  const maxTotal = 100 * 1024 * 1024
+  let total = 0
+  for (const file of files) {
+    if (!allowed.test(file.name)) {
+      return `不支持 ${file.name} 的格式。请上传 PDF、DOCX、Markdown、TXT、CSV、JSON 或 YAML。`
+    }
+    if (file.size > maxSingle) {
+      return `${file.name} 超过 20 MB 单文件限制。`
+    }
+    total += file.size
+  }
+  return total > maxTotal ? '附件总大小不能超过 100 MB。' : ''
 }
 
 function pushMessage(message: ChatMessage) {
@@ -607,7 +719,7 @@ function slideProgressFromChunk(data: PptStreamChunk): SlideProgressUpdate | nul
   if (!trackedEvents.has(data.event_type ?? '')) {
     return null
   }
-  if (data.event_type === 'stage_progress' && data.stage !== 'slides') {
+  if (data.event_type === 'stage_progress' && !['slides', 'writer', 'designer', 'repair'].includes(data.stage ?? '')) {
     return null
   }
   if (!data.payload || typeof data.payload !== 'object') {
@@ -756,8 +868,8 @@ function markCurrentRunAsStopped(message: string) {
     return
   }
   updateStatusMessage(statusId, (status) => {
-    status.state = 'error'
-    status.title = '已停止'
+    status.state = 'cancelled'
+    status.title = '已取消'
     status.text = message
     status.steps.push({
       id: nextStepId(),
@@ -821,30 +933,44 @@ async function confirmOutline(message: OutlineMessage) {
   )
   running.value = true
 
-  const controller = new AbortController()
-  abortController.value = controller
-
   try {
-    await props.resumePpt(
-      {
-        request_id: message.requestId,
-        outline_markdown: outlineMarkdown,
+    if (!currentJobId.value) {
+      throw new Error('缺少可恢复的 job_id，请刷新对话后重试。')
+    }
+    const after = lastEventSequence.value
+    await props.submitJobAction(currentJobId.value, {
         action: 'approve_outline',
-      },
-      handleEvent,
-      controller.signal,
-    )
+        outline_markdown: outlineMarkdown,
+    })
+    await followJob(currentJobId.value, after)
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      markCurrentRunAsStopped('已停止当前生成。')
-    } else {
+    if (!(err instanceof DOMException && err.name === 'AbortError')) {
       const failure = err instanceof Error ? err.message : String(err)
       error.value = failure
       markCurrentRunAsFailed(failure)
     }
   } finally {
-    running.value = false
-    abortController.value = null
+    await syncCurrentConversationFromServer()
+  }
+}
+
+async function regenerateOutline(message: OutlineMessage) {
+  if (!currentJobId.value) {
+    error.value = '缺少 job_id，请刷新对话后重试。'
+    return
+  }
+  updateOutlineMessage(message.id, (draft) => { draft.awaitingConfirm = false })
+  currentStatusMessageId.value = createStatusMessage('重新生成大纲', '我正在重新规划叙事结构和页面重点。')
+  const after = lastEventSequence.value
+  running.value = true
+  try {
+    await props.submitJobAction(currentJobId.value, { action: 'regenerate_outline' })
+    await followJob(currentJobId.value, after)
+  } catch (err) {
+    const failure = err instanceof Error ? err.message : String(err)
+    error.value = failure
+    markCurrentRunAsFailed(failure)
+  } finally {
     await syncCurrentConversationFromServer()
   }
 }
@@ -859,7 +985,7 @@ async function chooseStyle(message: StyleMessage, option: StyleOption) {
     id: nextMessageId(),
     role: 'user',
     kind: 'user',
-    text: `选择风格：${option.name}`,
+    text: `选择风格：${option.name}${styleFeedback[message.id]?.trim() ? `；调整意见：${styleFeedback[message.id].trim()}` : ''}`,
   })
 
   currentStatusMessageId.value = createStatusMessage(
@@ -868,36 +994,40 @@ async function chooseStyle(message: StyleMessage, option: StyleOption) {
   )
   running.value = true
 
-  const controller = new AbortController()
-  abortController.value = controller
-
   try {
-    await props.resumePpt(
-      {
-        request_id: message.requestId,
+    if (!currentJobId.value) {
+      throw new Error('缺少可恢复的 job_id，请刷新对话后重试。')
+    }
+    const after = lastEventSequence.value
+    await props.submitJobAction(currentJobId.value, {
         action: 'choose_style',
-        payload: { style_id: option.styleId },
-      },
-      handleEvent,
-      controller.signal,
-    )
+        payload: { style_id: option.styleId, feedback: styleFeedback[message.id]?.trim() ?? '' },
+    })
+    await followJob(currentJobId.value, after)
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      markCurrentRunAsStopped('已停止当前生成。')
-    } else {
+    if (!(err instanceof DOMException && err.name === 'AbortError')) {
       const failure = err instanceof Error ? err.message : String(err)
       error.value = failure
       markCurrentRunAsFailed(failure)
     }
   } finally {
-    running.value = false
-    abortController.value = null
     await syncCurrentConversationFromServer()
   }
 }
 
-function stop() {
-  abortController.value?.abort()
+async function stop() {
+  if (!currentJobId.value) {
+    abortController.value?.abort()
+    return
+  }
+  try {
+    await props.cancelJob(currentJobId.value)
+    abortController.value?.abort()
+    markCurrentRunAsStopped('任务已取消。')
+    running.value = false
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
 }
 
 function onSourceFileChange(event: Event) {
@@ -920,6 +1050,21 @@ function clearSelectedFile() {
 
 function handleEvent(event: ParsedSseEvent) {
   const data = normalizeChunk(event.data)
+  const sequence = Number(event.id ?? data.sequence ?? 0)
+  if (sequence > 0) {
+    const decision = eventSequenceDecision(lastEventSequence.value, seenEventSequences, sequence)
+    if (!decision.accept) {
+      return
+    }
+    seenEventSequences.add(sequence)
+    lastEventSequence.value = decision.last
+  }
+  if (data.job_id) {
+    currentJobId.value = data.job_id
+  }
+  if (data.event_type === 'fact_sheet_ready') {
+    uploadState.value = '附件解析完成，事实表已建立。'
+  }
   const statusId = currentStatusMessageId.value
   if (!statusId) {
     return
@@ -942,12 +1087,20 @@ function handleEvent(event: ParsedSseEvent) {
     if (slideUpdate) {
       upsertSlideProgress(status, slideUpdate)
     }
+    for (const warningUpdate of qualityWarningUpdates(data)) {
+      upsertSlideProgress(status, warningUpdate)
+    }
     status.steps.push({
       id: nextStepId(),
-      label: stageLabel(data.stage || data.event_type || 'progress'),
-      message: data.message || defaultStepMessage(data),
+      label: eventStepLabel(data),
+      message: displayStepMessage(data),
       stage: normalizeProgressStage(data.stage || data.event_type || 'progress'),
-      tone: data.error ? 'error' : data.done ? 'done' : 'normal',
+      tone:
+        data.stage_status === 'error' || data.error
+          ? 'error'
+          : data.stage_status === 'done' || data.done
+            ? 'done'
+            : 'normal',
     })
     const snapshot = describeChunk(data)
     if (snapshot) {
@@ -974,6 +1127,60 @@ function handleEvent(event: ParsedSseEvent) {
   }
   if (data.error) {
     error.value = data.error
+  }
+}
+
+function qualityWarningUpdates(data: PptStreamChunk): SlideProgressUpdate[] {
+  if (data.event_type !== 'validation_report' || !data.payload || typeof data.payload !== 'object') {
+    return []
+  }
+  const issues = (data.payload as Record<string, unknown>).issues
+  if (!Array.isArray(issues)) return []
+  const byPage = new Map<number, { warnings: string[]; mustFix: boolean }>()
+  for (const raw of issues) {
+    if (!raw || typeof raw !== 'object') continue
+    const issue = raw as Record<string, unknown>
+    const page = Number(issue.page)
+    const description = String(issue.description ?? '').trim()
+    if (!Number.isFinite(page) || page <= 0 || !description) continue
+    const current = byPage.get(page) ?? { warnings: [], mustFix: false }
+    current.warnings.push(description)
+    current.mustFix ||= issue.severity === 'must_fix'
+    byPage.set(page, current)
+  }
+  return [...byPage.entries()].map(([index, value]) => ({
+    index,
+    warnings: [...new Set(value.warnings)],
+    status: value.mustFix ? 'error' : 'warning',
+  }))
+}
+
+async function regenerateSlide(slide: SlideProgress) {
+  if (!currentJobId.value) {
+    error.value = '缺少 job_id，请刷新对话后重试。'
+    return
+  }
+  const feedback = slideFeedback[slide.index]?.trim() ?? ''
+  if (!feedback) {
+    error.value = `请先填写第 ${slide.index} 页的修改意见。`
+    return
+  }
+  error.value = ''
+  currentStatusMessageId.value = createStatusMessage('重做单页', `正在按反馈重做第 ${slide.index} 页。`)
+  const after = lastEventSequence.value
+  running.value = true
+  try {
+    await props.submitJobAction(currentJobId.value, {
+      action: 'regenerate_slide',
+      payload: { index: slide.index, feedback },
+    })
+    await followJob(currentJobId.value, after)
+  } catch (err) {
+    const failure = err instanceof Error ? err.message : String(err)
+    error.value = failure
+    markCurrentRunAsFailed(failure)
+  } finally {
+    await syncCurrentConversationFromServer()
   }
 }
 
@@ -1103,7 +1310,35 @@ function upsertResultMessage(data: PptStreamChunk) {
     text: '整套内容已经生成完成，你可以直接下载这份 PPT。',
     requestId,
     fileName: extractArtifactFileName(data) || `deck-${requestId}.pptx`,
+    warnings: normalizeArtifactWarnings(data),
+    degraded: artifactBoolean(data, 'degraded'),
+    qualityStatus: artifactString(data, 'quality_status'),
   })
+}
+
+function normalizeArtifactWarnings(data: PptStreamChunk) {
+  if (!data.payload || typeof data.payload !== 'object') return []
+  const payload = data.payload as Record<string, unknown>
+  const warnings = normalizeStringList(payload.warnings)
+  if (Array.isArray(payload.issues)) {
+    for (const raw of payload.issues) {
+      if (!raw || typeof raw !== 'object') continue
+      const issue = raw as Record<string, unknown>
+      const description = String(issue.description ?? '').trim()
+      if (!description) continue
+      const page = Number(issue.page)
+      warnings.push(`${Number.isFinite(page) && page > 0 ? `第 ${page} 页：` : '全局：'}${description}`)
+    }
+  }
+  return [...new Set(warnings)]
+}
+
+function artifactBoolean(data: PptStreamChunk, key: string) {
+  return Boolean(data.payload && typeof data.payload === 'object' && (data.payload as Record<string, unknown>)[key])
+}
+
+function artifactString(data: PptStreamChunk, key: string) {
+  return data.payload && typeof data.payload === 'object' ? String((data.payload as Record<string, unknown>)[key] ?? '') : ''
 }
 
 function extractOutlineMarkdown(data: PptStreamChunk) {
@@ -1217,12 +1452,14 @@ function describeChunk(data: PptStreamChunk) {
         state: data.done ? ('waiting' as const) : ('running' as const),
       }
     case 'slides':
+    case 'writer':
       return {
         title: '正在展开页面',
         text: '我在把大纲扩展成每一页的具体内容。',
         state: 'running' as const,
       }
     case 'design_slides':
+    case 'designer':
       return {
         title: '正在生成页面预览',
         text: '我在把结构化内容渲染成 HTML 与 PNG 预览。',
@@ -1241,6 +1478,7 @@ function describeChunk(data: PptStreamChunk) {
         state: 'running' as const,
       }
     case 'review':
+    case 'review_vlm':
       return {
         title: '正在检查内容',
         text: '我在检查逻辑、重复信息和内容完整性。',
@@ -1265,6 +1503,33 @@ function defaultStepMessage(data: PptStreamChunk) {
   return '已收到新的生成事件。'
 }
 
+function displayStepMessage(data: PptStreamChunk) {
+  const base = data.message || defaultStepMessage(data)
+  if (!data.payload || typeof data.payload !== 'object') return base
+  const metrics = (data.payload as Record<string, unknown>).metrics
+  if (!metrics || typeof metrics !== 'object') return base
+  const values = metrics as Record<string, unknown>
+  const duration = Number(values.duration_ms)
+  const details: string[] = []
+  if (Number.isFinite(duration) && duration >= 0) details.push(`${(duration / 1000).toFixed(1)}s`)
+  const model = [values.provider, values.model].filter((item) => typeof item === 'string' && item).join('/')
+  if (model) details.push(model)
+  const tokens = Number(values.token_usage)
+  if (Number.isFinite(tokens) && tokens > 0) details.push(`${tokens} tokens`)
+  const retries = Number(values.retry_count)
+  if (Number.isFinite(retries) && retries > 0) details.push(`重试 ${retries}`)
+  const fallbacks = Number(values.fallback_count)
+  if (Number.isFinite(fallbacks) && fallbacks > 0) details.push(`降级 ${fallbacks}`)
+  return details.length ? `${base} · ${details.join(' · ')}` : base
+}
+
+function eventStepLabel(data: PptStreamChunk) {
+  if (data.payload && typeof data.payload === 'object' && (data.payload as Record<string, unknown>).phase === 'parse') {
+    return '附件解析'
+  }
+  return stageLabel(data.stage || data.event_type || 'progress')
+}
+
 function stageLabel(stage: string) {
   switch (stage) {
     case 'brief':
@@ -1278,14 +1543,17 @@ function stageLabel(stage: string) {
     case 'style_review':
       return '风格选择'
     case 'slides':
+    case 'writer':
       return '页面展开'
     case 'design_slides':
+    case 'designer':
       return '页面预览'
     case 'validate':
       return '质量校验'
     case 'coherence':
       return '连贯检查'
     case 'review':
+    case 'review_vlm':
       return '质量检查'
     case 'render':
     case 'export':
@@ -1398,15 +1666,21 @@ function normalizeProgressStage(value: string | undefined) {
     case 'outline_review':
     case 'style':
     case 'style_review':
-    case 'slides':
-    case 'design_slides':
+    case 'writer':
+    case 'designer':
     case 'validate':
     case 'repair':
     case 'coherence':
-    case 'review':
+    case 'review_vlm':
     case 'export':
     case 'artifact':
       return value
+    case 'slides':
+      return 'writer'
+    case 'design_slides':
+      return 'designer'
+    case 'review':
+      return 'review_vlm'
     case 'render':
     case 'export_progress':
       return 'export'
@@ -1469,6 +1743,8 @@ function statusStateLabel(state: StatusMessage['state']) {
       return '已完成'
     case 'error':
       return '异常'
+    case 'cancelled':
+      return '已取消'
     default:
       return ''
   }
@@ -1529,7 +1805,7 @@ function previewSrc(requestId: string | undefined, thumbB64: string, pngPath: st
     return normalizedPngPath
   }
 
-  const cacheKey = `${requestId ?? ''}:${normalizedPngPath}`
+  const cacheKey = assetCacheKey(requestId, normalizedPngPath, versionFromAssetPath(normalizedPngPath))
   if (previewObjectUrls[cacheKey]) {
     return previewObjectUrls[cacheKey]
   }
@@ -1539,6 +1815,11 @@ function previewSrc(requestId: string | undefined, thumbB64: string, pngPath: st
   }
 
   return thumbUrl
+}
+
+function versionFromAssetPath(path: string) {
+  const match = path.match(/_v(\d+)\.[^.]+$/i)
+  return match ? Number(match[1]) : 1
 }
 
 async function loadPreviewAsset(cacheKey: string, requestId: string, relativePath: string) {
@@ -1676,7 +1957,7 @@ function formatHistoryTime(value: string) {
             <p>
               {{
                 currentConversationSummary
-                  ? '继续查看之前的对话，或直接在下方发送新的修改需求。'
+                  ? '继续查看任务；整套修改请新建对话，单页修改请使用页面卡片中的重做入口。'
                   : '从一句自然语言开始，我会先帮你整理大纲。'
               }}
             </p>
@@ -1824,6 +2105,19 @@ function formatHistoryTime(value: string) {
                     <ul v-if="slide.warnings.length" class="slide-warnings">
                       <li v-for="warning in slide.warnings" :key="warning">{{ warning }}</li>
                     </ul>
+
+                    <div v-if="message.state === 'done' || message.state === 'waiting'" class="outline-actions">
+                      <input
+                        v-model="slideFeedback[slide.index]"
+                        class="outline-editor"
+                        type="text"
+                        :placeholder="`第 ${slide.index} 页修改意见，例如：减少文字，改成左右对比`"
+                        :disabled="running"
+                      />
+                      <button class="btn ghost" type="button" :disabled="running" @click="regenerateSlide(slide)">
+                        重做此页
+                      </button>
+                    </div>
                   </article>
                 </div>
 
@@ -1873,6 +2167,9 @@ function formatHistoryTime(value: string) {
                   >
                     {{ message.showEditor ? '收起大纲' : '编辑大纲' }}
                   </button>
+                  <button class="btn ghost" type="button" :disabled="running" @click="regenerateOutline(message)">
+                    重新生成大纲
+                  </button>
                 </div>
               </template>
 
@@ -1884,6 +2181,14 @@ function formatHistoryTime(value: string) {
                   </span>
                 </div>
                 <p>{{ message.text }}</p>
+
+                <textarea
+                  v-if="message.awaitingConfirm"
+                  v-model="styleFeedback[message.id]"
+                  class="outline-editor"
+                  rows="2"
+                  placeholder="可选：补充风格调整意见，例如更克制、减少装饰、提高数据对比度"
+                />
 
                 <div class="style-options">
                   <article v-for="option in message.options" :key="option.styleId" class="style-option-card">
@@ -1932,9 +2237,16 @@ function formatHistoryTime(value: string) {
               <template v-else-if="message.kind === 'result'">
                 <div class="status-header">
                   <strong>{{ message.title }}</strong>
-                  <span class="status-pill is-done">已完成</span>
+                  <span :class="['status-pill', message.qualityStatus === 'needs_review' ? 'is-waiting' : 'is-done']">
+                    {{ message.qualityStatus === 'needs_review' ? '需要复核' : message.degraded ? '完成但有降级' : '已完成' }}
+                  </span>
                 </div>
                 <p>{{ message.text }}</p>
+
+                <ul v-if="message.warnings.length" class="slide-warnings">
+                  <li v-for="warning in message.warnings" :key="warning">{{ warning }}</li>
+                </ul>
+                <p v-if="message.degraded" class="form-error">导出已降级：部分页面文字不可编辑。</p>
 
                 <div class="result-actions">
                   <button class="btn success" type="button" @click="downloadDeck(message.requestId, message.fileName)">
@@ -1999,10 +2311,19 @@ function formatHistoryTime(value: string) {
                     </option>
                   </select>
                 </label>
+
+                <label class="config-picker">
+                  <span>生成模式</span>
+                  <select v-model="generationMode" :disabled="running">
+                    <option value="step_by_step">逐步确认</option>
+                    <option value="quick">快速生成</option>
+                  </select>
+                </label>
               </div>
 
               <div class="composer-footnote">
                 <span class="chat-note">支持 PDF、DOCX、Markdown、TXT 等文件。</span>
+                <span v-if="uploadState" class="chat-note">{{ uploadState }}</span>
               </div>
 
               <div class="composer-toolbar-actions">

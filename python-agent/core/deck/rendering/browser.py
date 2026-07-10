@@ -15,6 +15,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from core.deck.export.text_layer import HIDE_TEXT_JS, TEXT_LAYER_JS
+from core.deck.runtime_metrics import record_fallback
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, SlideSpec, ThemeTokens
 from core.deck.quality.rules import DOM_VALIDATION_JS, ValidationIssue, validate_dom_result, validate_html_static
 
@@ -146,20 +147,31 @@ class BrowserRenderer:
             dom_issues = self._inspect_dom(slide.index)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             renderer = "pillow-fallback"
+            record_fallback()
             logger.info("slide screenshot fell back to pillow: page=%s err=%s", slide.index, exc)
             _fallback_preview_png(png_path, slide, theme)
         if history_png_path is not None:
             shutil.copyfile(png_path, history_png_path)
 
         issues = validate_html_static(html, page=slide.index) + dom_issues
+        if renderer != "playwright":
+            issues.append(
+                ValidationIssue(
+                    page=slide.index,
+                    severity="must_fix",
+                    kind="preview_renderer_degraded",
+                    description="The browser renderer was unavailable, so this preview used a non-authoritative fallback.",
+                    suggestion="Retry with Playwright available before treating the deck as fully reviewed.",
+                )
+            )
         thumb_b64 = _thumbnail_b64(png_path)
         return SlideArtifact(
             index=slide.index,
             version=version,
             html_path=html_path,
             png_path=png_path,
-            html_rel=_relative_to_request(html_path, request_dir),
-            png_rel=_relative_to_request(png_path, request_dir),
+            html_rel=_relative_to_request(history_html_path or html_path, request_dir),
+            png_rel=_relative_to_request(history_png_path or png_path, request_dir),
             thumb_b64=thumb_b64,
             issues=issues,
             renderer=renderer,
@@ -176,6 +188,7 @@ class BrowserRenderer:
             self._capture_with_playwright(html, png_path)
             renderer = "playwright"
         except Exception as exc:  # pylint: disable=broad-exception-caught
+            record_fallback()
             logger.info("style screenshot fell back to pillow: style=%s err=%s", style_id, exc)
             renderer = "pillow-fallback"
             _fallback_style_png(png_path, theme)
@@ -239,7 +252,7 @@ def _fallback_preview_png(path: Path, slide: SlideSpec, theme: ThemeTokens | Non
             _draw_wrapped(draw, body, (82, 128), 920, _font(22), accent, scale)
         items = _fallback_items(slide)
         y = 210
-        for item in items[:6]:
+        for item in items:
             draw.ellipse((86 * scale, (y + 10) * scale, 102 * scale, (y + 26) * scale), fill=accent2)
             _draw_wrapped(draw, item, (122, y), 880, _font(23), ink, scale)
             y += 74
@@ -286,7 +299,7 @@ def _draw_wrapped(
         return
     avg = max(8, int(getattr(font, "size", 18) * 0.58))
     max_chars = max(8, width * scale // avg)
-    lines = textwrap.wrap(clean, width=max_chars)[:5]
+    lines = textwrap.wrap(clean, width=max_chars)
     y = xy[1] * scale
     for line in lines:
         draw.text((xy[0] * scale, y), line, fill=fill, font=font)

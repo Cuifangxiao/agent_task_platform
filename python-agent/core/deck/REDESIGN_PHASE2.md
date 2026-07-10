@@ -1,5 +1,7 @@
 # Deck 生成 Phase 2：修硬伤、闭环、健壮性与目录重组
 
+> 2026-07-10 实施更新：当前 workflow 已接入 Go 持久化 Deck Job/追加式事件和 Python SQLite checkpoint；normalization 不再压缩语义内容，Designer、VLM、Repair、Coherence、Export 使用统一 v1 stage。最终生命周期/API 以仓库根目录 `PPT_AGENT_REFACTOR_IMPLEMENTATION.md` 为准。
+
 > 日期：2026-07-09
 > 前置文档：`REDESIGN.md`（Phase 1 方案）
 > 状态：Phase 1 骨架已落地并通过评审，本文档是评审结论的任务化，交给实施者执行。
@@ -236,6 +238,6 @@ Phase A (T1-T5 止血)  →  Phase B (T6 重组，独立提交)  →  Phase C (T
 
 - 不引入 Node.js / ECharts / 外部图库 / 生图（图表 = 内联 SVG）。
 - 不做并行页面生成（写作串行保留上下文传递，Phase 3 再评估）。
-- 不换 checkpointer（InMemorySaver 保持）。
+- checkpointer 已在后续全链路重构中升级为持久化 SQLite adapter。
 - 不改 gRPC 服务定义（现有 5 个 RPC 够用）。
 - 不做前端改版（前端只需兼容既有 payload 字段，新增字段向后兼容）。

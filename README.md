@@ -1,5 +1,28 @@
 # Agent Task Platform
 
+## PPTAgent 后台任务链路
+
+PPTAgent 现在以可恢复后台 Job 运行，不再依赖浏览器维持一次 SSE 长连接：
+
+- `POST /ppt-agent/jobs` 创建任务并立即返回 `job_id`
+- `GET /ppt-agent/jobs/:job_id/events` 订阅追加式事件；支持 SSE `id`、`Last-Event-ID` 和客户端去重
+- `POST /ppt-agent/jobs/:job_id/actions` 幂等提交大纲确认、重新生成大纲、风格选择或单页重做
+- `POST /ppt-agent/jobs/:job_id/cancel` 持久化取消状态并终止后台 gRPC
+- `GET /ppt-agent/jobs/:job_id` 在刷新后恢复状态，`GET /ppt-agent/metrics` 返回产品质量指标
+- artifact 下载会根据 Job/Conversation 的 `user_id` 鉴权，不能仅凭 `request_id` 跨用户读取
+
+MySQL migration `007_create_ppt_deck_jobs.sql` 保存 Job、附件、追加式事件、幂等 action 和版本化 asset。Python LangGraph checkpoint 使用持久化 SQLite（`artifacts/deck-checkpoints.sqlite3`）；waiting 状态可跨 runtime 重启恢复。旧 `/ppt-agent/generate` 与 `/ppt-agent/resume` 保留为新 Job 模型的 SSE 兼容层。
+
+前端提供“快速生成 / 逐步确认”、大纲编辑/重新生成、风格反馈、质量与降级警告、取消和单页重做。预览使用版本化资源路径，重做后不会继续复用旧 Object URL。
+
+验证命令：
+
+```bash
+go test ./...
+cd python-agent && .venv/bin/python -m pytest tests -q
+cd ../front && node node_modules/vue-tsc/bin/vue-tsc.js -b --pretty false
+```
+
 ## 当前完成情况
 
 目前项目已经完成了基础认证系统：

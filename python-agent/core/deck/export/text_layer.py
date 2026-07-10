@@ -6,6 +6,8 @@ TEXT_LAYER_JS = """
   const style = window.getComputedStyle(el);
   const fontSize = parseFloat(style.fontSize || '18');
   const lineHeight = parseFloat(style.lineHeight || '');
+  const fontCandidates = (style.fontFamily || 'Noto Sans SC').split(',').map((item) => item.trim().replace(/^['\"]|['\"]$/g, '')).filter(Boolean);
+  const resolvedFontFamily = fontCandidates.find((font) => document.fonts.check(`${fontSize}px "${font}"`, el.innerText || 'Aa中')) || fontCandidates[0] || 'Arial';
   return {
     text: el.innerText || el.textContent || '',
     x: rect.x,
@@ -17,7 +19,9 @@ TEXT_LAYER_JS = """
     color: style.color || 'rgb(20, 33, 61)',
     lineHeight: Number.isFinite(lineHeight) ? lineHeight : fontSize * 1.45,
     textAlign: style.textAlign || 'left',
-    fontFamily: style.fontFamily || 'Noto Sans SC'
+    fontFamily: resolvedFontFamily,
+    fontAvailable: document.fonts.check(`${fontSize}px "${resolvedFontFamily}"`, el.innerText || 'Aa中'),
+    isListItem: el.tagName === 'LI'
   };
 })
 """

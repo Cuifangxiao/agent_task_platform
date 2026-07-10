@@ -5,10 +5,11 @@ import "time"
 type ConversationStatus string
 
 const (
-	ConversationStatusRunning ConversationStatus = "running"
-	ConversationStatusWaiting ConversationStatus = "waiting"
-	ConversationStatusDone    ConversationStatus = "done"
-	ConversationStatusError   ConversationStatus = "error"
+	ConversationStatusRunning   ConversationStatus = "running"
+	ConversationStatusWaiting   ConversationStatus = "waiting"
+	ConversationStatusDone      ConversationStatus = "done"
+	ConversationStatusError     ConversationStatus = "error"
+	ConversationStatusCancelled ConversationStatus = "cancelled"
 )
 
 type Conversation struct {

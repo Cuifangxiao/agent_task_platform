@@ -8,6 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
+from core.deck.runtime_metrics import record_model_call, record_model_response, record_retry, record_token_usage
+
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
@@ -54,12 +56,15 @@ def compose_context_prompt(payload: dict[str, Any], *, uploaded_file_text: str) 
 
 def stream_llm_text(llm: Any, messages: list[tuple[str, str]]):
     if hasattr(llm, "stream"):
+        record_model_call()
         for chunk in llm.stream(messages):
+            record_token_usage(chunk)
             text = extract_text(chunk)
             if text:
                 yield text
         return
     response = llm.invoke(messages)
+    record_model_response(response)
     text = extract_text(response)
     if text:
         yield text
@@ -70,10 +75,14 @@ def invoke_json_with_retries(llm: Any, system: str, user: str, *, attempts: int)
     prompt = user
     for _attempt in range(max(1, attempts)):
         try:
+            record_model_call()
             response = llm.invoke([("system", system), ("human", prompt)])
+            record_token_usage(response)
             return parse_json_object(extract_text(response))
-        except ValueError as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             last_error = exc
+            if _attempt + 1 < max(1, attempts):
+                record_retry()
             prompt = user + f"\n\nYour previous response was invalid JSON: {exc}. Return only one JSON object."
     raise ValueError(str(last_error or "model did not return JSON"))
 

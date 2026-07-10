@@ -5,9 +5,13 @@ def test_event_constructors_keep_expected_schema():
     event = events.slide_preview("Preview ready", {"index": 1})
 
     assert event == {
+        "event_version": 1,
         "event_type": "slide_preview",
-        "stage": "design_slides",
+        "stage": "designer",
+        "stage_status": "running",
         "message": "Preview ready",
+        "severity": "info",
+        "slide": {"index": 1, "version": 0},
         "payload": {"index": 1},
     }
 

@@ -142,6 +142,7 @@ func buildHTTPDependencies(
 	modelConfigRepo := modelconfig.NewRepository(db)
 	agentConfigRepo := agentconfig.NewRepository(db)
 	pptHistoryRepo := pptagent.NewHistoryRepository(db)
+	pptJobRepo := pptagent.NewJobRepository(db)
 	pythonRuntimeClient := pythonruntime.NewClient(grpcConn)
 
 	jwtManager := auth.NewManager(
@@ -162,7 +163,10 @@ func buildHTTPDependencies(
 	)
 	agentConfigService := agentconfig.NewService(agentConfigRepo, modelConfigRepo)
 	agentService := agent.NewService(modelConfigRepo, pythonRuntimeClient)
-	pptAgentService := pptagent.NewService(modelConfigRepo, agentConfigRepo, pptHistoryRepo, pythonRuntimeClient, "")
+	pptAgentService := pptagent.NewService(modelConfigRepo, agentConfigRepo, pptHistoryRepo, pythonRuntimeClient, "", pptJobRepo)
+	if err := pptAgentService.RecoverJobs(context.Background()); err != nil {
+		slog.Error("recover ppt deck jobs", "error", err)
+	}
 
 	return httpDependencies{
 		userHandler:               user.NewHandler(userService),

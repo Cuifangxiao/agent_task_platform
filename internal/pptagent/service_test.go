@@ -11,6 +11,29 @@ import (
 	"agent-task-platform/internal/providercredential"
 )
 
+func TestSupportsImageInputRecognizesQwenVLModels(t *testing.T) {
+	cases := []struct {
+		name            string
+		modelName       string
+		providerOptions string
+		want            bool
+	}{
+		{name: "qwen3 vl", modelName: "qwen3-vl-plus", providerOptions: `{}`, want: true},
+		{name: "qwen vl", modelName: "qwen-vl-plus", providerOptions: `{}`, want: true},
+		{name: "qwen text", modelName: "qwen-plus", providerOptions: `{}`, want: false},
+		{name: "explicit capability", modelName: "custom-model", providerOptions: `{"supports_image_input":true}`, want: true},
+		{name: "explicit opt out wins", modelName: "qwen3-vl-plus", providerOptions: `{"supports_image_input":false}`, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := supportsImageInput(tc.modelName, tc.providerOptions); got != tc.want {
+				t.Fatalf("supportsImageInput(%q) = %v, want %v", tc.modelName, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResumeDeckAcceptsOutlineMarkdown(t *testing.T) {
 	ctx := context.Background()
 	requestID := "11111111-1111-1111-1111-111111111111"

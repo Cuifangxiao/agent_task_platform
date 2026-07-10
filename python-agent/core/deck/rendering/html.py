@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +24,15 @@ class HTMLSlideRenderer:
 
     def render(self, deck: DeckSpec, slide: SlideSpec) -> str:
         body = self._render_component(slide)
+        variant = slide.layout_variant if slide.layout_variant in {"balanced", "editorial", "split"} else "balanced"
+        design_classes = " ".join(
+            f"design-{key.replace('_', '-')}-{value}"
+            for key, value in slide.design.items()
+            if key in {"emphasis", "density", "visual_hierarchy", "accent_slot"}
+            and str(value).replace("-", "").isalnum()
+        )
+        classes = f"variant-{variant}" + (f" {design_classes}" if design_classes else "")
+        body = body.replace('<section class="slide', f'<section class="slide {classes}', 1)
         return "\n".join(
             [
                 "<!doctype html>",
@@ -98,6 +108,7 @@ class HTMLSlideRenderer:
         palette = theme.palette
         fonts = theme.fonts
         type_scale = theme.type_scale
+        motif_digest = int(hashlib.sha256(theme.motif.encode("utf-8")).hexdigest()[:8], 16) if theme.motif else 0
         variables = {
             "--color-bg": palette.get("bg", "#F7F3EA"),
             "--color-surface": palette.get("surface", "#FFFFFF"),
@@ -114,10 +125,26 @@ class HTMLSlideRenderer:
             "--type-body": str(type_scale.get("body") or 18) + "px",
             "--type-caption": str(type_scale.get("caption") or 13) + "px",
             "--radius": str(theme.radius) + "px",
+            "--motif-offset": str(28 + motif_digest % 140) + "px",
+            "--motif-angle": str(-18 + motif_digest % 37) + "deg",
         }
         lines = [":root {"]
         lines.extend(f"  {name}: {value};" for name, value in variables.items())
         lines.append("}")
+        lines.extend(
+            [
+                ".slide::after { content: ''; position: absolute; right: var(--motif-offset); top: 26px; width: 72px; height: 8px; background: var(--color-accent2); transform: rotate(var(--motif-angle)); opacity: .72; pointer-events: none; }",
+                ".slide.variant-editorial .content-grid, .slide.variant-editorial .comparison-grid { grid-template-columns: 1.35fr .65fr; }",
+                ".slide.variant-split .content-grid, .slide.variant-split .comparison-grid { grid-template-columns: 1fr 1fr; gap: 36px; }",
+                ".slide.variant-balanced .content-grid, .slide.variant-balanced .comparison-grid { gap: 24px; }",
+                ".slide.variant-editorial .agenda-grid, .slide.variant-editorial .metric-grid, .slide.variant-editorial .summary-grid { grid-template-columns: 1.4fr .8fr .8fr; }",
+                ".slide.variant-split .agenda-grid, .slide.variant-split .metric-grid, .slide.variant-split .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }",
+                ".slide.variant-balanced .agenda-grid, .slide.variant-balanced .metric-grid, .slide.variant-balanced .summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }",
+                ".slide.variant-editorial .timeline, .slide.variant-editorial .steps { transform: translateX(54px); width: calc(100% - 54px); }",
+                ".slide.variant-split .timeline, .slide.variant-split .steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }",
+                ".slide.variant-balanced .timeline, .slide.variant-balanced .steps { transform: none; }",
+            ]
+        )
         return "\n".join(lines)
 
 

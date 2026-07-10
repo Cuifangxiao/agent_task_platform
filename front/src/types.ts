@@ -144,6 +144,7 @@ export interface PptGeneratePayload {
   agent_config_id?: number
   description: string
   source_files?: File[]
+  mode?: 'quick' | 'step_by_step'
 }
 
 export interface PptResumePayload {
@@ -154,11 +155,14 @@ export interface PptResumePayload {
 }
 
 export interface ParsedSseEvent {
+  id?: number
   event: string
   data: unknown
 }
 
 export interface PptStreamChunk {
+  event_version?: number
+  job_id?: string
   conversation_id?: number
   request_id?: string
   event_type?: string
@@ -172,7 +176,49 @@ export interface PptStreamChunk {
   artifact_url?: string
   done?: boolean
   error?: string
+  error_code?: string
+  stage_status?: 'pending' | 'running' | 'waiting' | 'done' | 'warning' | 'error' | string
+  progress?: { current: number; total: number }
+  slide?: { index: number; version: number }
+  severity?: 'info' | 'warning' | 'error' | string
+  action_required?: 'approve_outline' | 'choose_style' | null | string
+  retryable?: boolean
   sequence?: number
+}
+
+export type PptJobStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting_for_outline'
+  | 'waiting_for_style'
+  | 'exporting'
+  | 'success'
+  | 'success_with_warnings'
+  | 'needs_review'
+  | 'failed'
+  | 'cancelled'
+
+export interface PptDeckJob {
+  job_id: string
+  conversation_id: number
+  agent_config_id: number
+  request_id?: string
+  mode: 'quick' | 'step_by_step' | string
+  status: PptJobStatus
+  stage: string
+  error_code?: string
+  error_summary?: string
+  retryable: boolean
+  last_event_sequence: number
+  quality: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface PptJobActionPayload {
+  action: 'approve_outline' | 'regenerate_outline' | 'choose_style' | 'regenerate_slide' | string
+  outline_markdown?: string
+  payload?: Record<string, unknown>
 }
 
 export interface PptConversationSummary {
@@ -188,6 +234,7 @@ export interface PptConversationSummary {
 
 export interface PptConversationDetail extends PptConversationSummary {
   messages: Record<string, unknown>[]
+  job?: PptDeckJob
 }
 
 export interface RequestLogEntry {

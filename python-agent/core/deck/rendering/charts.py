@@ -127,7 +127,7 @@ def _line_svg(chart: dict[str, Any], *, title: str) -> str:
 
 
 def _pie_svg(chart: dict[str, Any], *, title: str) -> str:
-    series = chart["series"][:6]
+    series = chart["series"]
     unit = chart["unit"]
     total = sum(max(0, item["value"]) for item in series)
     if total <= 0:

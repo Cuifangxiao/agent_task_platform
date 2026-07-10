@@ -10,7 +10,7 @@ from core.deck.rendering.charts import chart_is_valid
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, COMPONENT_LIMITS, DeckSpec, SlideSpec, has_placeholder_text, slide_text_values
 
 EXTERNAL_RESOURCE_RE = re.compile(
-    r"""(?:\b(?:src|href)\s*=\s*["']\s*https?://|url\(\s*["']?\s*https?://|<script\b)""",
+    r"""(?:\b(?:src|href)\s*=\s*["']\s*(?:https?://|javascript:|data:text/html)|url\(\s*["']?\s*https?://|<\s*(?:script|iframe|object|embed)\b|\bon[a-z]+\s*=)""",
     flags=re.IGNORECASE,
 )
 DOM_VALIDATION_JS = """
@@ -85,6 +85,8 @@ def validate_slide_spec(slide: SlideSpec) -> list[ValidationIssue]:
                 "Use chart schema {type, series[{label,value}], unit} with source-backed values.",
             )
         )
+    if slide.chart and isinstance(slide.chart.get("series"), list) and len(slide.chart["series"]) > 6:
+        issues.append(_issue(slide, "density", "Chart has more than 6 visible series entries.", "Split the chart across pages without removing data."))
     issues.extend(_density_issues(slide))
     return issues
 
@@ -188,11 +190,13 @@ def validate_theme_contrast(deck: DeckSpec) -> list[ValidationIssue]:
 
 def _density_issues(slide: SlideSpec) -> list[ValidationIssue]:
     limits = COMPONENT_LIMITS.get(slide.component, {})
+    density_multiplier = 1.5 if slide.layout_variant == "split" else 1.2 if slide.layout_variant == "editorial" else 1.0
     content = slide.content
     issues: list[ValidationIssue] = []
 
     def check_text(name: str, value: Any, limit_key: str) -> None:
-        limit = limits.get(limit_key)
+        raw_limit = limits.get(limit_key)
+        limit = int(raw_limit * density_multiplier) if raw_limit else None
         if limit and len(str(value or "")) > limit:
             issues.append(_issue(slide, "density", f"{name} exceeds {limit} characters.", "Shorten the copy."))
 
@@ -204,10 +208,12 @@ def _density_issues(slide: SlideSpec) -> list[ValidationIssue]:
 
     for key in ("bullets", "items", "steps"):
         if isinstance(content.get(key), list):
-            count_limit = limits.get("bullets") or limits.get("items") or limits.get("steps")
+            raw_count_limit = limits.get("bullets") or limits.get("items") or limits.get("steps")
+            count_limit = int(raw_count_limit * density_multiplier) if raw_count_limit else None
             if count_limit and len(content[key]) > count_limit:
                 issues.append(_issue(slide, "density", f"{key} has too many items.", "Keep only the strongest items."))
-            char_limit = limits.get("bullet_chars") or limits.get("item_chars")
+            raw_char_limit = limits.get("bullet_chars") or limits.get("item_chars")
+            char_limit = int(raw_char_limit * density_multiplier) if raw_char_limit else None
             if char_limit:
                 for item in content[key]:
                     if len(str(item)) > char_limit:

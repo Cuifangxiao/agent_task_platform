@@ -30,23 +30,28 @@ def generate_outline(state: DeckGraphState, llm_registry: dict[str, Any]) -> dic
     outline_markdown = normalize_outline_markdown("".join(parts), state)
     plan = outline_markdown_to_plan(outline_markdown, state)
     writer(events.outline_ready(outline_markdown))
-    return {"outline_markdown": outline_markdown, "plan": plan}
+    return {"outline_markdown": outline_markdown, "plan": plan, "outline_action": ""}
 
 
 def review_outline(state: DeckGraphState) -> dict[str, Any]:
     writer = get_stream_writer()
     outline_markdown = str(state.get("outline_markdown") or "").strip()
+    if str(state.get("generation_mode") or "") == "quick":
+        writer(events.stage_progress("outline_review", "Quick mode approved the generated outline", {"status": "done"}))
+        return {"outline_action": "style"}
     writer(events.stage_progress("outline_review", "Waiting for outline confirmation"))
     decision = interrupt({"stage": "outline_review", "outline_markdown": outline_markdown})
 
     if isinstance(decision, dict):
         action = str(decision.get("action") or "approve_outline").strip().lower()
+        if action == "regenerate_outline":
+            return {"outline_action": "regenerate"}
         if action in {"continue", "approve", "approved", "approve_outline"}:
             edited_outline = decision.get("outline_markdown") or decision.get("content")
             if isinstance(edited_outline, str) and edited_outline.strip():
                 edited_outline = normalize_outline_markdown(edited_outline, state)
-                return {"outline_markdown": edited_outline, "plan": outline_markdown_to_plan(edited_outline, state)}
-    return {}
+                return {"outline_markdown": edited_outline, "plan": outline_markdown_to_plan(edited_outline, state), "outline_action": "style"}
+    return {"outline_action": "style"}
 
 
 def outline_prompt(state: DeckGraphState) -> str:

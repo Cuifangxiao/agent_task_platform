@@ -11,6 +11,7 @@ from langgraph.types import interrupt
 import core.deck.events as events
 from core.deck.pipeline.helpers import emit_agent
 from core.deck.pipeline.llm import invoke_json_with_retries, load_node_prompt
+from core.deck.runtime_metrics import record_fallback
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import validate_theme_contrast
 from core.deck.rendering.browser import BrowserRenderer
@@ -35,6 +36,11 @@ def prepare_style_options(
 def review_style(state: DeckGraphState, llm_registry: dict[str, Any] | None = None) -> dict[str, Any]:
     writer = get_stream_writer()
     options = state.get("style_options") or []
+    if str(state.get("generation_mode") or "") == "quick":
+        selected, _matched = select_style_option(options, "")
+        theme = ThemeTokens.from_dict(selected.get("tokens") or {})
+        writer(events.stage_progress("style_review", f"Quick mode selected style: {theme.name}", {"status": "done"}))
+        return {"theme": theme.to_dict()}
     writer(events.stage_progress("style_review", "Waiting for style selection"))
     decision = interrupt({"stage": "style_review", "style_options": public_style_options(options)})
     style_id = ""
@@ -57,10 +63,13 @@ def review_style(state: DeckGraphState, llm_registry: dict[str, Any] | None = No
             if theme_is_valid(adjusted):
                 theme = adjusted
             else:
+                record_fallback()
                 writer(events.stage_progress("style_review", "Style feedback produced low-contrast tokens; kept selected style.", {"status": "warning"}))
         except ValueError as exc:
+            record_fallback()
             writer(events.stage_progress("style_review", f"Style feedback model output was unusable; kept selected style: {exc}", {"status": "warning"}))
     elif feedback:
+        record_fallback()
         theme.motif = (theme.motif + " | " + feedback).strip(" |")
     writer(
         events.stage_progress(
@@ -96,7 +105,6 @@ def build_style_options(
                 "tokens": theme.to_dict(),
                 "cover_png": artifact["png"],
                 "cover_html": artifact["html"],
-                "thumb_b64": artifact["thumb_b64"],
                 "tokens_summary": tokens_summary(theme),
             }
         )
@@ -113,10 +121,14 @@ def select_presets_with_model(state: DeckGraphState, presets: list[ThemeTokens],
     try:
         raw = invoke_json_with_retries(llm_registry["style"], system=load_node_prompt("style"), user=json.dumps(payload, ensure_ascii=False), attempts=2)
     except ValueError:
+        record_fallback()
         return presets[:2]
     themes = _themes_from_style_output(raw, presets)
     valid = [theme for theme in themes if theme_is_valid(theme)]
-    return valid[:2] if len(valid) >= 2 else presets[:2]
+    if len(valid) >= 2:
+        return valid[:2]
+    record_fallback()
+    return presets[:2]
 
 
 def adjust_theme_from_feedback(theme: ThemeTokens, feedback: str, style_llm: Any) -> ThemeTokens:

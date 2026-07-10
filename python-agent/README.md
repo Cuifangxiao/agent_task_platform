@@ -77,6 +77,12 @@ Deck 生成链路使用 HTML 中间表示: 每页会存档到 `DECK_ARTIFACTS_DI
 如果运行环境缺少 Chromium，服务会降级为 Pillow 预览与整页截图导出，并在事件流中发 warning。
 生产环境建议随服务镜像放置 `core/deck/design_system/fonts/` 下的 Noto Sans SC 字体资产。
 
+Deck workflow 使用 `core/deck/checkpoint.py::PersistentSQLiteSaver` 持久化 LangGraph checkpoint，默认数据库位于 artifacts 目录下的 `deck-checkpoints.sqlite3`。Go 层负责持久化 Job/Event 并独立消费 gRPC；Python 流中断不会再被 HTTP 请求 context 直接取消。
+
+统一事件协议版本为 `event_version=1`，stage 包含 `brief`、`outline`、`outline_review`、`style`、`style_review`、`writer`、`designer`、`validate`、`review_vlm`、`repair`、`coherence`、`export`。Writer 有上限地并行生成结构化内容，浏览器渲染保持顺序执行；Designer 和 Coherence 都会调用各自绑定模型。VLM 模型必须声明图片输入能力，否则产生明确的 `vlm_image_unsupported` must-fix。
+
+内容 normalization 不再裁切标题、正文、bullet 或表格。原始与最终 spec 分别保存为 `spec.raw.json`、`spec.final.json`；修复预算耗尽仍有 must-fix 时 artifact 标记 `needs_review`。整页图片降级会写入 warnings/degraded，前端会提示文字不可编辑。
+
 ## proto 代码生成
 
 proto 唯一真源在仓库根 `api/proto/v1/provider/provider.proto`, 在仓库根目录执行:

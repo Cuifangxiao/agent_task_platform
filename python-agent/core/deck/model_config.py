@@ -14,11 +14,18 @@ def build_deck_llms(inp: GenerateDeckInput | ResumeDeckInput) -> Any:
         raise ValueError("node_model_configs is required")
 
     clients: dict[str, Any] = {}
+    capabilities: dict[str, dict[str, bool]] = {}
+    metadata: dict[str, dict[str, str]] = {}
     for config in inp.node_model_configs:
         node_key = config.node_key.strip().lower()
         if not node_key:
             raise ValueError("node_model_configs[].node_key is required")
         clients[node_key] = build_chat_client_from_node(config)
+        capabilities[node_key] = {"supports_image_input": bool(config.supports_image_input)}
+        metadata[node_key] = {"provider": config.provider, "model": config.model}
+
+    clients["__capabilities__"] = capabilities
+    clients["__metadata__"] = metadata
 
     return clients
 
@@ -49,13 +56,16 @@ def build_chat_client(
     temperature: float,
     max_tokens: int,
 ) -> Any:
+    normalized_max_tokens = int(max_tokens or 0)
+    if normalized_max_tokens <= 0:
+        raise ValueError("max_tokens must be positive")
     return provider_config_manager.build_chat_client(
         provider_name=provider.strip().lower(),
         model_name=model.strip(),
         api_key=api_key.strip(),
         base_url=base_url.strip(),
         temperature=temperature,
-        max_tokens=max(int(max_tokens or 0), 2048),
+        max_tokens=normalized_max_tokens,
         provider_options=decode_provider_options(provider_options_json),
     )
 

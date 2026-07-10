@@ -32,8 +32,8 @@ def test_render_slide_writes_authoritative_and_history_files(tmp_path, monkeypat
     )
 
     slides_dir = tmp_path / request_id / "slides"
-    assert artifact.html_rel == "slides/1.html"
-    assert artifact.png_rel == "slides/1.png"
+    assert artifact.html_rel == "slides/1_v2.html"
+    assert artifact.png_rel == "slides/1_v2.png"
     assert (slides_dir / "1.html").exists()
     assert (slides_dir / "1.png").exists()
     assert (slides_dir / "1_v2.html").exists()

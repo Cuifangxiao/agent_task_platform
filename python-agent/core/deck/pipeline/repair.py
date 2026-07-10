@@ -4,25 +4,25 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+import copy
 from typing import Any
 
 from langgraph.config import get_stream_writer
 
 import core.deck.events as events
 from core.deck.pipeline.llm import invoke_json_with_retries, llm_for_node, load_node_prompt
+from core.deck.runtime_metrics import record_fallback
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import issues_to_dicts, validate_slide_spec
 from core.deck.rendering.browser import BrowserRenderer
 from core.deck.rendering.html import HTMLSlideRenderer
-from core.deck.spec import DeckSpec, SlideSpec, _soft_limit, normalize_slide_spec
+from core.deck.spec import DeckSpec, SlideSpec, normalize_slide_spec
 
 logger = logging.getLogger(__name__)
 
 MAX_REPAIR_ROUNDS = 2
-DOWNGRADE_BODY_CHARS = 90
-DOWNGRADE_ITEM_CHARS = 44
-DOWNGRADE_ITEM_COUNT = 2
 
 
 def has_fixable_must_fix(state: DeckGraphState) -> bool:
@@ -61,14 +61,26 @@ def repair_deck(
         logger.info("deck repair slide start: request_id=%s round=%s index=%s issue_count=%s", request_id, round_index, slide.index, len(page_to_issues[slide.index]))
         repaired = _rewrite_with_writer(llm_registry, deck, original, page_to_issues[slide.index])
         if repaired is None:
-            repaired = deterministic_downgrade(original)
-            writer(
-                events.stage_progress(
-                    "repair",
-                    f"Slide {slide.index} was simplified deterministically after validation.",
-                    {"index": slide.index, "status": "warning", "round": round_index},
+            candidate = copy.deepcopy(original)
+            candidate.layout_variant = "split"
+            if not validate_slide_spec(candidate):
+                repaired = candidate
+                writer(
+                    events.stage_progress(
+                        "repair",
+                        f"Slide {slide.index} switched to the lower-density split variant without deleting content.",
+                        {"index": slide.index, "status": "warning", "round": round_index, "reason": "designer_layout_fallback"},
+                    )
                 )
-            )
+            else:
+                writer(
+                    events.stage_progress(
+                        "repair",
+                        f"Slide {slide.index} could not be repaired without risking content loss; original content was retained.",
+                        {"index": slide.index, "status": "warning", "round": round_index, "reason": "rewrite_failed"},
+                    )
+                )
+                continue
         deck.slides = [repaired if item.index == repaired.index else item for item in deck.slides]
         logger.info("deck repair slide render start: request_id=%s round=%s index=%s", request_id, round_index, repaired.index)
         artifact = browser.render_slide(request_id, repaired, html_renderer.render(deck, repaired), version=round_index + 1, theme=deck.theme)
@@ -83,6 +95,7 @@ def repair_deck(
         )
         if artifact.issues:
             new_issues.extend(issues_to_dicts(artifact.issues))
+        new_issues.extend(issues_to_dicts(validate_slide_spec(repaired)))
         repaired_pages.add(repaired.index)
         writer(
             events.slide_preview(
@@ -91,7 +104,6 @@ def repair_deck(
                     "index": repaired.index,
                     "png": artifact.png_rel,
                     "html": artifact.html_rel,
-                    "thumb_b64": artifact.thumb_b64,
                     "version": artifact.version,
                     "status": "ready" if not artifact.issues else "warning",
                     "renderer": artifact.renderer,
@@ -104,28 +116,15 @@ def repair_deck(
     return {
         "deck_spec": deck.to_dict(),
         "slides": [slide.to_dict() for slide in deck.slides],
+        "final_slides": [slide.to_dict() for slide in deck.slides],
         "validation_issues": retained_issues,
         "repair_round": round_index,
+        "coherence_reviewed": False if repaired_pages else bool(state.get("coherence_reviewed")),
     }
 
 
 def deterministic_downgrade(slide: SlideSpec) -> SlideSpec:
-    content = dict(slide.content)
-    if slide.component == "content-basic":
-        content["body"] = _soft_limit(str(content.get("body") or ""), DOWNGRADE_BODY_CHARS)
-        if isinstance(content.get("bullets"), list):
-            content["bullets"] = [_soft_limit(str(item), DOWNGRADE_ITEM_CHARS) for item in content["bullets"][:DOWNGRADE_ITEM_COUNT]]
-    else:
-        items = []
-        for key in ("bullets", "items", "steps"):
-            if isinstance(content.get(key), list):
-                items = [_soft_limit(str(item), DOWNGRADE_ITEM_CHARS) for item in content[key][:DOWNGRADE_ITEM_COUNT]]
-                break
-        body = _soft_limit(str(content.get("body") or content.get("takeaway") or content.get("subtitle") or slide.title), DOWNGRADE_BODY_CHARS)
-        content = {"body": body, "bullets": items}
-        slide.component = "content-basic"
-    slide.title = _soft_limit(slide.title, DOWNGRADE_ITEM_CHARS)
-    slide.content = content
+    """Legacy compatibility hook that intentionally preserves all semantic content."""
     return slide
 
 
@@ -144,8 +143,9 @@ def _rewrite_with_writer(
             attempts=2,
         )
         repaired = normalize_slide_spec(raw, index=slide.index, outline={"title": slide.title, "role": slide.role, "component": slide.component}, deck_title=deck.title, narrative=deck.narrative)
-        return repaired if not validate_slide_spec(repaired) else deterministic_downgrade(repaired)
+        return repaired if not validate_slide_spec(repaired) and _preserves_source_facts(slide, repaired) else None
     except Exception:  # pylint: disable=broad-exception-caught
+        record_fallback()
         return None
 
 
@@ -160,6 +160,7 @@ def _repair_prompt(deck: DeckSpec, slide: SlideSpec, issues: list[dict[str, Any]
                 "Return one valid JSON object.",
                 "Keep the same slide index.",
                 "Reduce text density when overflow, overlap, or density issues are present.",
+                "Preserve every source id, number, and semantic point; condense phrasing rather than deleting evidence.",
                 "Do not introduce new facts or placeholders.",
             ],
         },
@@ -175,3 +176,11 @@ def _fixable_pages(state: DeckGraphState) -> list[int]:
         if issue.get("severity") == "must_fix" and int(issue.get("page") or 0) > 0
     }
     return sorted(pages)
+
+
+def _preserves_source_facts(original: SlideSpec, repaired: SlideSpec) -> bool:
+    if not set(original.sources).issubset(set(repaired.sources)):
+        return False
+    original_numbers = set(re.findall(r"\d[\d,]*(?:\.\d+)?%?", json.dumps(original.to_dict(), ensure_ascii=False)))
+    repaired_numbers = set(re.findall(r"\d[\d,]*(?:\.\d+)?%?", json.dumps(repaired.to_dict(), ensure_ascii=False)))
+    return original_numbers.issubset(repaired_numbers)

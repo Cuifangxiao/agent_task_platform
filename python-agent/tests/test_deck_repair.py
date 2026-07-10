@@ -64,9 +64,11 @@ def test_repair_loop_validates_repairs_and_terminates(monkeypatch):
 
     assert state["repair_round"] == 1
     assert state["validation_issues"] == []
-    assert fake_browser.rendered_slide.content["body"].endswith(".")
-    assert "hard mid-word" not in fake_browser.rendered_slide.content["body"]
-    assert len(fake_browser.rendered_slide.content["bullets"]) == 2
+    assert fake_browser.rendered_slide is not None
+    final_slide = DeckSpec.from_dict(state["deck_spec"]).slides[0]
+    assert final_slide.content["body"] == body
+    assert final_slide.content["bullets"] == ["One clear point.", "Two clear points.", "Third point should be dropped."]
+    assert final_slide.layout_variant == "split"
     assert any(event.get("event_type") == "repair_progress" for event in emitted)
 
 

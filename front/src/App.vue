@@ -188,6 +188,11 @@ function normalizeError(error: unknown) {
       :download-artifact="store.api.downloadPptArtifact"
       :stream-ppt="store.api.streamPpt"
       :resume-ppt="store.api.resumePpt"
+      :create-job="store.api.createPptJob"
+      :get-job="store.api.pptJob"
+      :subscribe-job="store.api.subscribePptJob"
+      :submit-job-action="store.api.pptJobAction"
+      :cancel-job="store.api.cancelPptJob"
     />
     </KeepAlive>
 

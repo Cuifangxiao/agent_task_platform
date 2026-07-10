@@ -65,11 +65,16 @@ message DeckNodeModelConfig {
   string provider_options_json = 6;
   double temperature = 7;
   int32 max_tokens = 8;
+  bool supports_image_input = 9;
 }
 
 message DeckSourceFile {
   string filename = 1;
   bytes content = 2;
+  string resource_id = 3;
+  string local_path = 4;
+  string sha256 = 5;
+  int64 size_bytes = 6;
 }
 
 message GenerateDeckRequest {
@@ -79,6 +84,8 @@ message GenerateDeckRequest {
   bytes source_file = 4;
   repeated DeckNodeModelConfig node_model_configs = 5;
   repeated DeckSourceFile source_files = 6;
+  string job_id = 7;
+  string generation_mode = 8;
 }
 
 message ResumeDeckRequest {
@@ -88,6 +95,17 @@ message ResumeDeckRequest {
   repeated DeckNodeModelConfig node_model_configs = 4;
   string action = 5;
   string payload_json = 6;
+  string job_id = 7;
+}
+
+message DeckProgress {
+  int32 current = 1;
+  int32 total = 2;
+}
+
+message DeckSlideEvent {
+  int32 index = 1;
+  int32 version = 2;
 }
 
 message GenerateDeckResponse {
@@ -102,8 +120,17 @@ message GenerateDeckResponse {
   string artifact_path = 9;
   bool done = 10;
   string error = 11;
-  int32 sequence = 12;
+  int64 sequence = 12;
   string outline_markdown = 13;
+  int32 event_version = 14;
+  string job_id = 15;
+  string stage_status = 16;
+  DeckProgress progress = 17;
+  DeckSlideEvent slide = 18;
+  string severity = 19;
+  string action_required = 20;
+  bool retryable = 21;
+  string error_code = 22;
 }
 
 message ProviderModelParameter {

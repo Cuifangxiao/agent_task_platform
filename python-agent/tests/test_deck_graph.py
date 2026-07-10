@@ -1,3 +1,4 @@
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -7,7 +8,8 @@ from langgraph.types import Command
 from core.deck.contract import DeckSourceFile, GenerateDeckInput
 from core.deck.pipeline import build_deck_graph
 from core.deck.pipeline.outline import outline_prompt
-from core.deck.sources import parse_uploaded_files
+from core.deck.pipeline.slides import slide_prompt
+from core.deck.sources import parse_uploaded_files, parse_uploaded_files_with_provenance
 
 
 OUTLINE_MARKDOWN = """# PPTAgent MVP
@@ -136,13 +138,14 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     assert [event["payload"]["component"] for event in slide_spec_events] == ["cover", "content-basic"]
 
     slide_preview_events = [event for event in events if event.get("event_type") == "slide_preview"]
-    assert [event["payload"]["index"] for event in slide_preview_events] == [1, 2]
+    assert [event["payload"]["index"] for event in slide_preview_events[:2]] == [1, 2]
+    assert {event["payload"]["index"] for event in slide_preview_events} == {1, 2}
     assert all(event["payload"]["png"] for event in slide_preview_events)
 
     slide_ready_events = [event for event in events if event.get("event_type") == "slide_ready"]
     assert [event["payload"]["title"] for event in slide_ready_events] == ["PPTAgent MVP", "Architecture"]
     assert slide_ready_events[1]["payload"]["bullets"] == ["Go streams SSE", "Python runs LangGraph", "Renderer writes PPTX"]
-    assert all(event["payload"]["status"] == "ready" for event in slide_ready_events)
+    assert all(event["payload"]["status"] in {"ready", "warning"} for event in slide_ready_events)
 
     artifact_events = [event for event in events if event.get("event_type") == "artifact"]
     assert artifact_events
@@ -175,6 +178,31 @@ def test_outline_prompt_adds_uploaded_file_section_only_when_present():
     assert "Parsed file body." in prompt_with_file
 
 
+def test_outline_can_regenerate_within_the_same_checkpoint(tmp_path):
+    graph = build_deck_graph(FakeLLM(), tmp_path, InMemorySaver())
+    config = {"configurable": {"thread_id": "outline-regenerate"}}
+    first_interrupts = []
+    for mode, data in graph.stream(
+        {"request_id": "outline-regenerate", "deck_title": "Deck", "user_description": "Two slides"},
+        config=config,
+        stream_mode=["custom", "updates"],
+    ):
+        if mode == "updates" and "__interrupt__" in data:
+            first_interrupts.extend(data["__interrupt__"])
+    assert first_interrupts
+
+    regenerated_interrupts = []
+    for mode, data in graph.stream(
+        Command(resume={"action": "regenerate_outline"}),
+        config=config,
+        stream_mode=["custom", "updates"],
+    ):
+        if mode == "updates" and "__interrupt__" in data:
+            regenerated_interrupts.extend(data["__interrupt__"])
+    assert regenerated_interrupts
+    assert regenerated_interrupts[0].value["stage"] == "outline_review"
+
+
 def test_parse_uploaded_files_combines_multiple_documents():
     names, text = parse_uploaded_files(
         GenerateDeckInput(
@@ -193,3 +221,75 @@ def test_parse_uploaded_files_combines_multiple_documents():
     assert "hello" in text
     assert "### two.txt" in text
     assert "第二份资料" in text
+
+
+def test_uploaded_file_chunks_keep_file_page_and_paragraph_provenance():
+    _names, _text, chunks = parse_uploaded_files_with_provenance(
+        GenerateDeckInput(
+            user_id=1,
+            username="tester",
+            user_description="Create a deck",
+            source_files=[DeckSourceFile(filename="report.txt", content=b"[Page 2]\nRevenue reached 120 million.\n\nMargin was 42%.")],
+        )
+    )
+    assert [chunk["page"] for chunk in chunks] == [2, 2]
+    assert all(chunk["source_file"] == "report.txt" for chunk in chunks)
+    assert chunks[0]["section"] == "paragraph-1"
+
+
+def test_uploaded_resource_reference_is_read_from_controlled_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECK_SOURCES_DIR", str(tmp_path))
+    path = tmp_path / "source.md"
+    data = ("完整附件内容\n" * 3000).encode("utf-8")
+    path.write_bytes(data)
+    names, text, chunks = parse_uploaded_files_with_provenance(
+        GenerateDeckInput(
+            user_id=1,
+            username="tester",
+            user_description="Create a deck",
+            source_files=[DeckSourceFile(filename="source.md", resource_id="resource-1", local_path=str(path), sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data))],
+        )
+    )
+    assert names == "source.md"
+    assert text.count("完整附件内容") == 3000
+    assert chunks
+
+
+def test_uploaded_resource_reference_rejects_paths_outside_controlled_directory(tmp_path, monkeypatch):
+    import pytest
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret", encoding="utf-8")
+    monkeypatch.setenv("DECK_SOURCES_DIR", str(allowed))
+    with pytest.raises(ValueError, match="outside"):
+        parse_uploaded_files_with_provenance(
+            GenerateDeckInput(
+                user_id=1,
+                username="tester",
+                user_description="Create a deck",
+                source_files=[DeckSourceFile(filename="outside.md", local_path=str(outside), size_bytes=outside.stat().st_size)],
+            )
+        )
+
+
+def test_writer_prompt_contains_only_relevant_facts_and_source_chunks():
+    state = {
+        "deck_title": "D",
+        "brief": {
+            "audience": "Board",
+            "facts": [
+                {"id": "fact#1", "statement": "Revenue reached 40%", "source_excerpt": "Revenue reached 40%"},
+                {"id": "fact#2", "statement": "Hiring added 20 people", "source_excerpt": "Hiring added 20 people"},
+            ],
+        },
+        "source_chunks": [
+            {"source_file": "revenue.md", "page": 1, "section": "p1", "excerpt": "Revenue reached 40%"},
+            {"source_file": "hiring.md", "page": 1, "section": "p1", "excerpt": "Hiring added 20 people"},
+        ],
+    }
+    prompt = slide_prompt(state, {"title": "Revenue", "key_message": "Revenue growth", "role": "evidence"}, [], 2)
+    assert "fact#1" in prompt
+    assert "revenue.md" in prompt
+    assert "fact#2" not in prompt

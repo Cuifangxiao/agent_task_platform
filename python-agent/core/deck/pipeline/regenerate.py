@@ -13,6 +13,7 @@ from core.deck.export import DeckExporter
 from core.deck.model_config import build_deck_llms
 from core.deck.paths import artifact_dir
 from core.deck.pipeline.llm import invoke_json_with_retries, llm_for_node, load_node_prompt, normalize_llm_registry
+from core.deck.pipeline.review import validate_fact_sources
 from core.deck.quality import issues_to_dicts, validate_slide_spec
 from core.deck.rendering.browser import BrowserRenderer, BrowserSession
 from core.deck.rendering.html import HTMLSlideRenderer
@@ -87,7 +88,18 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
         deck.slides = [rewritten if item.index == index else item for item in deck.slides]
         slide = rewritten
         spec_issues = validate_slide_spec(slide)
+        fact_ledger_path = request_dir / "fact-ledger.json"
+        if fact_ledger_path.exists():
+            try:
+                facts = json.loads(fact_ledger_path.read_text(encoding="utf-8"))
+                spec_issues.extend(validate_fact_sources(DeckSpec(title=deck.title, narrative=deck.narrative, audience=deck.audience, goal=deck.goal, language=deck.language, theme=deck.theme, slides=[slide]), {"facts": facts}))
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
         artifact = browser.render_slide(request_id, slide, html_renderer.render(deck, slide), version=next_slide_version(request_dir, index), theme=deck.theme)
+        (request_dir / f"spec.raw.slide-{index}.v{artifact.version}.json").write_text(
+            json.dumps(raw_slide, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         yield GenerateDeckOutput(
             request_id=request_id,
             event_type="slide_preview",
@@ -98,7 +110,6 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
                     "index": index,
                     "png": artifact.png_rel,
                     "html": artifact.html_rel,
-                    "thumb_b64": artifact.thumb_b64,
                     "version": artifact.version,
                     "status": "ready" if not (artifact.issues or spec_issues) else "warning",
                     "issues": issues_to_dicts(spec_issues + artifact.issues),
@@ -108,6 +119,10 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
             sequence=2,
         )
         result = exporter.export(request_id, deck)
+        (request_dir / "spec.final.json").write_text(json.dumps(deck.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        issue_dicts = issues_to_dicts(spec_issues + artifact.issues)
+        must_fix = any(issue.get("severity") == "must_fix" for issue in issue_dicts)
+        quality_status = "needs_review" if must_fix else ("success_with_warnings" if result.warnings or issue_dicts else "success")
         yield GenerateDeckOutput(
             request_id=request_id,
             event_type="artifact",
@@ -115,7 +130,18 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
             message="PPTX file ready",
             artifact_path=str(result.path),
             payload_json=json.dumps(
-                {"request_id": request_id, "filename": result.path.name, "path": str(result.path), "relative_path": "deck.pptx", "warnings": result.warnings},
+                {
+                    "request_id": request_id,
+                    "filename": result.path.name,
+                    "path": str(result.path),
+                    "relative_path": "deck.pptx",
+                    "warnings": result.warnings,
+                    "issues": issue_dicts,
+                    "needs_review": must_fix,
+                    "quality_status": quality_status,
+                    "degraded": bool(result.manifest.get("degraded")),
+                    "export_manifest": "export-manifest.json",
+                },
                 ensure_ascii=False,
             ),
             sequence=3,
