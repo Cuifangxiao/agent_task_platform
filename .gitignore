@@ -14,14 +14,14 @@ venv/
 env/
 ENV/
 
-# Frontend dependencies and caches
+# Web dependencies and caches
 node_modules/
-front/node_modules/
-front/dist/
-front/.vite/
-front/.cache/
-front/coverage/
-front/*.tsbuildinfo
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
+apps/web/.cache/
+apps/web/coverage/
+apps/web/*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -35,7 +35,6 @@ bin/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
-frontend/
 
 # Test and tooling caches
 .coverage
@@ -55,7 +54,7 @@ htmlcov/
 .env
 .env.local
 .tmp/
-configs/config.yaml
-python-agent/config.yaml
-python-agent/logs/
-python-agent/artifacts/
+apps/api/config/config.yaml
+apps/runtime/config.yaml
+apps/runtime/logs/
+apps/runtime/artifacts/

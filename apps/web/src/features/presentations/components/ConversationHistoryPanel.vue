@@ -1,0 +1,65 @@
+<script setup lang="ts">
+import { FileClock, Loader2, MessageSquarePlus } from '@lucide/vue'
+
+import { normalizeStatusState } from '../lib/conversationProjection'
+import { formatHistoryTime } from '../lib/presentationUtils'
+import { statusStateLabel } from '../lib/progressView'
+import type { PptConversationSummary } from '../types'
+
+defineProps<{
+  conversations: PptConversationSummary[]
+  currentConversationId: number | null
+  loading: boolean
+  disabled: boolean
+}>()
+
+defineEmits<{
+  newConversation: []
+  select: [id: number]
+}>()
+</script>
+
+<template>
+  <aside class="history-panel">
+    <div class="history-panel-head">
+      <div class="history-panel-copy">
+        <span class="history-panel-kicker">History</span>
+        <strong>历史记录</strong>
+        <p>后端已保存你的 PPT 聊天记录。</p>
+      </div>
+      <button class="btn primary soft" type="button" :disabled="disabled" @click="$emit('newConversation')">
+        <MessageSquarePlus :size="16" />
+        新对话
+      </button>
+    </div>
+
+    <div v-if="loading" class="history-empty">
+      <Loader2 class="spin" :size="18" />
+      <span>正在加载历史记录…</span>
+    </div>
+    <div v-else-if="conversations.length === 0" class="history-empty">
+      <FileClock :size="18" />
+      <span>还没有历史记录，先发起一条新的 PPT 需求吧。</span>
+    </div>
+    <div v-else class="history-list">
+      <button
+        v-for="conversation in conversations"
+        :key="conversation.id"
+        type="button"
+        class="history-item"
+        :class="{ active: currentConversationId === conversation.id }"
+        :disabled="disabled"
+        @click="$emit('select', conversation.id)"
+      >
+        <div class="history-item-head">
+          <strong>{{ conversation.title }}</strong>
+          <span :class="['status-pill', `is-${conversation.status}`]">
+            {{ statusStateLabel(normalizeStatusState(conversation.status)) }}
+          </span>
+        </div>
+        <p>{{ conversation.agent_config_name }}</p>
+        <small>{{ formatHistoryTime(conversation.updated_at) }}</small>
+      </button>
+    </div>
+  </aside>
+</template>

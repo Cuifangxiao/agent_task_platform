@@ -1,0 +1,20 @@
+# 本地开发: cp config.example.yaml config.yaml (config.yaml 已 gitignore)
+# 密钥不要写在这里, 放 .env (见 .env.example)
+
+name: agent-runtime
+environment: dev
+
+log:
+  level: INFO
+  target: console
+  file_dir: ./logs
+
+server:
+  grpc:
+    host: 127.0.0.1
+    port: 50051
+    max_workers: 10
+    shutdown_grace: 5
+
+provider_catalog:
+  dir: ./providers/catalog

@@ -1,0 +1,22 @@
+* text=auto
+
+*.go text eol=lf
+*.proto text eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.sql text eol=lf
+*.md text eol=lf
+Makefile text eol=lf
+
+*.exe binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pptx binary
+*.pdf binary

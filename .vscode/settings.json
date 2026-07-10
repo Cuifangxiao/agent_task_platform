@@ -1,6 +1,6 @@
 {
   "python.analysis.extraPaths": [
-    "./python-agent"
+    "./apps/runtime"
   ],
   "pylint.args": [
     "--rcfile=${workspaceFolder}/.pylintrc"

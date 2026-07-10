@@ -1,0 +1,171 @@
+syntax = "proto3";
+
+package provider.v1;
+
+option go_package = "agent-task-platform/contracts/gen/go/v1/provider;providerv1";
+
+service ProviderRuntimeService {
+  rpc TestCredential(TestCredentialRequest) returns (TestCredentialResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc StreamText(StreamTextRequest) returns (stream StreamTextResponse);
+  rpc GenerateDeck(GenerateDeckRequest) returns (stream GenerateDeckResponse);
+  rpc ResumeDeck(ResumeDeckRequest) returns (stream GenerateDeckResponse);
+}
+
+message UserContext {
+  int64 user_id = 1;
+  string username = 2;
+  string session_id = 3;
+  string device = 4;
+}
+
+message TestCredentialRequest {
+  UserContext user = 1;
+  string provider = 2;
+  string api_key = 3;
+  string base_url = 4;
+}
+
+message TestCredentialResponse {
+  string request_id = 1;
+  string provider = 2;
+  string status = 3;
+  string message = 4;
+}
+
+message ListProvidersRequest {}
+
+message StreamTextRequest {
+  UserContext user = 1;
+  string provider = 2;
+  string model = 3;
+  string api_key = 4;
+  string base_url = 5;
+  string prompt = 6;
+  string system_prompt = 7;
+  double temperature = 8;
+  int32 max_tokens = 9;
+  string provider_options_json = 10;
+}
+
+message StreamTextResponse {
+  string request_id = 1;
+  string delta = 2;
+  bool done = 3;
+  string error = 4;
+  int32 sequence = 5;
+}
+
+message DeckNodeModelConfig {
+  string node_key = 1;
+  string provider = 2;
+  string model = 3;
+  string api_key = 4;
+  string base_url = 5;
+  string provider_options_json = 6;
+  double temperature = 7;
+  int32 max_tokens = 8;
+  bool supports_image_input = 9;
+}
+
+message DeckSourceFile {
+  string filename = 1;
+  bytes content = 2;
+  string resource_id = 3;
+  string local_path = 4;
+  string sha256 = 5;
+  int64 size_bytes = 6;
+}
+
+message GenerateDeckRequest {
+  UserContext user = 1;
+  string user_description = 2;
+  string source_file_filename = 3;
+  bytes source_file = 4;
+  repeated DeckNodeModelConfig node_model_configs = 5;
+  repeated DeckSourceFile source_files = 6;
+  string job_id = 7;
+  string generation_mode = 8;
+}
+
+message ResumeDeckRequest {
+  UserContext user = 1;
+  string request_id = 2;
+  string outline_markdown = 3;
+  repeated DeckNodeModelConfig node_model_configs = 4;
+  string action = 5;
+  string payload_json = 6;
+  string job_id = 7;
+}
+
+message DeckProgress {
+  int32 current = 1;
+  int32 total = 2;
+}
+
+message DeckSlideEvent {
+  int32 index = 1;
+  int32 version = 2;
+}
+
+message GenerateDeckResponse {
+  string request_id = 1;
+  string event_type = 2;
+  string stage = 3;
+  string message = 4;
+  string channel = 5;
+  string text_delta = 6;
+  string content = 7;
+  string payload_json = 8;
+  string artifact_path = 9;
+  bool done = 10;
+  string error = 11;
+  int64 sequence = 12;
+  string outline_markdown = 13;
+  int32 event_version = 14;
+  string job_id = 15;
+  string stage_status = 16;
+  DeckProgress progress = 17;
+  DeckSlideEvent slide = 18;
+  string severity = 19;
+  string action_required = 20;
+  bool retryable = 21;
+  string error_code = 22;
+}
+
+message ProviderModelParameter {
+  string name = 1;
+  string display_name = 2;
+  string type = 3;
+  string description = 4;
+  string default_value = 5;
+  repeated string options = 6;
+  bool required = 7;
+  optional double min = 8;
+  optional double max = 9;
+}
+
+message ProviderModel {
+  string id = 1;
+  string model_name = 2;
+  string display_name = 3;
+  string type = 4;
+  bool reasoning_supported = 5;
+  repeated ProviderModelParameter parameters = 6;
+}
+
+message ProviderDescriptor {
+  string name = 1;
+  string display_name = 2;
+  string description = 3;
+  string manager = 4;
+  string sdk = 5;
+  string default_base_url = 6;
+  bool supports_credential_test = 7;
+  bool supports_custom_base_url = 8;
+  repeated ProviderModel models = 9;
+}
+
+message ListProvidersResponse {
+  repeated ProviderDescriptor providers = 1;
+}

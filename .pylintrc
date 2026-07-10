@@ -1,5 +1,5 @@
 [MASTER]
-init-hook='import sys; sys.path.insert(0, "python-agent")'
+init-hook='import sys; sys.path.insert(0, "apps/runtime")'
 
 [TYPECHECK]
 generated-members=api.provider_pb2.*,provider_pb2.*

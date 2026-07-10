@@ -1,37 +1,59 @@
-# proto 唯一真源在 api/proto/,生成物提交进 git:
-#   Go     -> api/go/v1/provider/
-#   Python -> python-agent/api/
-# 依赖: protoc + protoc-gen-go + protoc-gen-go-grpc(Go 侧),
-#       python-agent/.venv 内的 grpcio-tools(Python 侧,见 requirements-dev.txt)
+# Shared protobuf source:
+#   contracts/proto/        -> protocol source of truth
+#   contracts/gen/go/       -> generated Go client
+#   apps/runtime/api/       -> generated Python client
 
-PROTO_DIR := api/proto/v1/provider
-GO_OUT    := api/go/v1/provider
-PY_OUT    := python-agent/api
-PY        := python-agent/.venv/bin/python
+PROTO_DIR  := contracts/proto/v1/provider
+GO_OUT     := contracts/gen/go/v1/provider
+PY_OUT     := apps/runtime/api
+RUNTIME_DIR := apps/runtime
+WEB_DIR     := apps/web
 
-.PHONY: proto proto-go proto-python run-go run-python test-python
+# Override on Unix: make RUNTIME_PY=.venv/bin/python <target>
+RUNTIME_PY ?= .venv/Scripts/python.exe
+
+.PHONY: proto proto-go proto-python fmt run-api run-runtime run-web test test-go test-runtime test-web build-web
 
 proto: proto-go proto-python
 
 proto-go:
 	rm -rf $(GO_OUT) && mkdir -p $(GO_OUT)
-	protoc --proto_path=$(PROTO_DIR) \
-	  --go_out=paths=source_relative:$(GO_OUT) \
-	  --go-grpc_out=paths=source_relative:$(GO_OUT) \
-	  $(PROTO_DIR)/provider.proto
+	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m grpc_tools.protoc \
+	  --proto_path=../../$(PROTO_DIR) \
+	  --go_out=paths=source_relative:../../$(GO_OUT) \
+	  --go-grpc_out=paths=source_relative:../../$(GO_OUT) \
+	  ../../$(PROTO_DIR)/provider.proto
 
 proto-python:
 	rm -f $(PY_OUT)/*_pb2*.py
-	$(PY) -m grpc_tools.protoc --proto_path=$(PROTO_DIR) \
-	  --python_out=$(PY_OUT) --grpc_python_out=$(PY_OUT) \
-	  $(PROTO_DIR)/provider.proto
+	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m grpc_tools.protoc \
+	  --proto_path=../../$(PROTO_DIR) \
+	  --python_out=api --grpc_python_out=api \
+	  ../../$(PROTO_DIR)/provider.proto
 	perl -i -pe 's/^import (\w+_pb2)( as \w+)?$$/from . import $$1$$2/' $(PY_OUT)/provider_pb2_grpc.py
 
-run-go:
-	go run ./cmd/server --conf configs/config.yaml
+fmt:
+	gofmt -w apps/api contracts/gen/go
 
-run-python:
-	cd python-agent && .venv/bin/python main.py --conf config.yaml
+run-api:
+	go run ./apps/api/cmd/server --conf apps/api/config/config.yaml
 
-test-python:
-	cd python-agent && .venv/bin/python -m pytest tests/
+run-runtime:
+	cd $(RUNTIME_DIR) && $(RUNTIME_PY) main.py --conf config.yaml
+
+run-web:
+	npm --prefix $(WEB_DIR) run dev
+
+test: test-go test-runtime test-web
+
+test-go:
+	go test ./...
+
+test-runtime:
+	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m pytest tests -q
+
+test-web:
+	npm --prefix $(WEB_DIR) test
+
+build-web:
+	npm --prefix $(WEB_DIR) run build
