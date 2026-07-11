@@ -117,6 +117,7 @@ Authorization: Bearer <access_token>
 | POST | `/api/v1/text-generations` | 是 | 文本 SSE |
 | GET | `/api/v1/presentations/conversations` | 是 | `ConversationSummary[]` |
 | GET | `/api/v1/presentations/conversations/:id` | 是 | `ConversationDetail` |
+| DELETE | `/api/v1/presentations/conversations/:id` | 是 | `{deleted, id}` |
 | POST | `/api/v1/presentations/jobs` | 是 | `DeckJob`（202） |
 | GET | `/api/v1/presentations/jobs/:job_id` | 是 | `DeckJob` |
 | GET | `/api/v1/presentations/jobs/:job_id/events` | 是 | 可续传 PPT SSE |
@@ -548,6 +549,12 @@ data: {"request_id":"...","done":true,"sequence":1}
 | `result` | `assistant` | `title`、`text`、`requestId`、`fileName`、`warnings[]`、`degraded`、`qualityStatus` |
 
 `status.steps[]` 包含 `id`、`label`、`message`、`tone`、可选 `stage`；`status.slides[]` 可能包含页码、标题、要点、layout/component、预览路径、version、status 和 warnings。消息是持久化事件的 UI 兼容投影；精确、可续传的执行记录以 Job Event SSE 为准。
+
+### 9.3 删除会话
+
+`DELETE /api/v1/presentations/conversations/:id`
+
+仅能删除当前用户自己的会话。删除会级联清理该会话的消息、Job、Event、Action、Asset 和 Source 数据，并清理关联的 PPT 产物目录。处于 `queued`、`running` 或 `exporting` 的 Job 会返回 `409 conflict`，需要先取消或等待任务结束；等待大纲/风格确认的会话可以直接删除。
 
 ## 10. PPT Job
 
@@ -1056,6 +1063,7 @@ Runtime 的顶层 RPC 异常不会把异常详情直接返回客户端：文本/
 | `POST /agent/stream-text` | `POST /api/v1/text-generations` | SSE |
 | `GET /ppt-agent/conversations` | `GET /api/v1/presentations/conversations` |  |
 | `GET /ppt-agent/conversations/:id` | `GET /api/v1/presentations/conversations/:id` |  |
+| `DELETE /ppt-agent/conversations/:id` | `DELETE /api/v1/presentations/conversations/:id` |  |
 | `POST /ppt-agent/jobs` | `POST /api/v1/presentations/jobs` | 推荐立即迁移 |
 | `GET /ppt-agent/jobs/:job_id` | `GET /api/v1/presentations/jobs/:job_id` |  |
 | `GET /ppt-agent/jobs/:job_id/events` | `GET /api/v1/presentations/jobs/:job_id/events` | 可续传 SSE |

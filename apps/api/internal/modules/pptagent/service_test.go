@@ -240,9 +240,12 @@ func (r *fakeAgentConfigRepo) DeleteConfig(ctx context.Context, userID int64, id
 }
 
 type fakeHistoryRepo struct {
-	conversation   *Conversation
-	outlineMessage *ConversationMessage
-	nextMessageID  int64
+	conversation          *Conversation
+	outlineMessage        *ConversationMessage
+	nextMessageID         int64
+	deletedConversationID int64
+	deleteRequestIDs      []string
+	deleteErr             error
 }
 
 func (r *fakeHistoryRepo) CreateConversation(ctx context.Context, conversation Conversation) (*Conversation, error) {
@@ -263,6 +266,11 @@ func (r *fakeHistoryRepo) GetConversationByRequestID(ctx context.Context, userID
 
 func (r *fakeHistoryRepo) ListConversationsByUserID(ctx context.Context, userID int64) ([]*Conversation, error) {
 	return nil, nil
+}
+
+func (r *fakeHistoryRepo) DeleteConversation(ctx context.Context, userID int64, id int64) ([]string, error) {
+	r.deletedConversationID = id
+	return r.deleteRequestIDs, r.deleteErr
 }
 
 func (r *fakeHistoryRepo) CreateMessage(ctx context.Context, message ConversationMessage) (*ConversationMessage, error) {

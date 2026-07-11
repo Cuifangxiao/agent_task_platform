@@ -31,6 +31,7 @@ export function usePresentationConversations(options: ConversationOptions) {
   const conversationList = ref<PptConversationSummary[]>([])
   const currentConversationId = ref<number | null>(null)
   const historyLoading = ref(false)
+  const deletingConversationId = ref<number | null>(null)
   const selectedConfigId = ref('')
 
   const defaultConfig = computed(() => options.configs().find((item) => item.is_default) ?? options.configs()[0] ?? null)
@@ -104,6 +105,26 @@ export function usePresentationConversations(options: ConversationOptions) {
     options.job.restore(detail.job)
   }
 
+  async function deleteConversation(id: number) {
+    if (options.job.running.value || deletingConversationId.value !== null) return
+    deletingConversationId.value = id
+    options.job.error.value = ''
+    try {
+      await options.api.deleteConversation(id)
+      const deletingCurrentConversation = currentConversationId.value === id
+      conversationList.value = conversationList.value.filter((item) => item.id !== id)
+      if (!deletingCurrentConversation) return
+
+      resetDraftConversation(false)
+      const nextConversation = conversationList.value[0]
+      if (nextConversation) await openConversation(nextConversation.id)
+    } catch (cause) {
+      options.job.error.value = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      deletingConversationId.value = null
+    }
+  }
+
   async function syncCurrentConversationFromServer() {
     if (!currentConversationId.value) {
       await refreshHistory()
@@ -117,6 +138,8 @@ export function usePresentationConversations(options: ConversationOptions) {
     conversationList,
     currentConversationId,
     currentConversationSummary,
+    deleteConversation,
+    deletingConversationId,
     historyLoading,
     openConversation,
     refreshHistory,

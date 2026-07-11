@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -86,6 +89,46 @@ func (s *Service) GetConversation(ctx context.Context, userID int64, id int64) (
 	}
 
 	return resp, nil
+}
+
+func (s *Service) DeleteConversation(ctx context.Context, userID int64, id int64) error {
+	if userID <= 0 {
+		return fmt.Errorf("%w: invalid user id", ErrInvalidRequest)
+	}
+	if id <= 0 {
+		return fmt.Errorf("%w: invalid conversation id", ErrInvalidRequest)
+	}
+	if s.historyRepo == nil {
+		return fmt.Errorf("ppt chat history repository is not configured")
+	}
+
+	requestIDs, err := s.historyRepo.DeleteConversation(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	s.removeConversationArtifacts(requestIDs)
+	return nil
+}
+
+func (s *Service) removeConversationArtifacts(requestIDs []string) {
+	root := filepath.Clean(s.artifactDir)
+	for _, requestID := range requestIDs {
+		requestID = strings.TrimSpace(requestID)
+		if !artifactIDPattern.MatchString(requestID) {
+			slog.Warn("skipping invalid ppt artifact id during conversation deletion", "request_id", requestID)
+			continue
+		}
+
+		target := filepath.Join(root, requestID)
+		relative, err := filepath.Rel(root, target)
+		if err != nil || relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			slog.Warn("skipping unsafe ppt artifact path during conversation deletion", "request_id", requestID, "error", err)
+			continue
+		}
+		if err := os.RemoveAll(target); err != nil {
+			slog.Warn("failed to remove ppt artifacts after conversation deletion", "request_id", requestID, "error", err)
+		}
+	}
 }
 
 func (s *Service) startConversation(

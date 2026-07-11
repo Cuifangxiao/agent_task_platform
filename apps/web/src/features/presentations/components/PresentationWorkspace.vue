@@ -11,7 +11,7 @@ import { usePresentationConversations } from '../composables/usePresentationConv
 import { usePresentationJobController } from '../composables/usePresentationJobController'
 import { usePresentationMessages } from '../composables/usePresentationMessages'
 import { validateSourceFiles } from '../lib/presentationUtils'
-import type { PptGeneratePayload, PresentationMessageAction } from '../types'
+import type { PptConversationSummary, PptGeneratePayload, PresentationMessageAction } from '../types'
 import type { ParsedSseEvent } from '@/shared/api/sse'
 import ConversationHeader from './ConversationHeader.vue'
 import ConversationHistoryPanel from './ConversationHistoryPanel.vue'
@@ -201,6 +201,14 @@ function clearComposer() {
   composer.text = ''
   clearFiles()
 }
+
+function confirmDeleteConversation(conversation: PptConversationSummary) {
+  if (job.running.value || conversations.deletingConversationId.value !== null) return
+  const confirmed = window.confirm(
+    `确定删除 PPT 会话“${conversation.title}”吗？\n\n聊天记录、任务记录和对应的 PPT 产物都会永久删除。`,
+  )
+  if (confirmed) void conversations.deleteConversation(conversation.id)
+}
 </script>
 
 <template>
@@ -228,8 +236,10 @@ function clearComposer() {
       <ConversationHistoryPanel
         :conversations="conversations.conversationList.value"
         :current-conversation-id="conversations.currentConversationId.value"
+        :deleting-conversation-id="conversations.deletingConversationId.value"
         :loading="conversations.historyLoading.value"
         :disabled="job.running.value"
+        @delete-conversation="confirmDeleteConversation"
         @new-conversation="conversations.startNewConversation"
         @select="conversations.openConversation"
       />

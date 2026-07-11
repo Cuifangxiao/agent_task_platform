@@ -13,6 +13,7 @@ from langgraph.config import get_stream_writer
 
 import core.deck.events as events
 from core.deck.pipeline.llm import invoke_json_with_retries, llm_for_node, load_node_prompt
+from core.deck.pipeline.slides import legacy_slide_payload
 from core.deck.runtime_metrics import record_fallback
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import issues_to_dicts, validate_slide_spec
@@ -97,19 +98,17 @@ def repair_deck(
             new_issues.extend(issues_to_dicts(artifact.issues))
         new_issues.extend(issues_to_dicts(validate_slide_spec(repaired)))
         repaired_pages.add(repaired.index)
-        writer(
-            events.slide_preview(
-                f"Slide {repaired.index} preview repaired",
-                {
-                    "index": repaired.index,
-                    "png": artifact.png_rel,
-                    "html": artifact.html_rel,
-                    "version": artifact.version,
-                    "status": "ready" if not artifact.issues else "warning",
-                    "renderer": artifact.renderer,
-                },
-            )
+        preview_status = "ready" if not artifact.issues else "warning"
+        preview_payload = legacy_slide_payload(repaired.to_dict(), status=preview_status)
+        preview_payload.update(
+            {
+                "png": artifact.png_rel,
+                "html": artifact.html_rel,
+                "version": artifact.version,
+                "renderer": artifact.renderer,
+            }
         )
+        writer(events.slide_preview(f"Slide {repaired.index} preview repaired", preview_payload))
 
     retained_issues = [issue for issue in issues if int(issue.get("page") or 0) not in repaired_pages] + new_issues
     logger.info("deck repair done: request_id=%s round=%s repaired_pages=%s retained_issues=%s", request_id, round_index, sorted(repaired_pages), len(retained_issues))

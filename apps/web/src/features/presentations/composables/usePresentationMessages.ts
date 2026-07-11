@@ -59,6 +59,12 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
     updateStatusMessage(statusId, (status) => {
       if (data.request_id) status.requestId = data.request_id
       if (projection.slideUpdate) upsertSlideProgress(status, projection.slideUpdate)
+      if (data.event_type === 'validation_report') {
+        for (const slide of status.slides) {
+          slide.warnings = []
+          if (slide.status === 'warning') slide.status = 'reviewed'
+        }
+      }
       for (const warningUpdate of projection.qualityUpdates) {
         upsertSlideProgress(status, warningUpdate)
       }
@@ -179,9 +185,11 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
     if (update.status !== undefined && update.status !== 'pending') {
       slide.status = update.status
     }
-    if (update.warnings?.length) {
-      slide.warnings = [...new Set([...slide.warnings, ...update.warnings])]
-      if (slide.status !== 'error') {
+    if (update.warnings !== undefined) {
+      slide.warnings = update.replaceWarnings
+        ? [...new Set(update.warnings)]
+        : [...new Set([...slide.warnings, ...update.warnings])]
+      if (slide.warnings.length && slide.status !== 'error') {
         slide.status = 'warning'
       }
     }

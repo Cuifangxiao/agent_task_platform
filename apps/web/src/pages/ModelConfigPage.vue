@@ -13,10 +13,15 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  save: [payload: ModelConfigPayload, id?: number]
-  delete: [id: number]
-  testCredential: [provider: string, apiKey: string, baseUrl?: string]
+  save: [payload: ModelConfigPayload, id: number | undefined, callbacks: FormActionCallbacks]
+  delete: [id: number, callbacks: FormActionCallbacks]
+  testCredential: [provider: string, apiKey: string, baseUrl: string | undefined, callbacks: FormActionCallbacks]
 }>()
+
+interface FormActionCallbacks {
+  onError: (message: string) => void
+  onSuccess?: (message?: string) => void
+}
 
 interface Draft {
   id?: number
@@ -33,6 +38,8 @@ interface Draft {
 }
 
 const draft = reactive<Draft>(emptyDraft())
+const formError = ref('')
+const formNotice = ref('')
 const isEditorOpen = ref(false)
 
 const selectedProvider = computed(() => props.providers.find((item) => item.name === draft.provider) ?? null)
@@ -111,6 +118,7 @@ function normalizeParameterValue(parameter: ProviderParameter, value: unknown) {
 }
 
 function edit(model: ModelConfig) {
+  clearFormFeedback()
   Object.assign(draft, {
     id: model.id,
     name: model.name,
@@ -128,6 +136,7 @@ function edit(model: ModelConfig) {
 }
 
 function reset() {
+  clearFormFeedback()
   Object.assign(draft, emptyDraft())
   if (props.providers[0]) {
     draft.provider = props.providers[0].name
@@ -138,9 +147,11 @@ function reset() {
 
 function closeEditor() {
   isEditorOpen.value = false
+  clearFormFeedback()
 }
 
 function submit() {
+  clearFormFeedback()
   const payload: ModelConfigPayload = {
     name: draft.name.trim(),
     provider: draft.provider,
@@ -157,7 +168,30 @@ function submit() {
     payload.api_key = draft.api_key.trim()
   }
 
-  emit('save', payload, draft.id)
+  emit('save', payload, draft.id, {
+    onError: showFormError,
+    onSuccess: closeEditor,
+  })
+}
+
+function testCredential() {
+  clearFormFeedback()
+  emit('testCredential', draft.provider, draft.api_key, draft.base_url || undefined, {
+    onError: showFormError,
+    onSuccess: (message) => {
+      formNotice.value = message || '凭证测试完成。'
+    },
+  })
+}
+
+function showFormError(message: string) {
+  formNotice.value = ''
+  formError.value = message
+}
+
+function clearFormFeedback() {
+  formError.value = ''
+  formNotice.value = ''
 }
 </script>
 
@@ -201,9 +235,17 @@ function submit() {
             <div>
               <h2>{{ draft.id ? '编辑模型配置' : '新建模型配置' }}</h2>
               <p>{{ draft.id ? '留空 API Key 会保留原密钥。' : '填写模型凭证和默认调用参数。' }}</p>
+              <p v-if="formError" class="form-error modal-feedback" role="alert">{{ formError }}</p>
+              <p v-else-if="formNotice" class="form-notice modal-feedback" role="status">{{ formNotice }}</p>
             </div>
             <div class="modal-head-actions">
-              <button v-if="draft.id" class="icon-btn danger" type="button" title="删除" @click="emit('delete', draft.id)">
+              <button
+                v-if="draft.id"
+                class="icon-btn danger"
+                type="button"
+                title="删除"
+                @click="emit('delete', draft.id, { onError: showFormError, onSuccess: closeEditor })"
+              >
                 <Trash2 :size="18" />
               </button>
               <button class="icon-btn" type="button" title="关闭" @click="closeEditor">
@@ -292,7 +334,7 @@ function submit() {
           </div>
 
           <div class="modal-actions">
-            <button class="btn ghost" type="button" :disabled="!draft.provider || !draft.api_key" @click="emit('testCredential', draft.provider, draft.api_key, draft.base_url)">
+            <button class="btn ghost" type="button" :disabled="!draft.provider || !draft.api_key" @click="testCredential">
               <KeyRound :size="18" />
               测试凭证
             </button>

@@ -15,6 +15,7 @@ const PRESENTATIONS_PATH = '/presentations'
 export interface PresentationApi {
   listConversations: () => Promise<PptConversationSummary[]>
   getConversation: (id: number) => Promise<PptConversationDetail>
+  deleteConversation: (id: number) => Promise<{ deleted: boolean; id: number }>
   createJob: (payload: PptGeneratePayload) => Promise<PptDeckJob>
   getJob: (jobId: string) => Promise<PptDeckJob>
   subscribeToJob: (
@@ -38,6 +39,11 @@ export function createPresentationApi(http: HttpClient): PresentationApi {
       http.request<PptConversationSummary[]>(`${PRESENTATIONS_PATH}/conversations`, { auth: true }),
     getConversation: (id) =>
       http.request<PptConversationDetail>(`${PRESENTATIONS_PATH}/conversations/${id}`, { auth: true }),
+    deleteConversation: (id) =>
+      http.request<{ deleted: boolean; id: number }>(`${PRESENTATIONS_PATH}/conversations/${id}`, {
+        method: 'DELETE',
+        auth: true,
+      }),
     createJob: (payload) =>
       http.request<PptDeckJob>(`${PRESENTATIONS_PATH}/jobs`, {
         method: 'POST',

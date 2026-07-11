@@ -69,6 +69,32 @@ export function useWorkspaceStore() {
     banner.value = { text, tone }
   }
 
+  function upsertModelConfig(config: ModelConfig) {
+    const others = modelConfigs.value
+      .filter((item) => item.id !== config.id)
+      .map((item) => (config.is_default ? { ...item, is_default: false } : item))
+
+    modelConfigs.value = [config, ...others].sort(compareConfigs)
+  }
+
+  function removeModelConfig(id: number) {
+    modelConfigs.value = modelConfigs.value.filter((item) => item.id !== id)
+  }
+
+  function upsertAgentConfig(config: AgentConfig) {
+    const others = agentConfigs.value
+      .filter((item) => item.id !== config.id)
+      .map((item) => (
+        config.is_default && item.agent_id === config.agent_id ? { ...item, is_default: false } : item
+      ))
+
+    agentConfigs.value = [config, ...others].sort(compareConfigs)
+  }
+
+  function removeAgentConfig(id: number) {
+    agentConfigs.value = agentConfigs.value.filter((item) => item.id !== id)
+  }
+
   async function boot() {
     loading.boot = true
     try {
@@ -164,9 +190,21 @@ export function useWorkspaceStore() {
     pptAgent,
     pptAgentConfigs,
     providers,
+    removeAgentConfig,
+    removeModelConfig,
     reload,
     session,
+    upsertAgentConfig,
+    upsertModelConfig,
   }
+}
+
+function compareConfigs<T extends { id: number; is_default: boolean; updated_at: string }>(left: T, right: T) {
+  if (left.is_default !== right.is_default) {
+    return left.is_default ? -1 : 1
+  }
+  const updatedAtDifference = Date.parse(right.updated_at) - Date.parse(left.updated_at)
+  return updatedAtDifference || right.id - left.id
 }
 
 function readSession() {

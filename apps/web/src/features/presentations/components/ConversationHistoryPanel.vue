@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileClock, Loader2, MessageSquarePlus } from '@lucide/vue'
+import { FileClock, Loader2, MessageSquarePlus, Trash2 } from '@lucide/vue'
 
 import { normalizeStatusState } from '../lib/conversationProjection'
 import { formatHistoryTime } from '../lib/presentationUtils'
@@ -11,11 +11,13 @@ defineProps<{
   currentConversationId: number | null
   loading: boolean
   disabled: boolean
+  deletingConversationId: number | null
 }>()
 
 defineEmits<{
   newConversation: []
   select: [id: number]
+  deleteConversation: [conversation: PptConversationSummary]
 }>()
 </script>
 
@@ -42,24 +44,39 @@ defineEmits<{
       <span>还没有历史记录，先发起一条新的 PPT 需求吧。</span>
     </div>
     <div v-else class="history-list">
-      <button
+      <div
         v-for="conversation in conversations"
         :key="conversation.id"
-        type="button"
-        class="history-item"
-        :class="{ active: currentConversationId === conversation.id }"
-        :disabled="disabled"
-        @click="$emit('select', conversation.id)"
+        class="history-item-wrap"
       >
-        <div class="history-item-head">
-          <strong>{{ conversation.title }}</strong>
-          <span :class="['status-pill', `is-${conversation.status}`]">
-            {{ statusStateLabel(normalizeStatusState(conversation.status)) }}
-          </span>
-        </div>
-        <p>{{ conversation.agent_config_name }}</p>
-        <small>{{ formatHistoryTime(conversation.updated_at) }}</small>
-      </button>
+        <button
+          type="button"
+          class="history-item"
+          :class="{ active: currentConversationId === conversation.id }"
+          :disabled="disabled || deletingConversationId !== null"
+          @click="$emit('select', conversation.id)"
+        >
+          <div class="history-item-head">
+            <strong>{{ conversation.title }}</strong>
+            <span :class="['status-pill', `is-${conversation.status}`]">
+              {{ statusStateLabel(normalizeStatusState(conversation.status)) }}
+            </span>
+          </div>
+          <p>{{ conversation.agent_config_name }}</p>
+          <small>{{ formatHistoryTime(conversation.updated_at) }}</small>
+        </button>
+        <button
+          type="button"
+          class="history-delete"
+          :disabled="disabled || deletingConversationId !== null"
+          :aria-label="`删除会话：${conversation.title}`"
+          title="删除会话"
+          @click="$emit('deleteConversation', conversation)"
+        >
+          <Loader2 v-if="deletingConversationId === conversation.id" class="spin" :size="15" />
+          <Trash2 v-else :size="15" />
+        </button>
+      </div>
     </div>
   </aside>
 </template>

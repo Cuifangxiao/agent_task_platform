@@ -72,3 +72,23 @@ test('SSE and downloads remain raw response channels', async (context) => {
   assert.equal(download.filename, 'deck.pptx')
   assert.equal(await download.blob.text(), 'binary-content')
 })
+
+test('canonical presentation conversation deletion uses DELETE and unwraps the response', async (context) => {
+  let requestedPath = ''
+  let requestedMethod = ''
+  context.mock.method(globalThis, 'fetch', async (input, init) => {
+    requestedPath = String(input)
+    requestedMethod = init?.method ?? ''
+    return new Response(JSON.stringify({ data: { deleted: true, id: 42 }, meta: { request_id: 'request-3' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  })
+
+  assert.deepEqual(
+    await client().request('/presentations/conversations/42', { method: 'DELETE' }),
+    { deleted: true, id: 42 },
+  )
+  assert.equal(requestedPath, '/api/v1/presentations/conversations/42')
+  assert.equal(requestedMethod, 'DELETE')
+})

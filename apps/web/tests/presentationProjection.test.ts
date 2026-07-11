@@ -66,3 +66,45 @@ test('message reducer projects outline and artifact events into chat messages', 
   const result = store.messages.value.find((message) => message.kind === 'result')
   assert.equal(result?.kind === 'result' ? result.fileName : '', 'deck.pptx')
 })
+
+test('latest validation report replaces resolved slide warnings and uses review status', () => {
+  const store = usePresentationMessages(async () => undefined)
+  store.createStatusMessage('Working', 'Please wait')
+  store.applyStreamChunk({
+    request_id: 'request-1',
+    event_type: 'slide_ready',
+    stage: 'writer',
+    payload: { index: 1, title: 'Transformer', status: 'ready' },
+  })
+  store.applyStreamChunk({
+    request_id: 'request-1',
+    event_type: 'validation_report',
+    stage: 'validate',
+    payload: {
+      issues: [{ page: 1, severity: 'must_fix', description: 'BERT and GPT need a source.' }],
+    },
+  })
+  store.applyStreamChunk({
+    request_id: 'request-1',
+    event_type: 'validation_report',
+    stage: 'validate',
+    payload: {
+      issues: [{ page: 1, severity: 'must_fix', description: 'Current overflow warning.' }],
+    },
+  })
+
+  const status = store.messages.value.find((message) => message.kind === 'status')
+  assert.equal(status?.kind, 'status')
+  if (status?.kind !== 'status') return
+  assert.equal(status.slides[0]?.status, 'warning')
+  assert.deepEqual(status.slides[0]?.warnings, ['Current overflow warning.'])
+
+  store.applyStreamChunk({
+    request_id: 'request-1',
+    event_type: 'validation_report',
+    stage: 'validate',
+    payload: { issues: [] },
+  })
+  assert.equal(status.slides[0]?.status, 'reviewed')
+  assert.deepEqual(status.slides[0]?.warnings, [])
+})

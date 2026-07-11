@@ -20,8 +20,15 @@ DOM_VALIDATION_JS = """
   const elements = Array.from(document.querySelectorAll('[data-text]'));
   const rects = elements.map((el, index) => {
     const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    const fontSize = Number.parseFloat(style.fontSize) || 0;
+    const verticalTolerance = Math.max(3, fontSize * 0.2);
+    const horizontalTolerance = Math.max(2, fontSize * 0.1);
     const text = (el.innerText || el.textContent || '').trim();
-    if (el.scrollHeight > el.clientHeight + 2 || el.scrollWidth > el.clientWidth + 2) {
+    if (
+      el.scrollHeight > el.clientHeight + verticalTolerance ||
+      el.scrollWidth > el.clientWidth + horizontalTolerance
+    ) {
       issues.push({ kind: 'overflow', text, detail: 'Text content overflows its box.' });
     }
     if (rect.left < -2 || rect.top < -2 || rect.right > canvas.width + 2 || rect.bottom > canvas.height + 2) {

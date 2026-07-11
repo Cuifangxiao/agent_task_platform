@@ -6,8 +6,10 @@ import base64
 import io
 import logging
 import shutil
+import threading
 import textwrap
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,14 +41,20 @@ class SlideArtifact:
 
 
 class BrowserSession:
-    """Request-scoped Playwright browser/page; do not share across threads."""
+    """Request-scoped Playwright browser/page owned by one dedicated thread."""
 
     def __init__(self) -> None:
         self._playwright: Any = None
         self._browser: Any = None
         self._page: Any = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="deck-browser")
+        self._state_lock = threading.Lock()
+        self._closed = False
 
     def capture(self, html: str, png_path: Path) -> None:
+        self._dispatch(self._capture, html, png_path)
+
+    def _capture(self, html: str, png_path: Path) -> None:
         started_at = time.perf_counter()
         logger.info("deck browser capture start: png=%s html_bytes=%s", png_path, len(html.encode("utf-8")))
         page = self._get_page()
@@ -55,12 +63,18 @@ class BrowserSession:
         logger.info("deck browser capture done: png=%s bytes=%s elapsed=%.2fs", png_path, png_path.stat().st_size if png_path.exists() else 0, time.perf_counter() - started_at)
 
     def inspect_dom(self, page_index: int) -> list[ValidationIssue]:
+        return self._dispatch(self._inspect_dom, page_index)
+
+    def _inspect_dom(self, page_index: int) -> list[ValidationIssue]:
         page = self._page
         if page is None:
             return []
         return validate_dom_result(page.evaluate(DOM_VALIDATION_JS), page=page_index)
 
     def extract_hidden_text_background(self, html: str, bg_path: Path) -> list[dict[str, Any]]:
+        return self._dispatch(self._extract_hidden_text_background, html, bg_path)
+
+    def _extract_hidden_text_background(self, html: str, bg_path: Path) -> list[dict[str, Any]]:
         started_at = time.perf_counter()
         logger.info("deck browser text background start: png=%s html_bytes=%s", bg_path, len(html.encode("utf-8")))
         page = self._get_page()
@@ -73,12 +87,26 @@ class BrowserSession:
         return text_layer if isinstance(text_layer, list) else []
 
     def extract_text_layer(self, html: str) -> list[dict[str, Any]]:
+        return self._dispatch(self._extract_text_layer, html)
+
+    def _extract_text_layer(self, html: str) -> list[dict[str, Any]]:
         page = self._get_page()
         page.set_content(html, wait_until="load")
         result = page.evaluate(TEXT_LAYER_JS)
         return result if isinstance(result, list) else []
 
     def close(self) -> None:
+        with self._state_lock:
+            if self._closed:
+                return
+            self._closed = True
+            future = self._executor.submit(self._close_resources)
+        try:
+            future.result()
+        finally:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+
+    def _close_resources(self) -> None:
         page = self._page
         browser = self._browser
         playwright = self._playwright
@@ -96,6 +124,13 @@ class BrowserSession:
                     resource.close()
             except Exception:  # pylint: disable=broad-exception-caught
                 logger.debug("browser session resource close failed", exc_info=True)
+
+    def _dispatch(self, operation: Any, *args: Any) -> Any:
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError("browser session is closed")
+            future = self._executor.submit(operation, *args)
+        return future.result()
 
     def _get_page(self) -> Any:
         if self._page is not None:

@@ -92,22 +92,22 @@ export function qualityWarningUpdates(data: PptStreamChunk): SlideProgressUpdate
   }
   const issues = (data.payload as Record<string, unknown>).issues
   if (!Array.isArray(issues)) return []
-  const byPage = new Map<number, { warnings: string[]; mustFix: boolean }>()
+  const byPage = new Map<number, string[]>()
   for (const raw of issues) {
     if (!raw || typeof raw !== 'object') continue
     const issue = raw as Record<string, unknown>
     const page = Number(issue.page)
     const description = String(issue.description ?? '').trim()
     if (!Number.isFinite(page) || page <= 0 || !description) continue
-    const current = byPage.get(page) ?? { warnings: [], mustFix: false }
-    current.warnings.push(description)
-    current.mustFix ||= issue.severity === 'must_fix'
+    const current = byPage.get(page) ?? []
+    current.push(description)
     byPage.set(page, current)
   }
-  return [...byPage.entries()].map(([index, value]) => ({
+  return [...byPage.entries()].map(([index, warnings]) => ({
     index,
-    warnings: [...new Set(value.warnings)],
-    status: value.mustFix ? 'error' : 'warning',
+    warnings: [...new Set(warnings)],
+    replaceWarnings: true,
+    status: 'warning',
   }))
 }
 

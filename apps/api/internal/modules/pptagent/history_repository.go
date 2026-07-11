@@ -5,15 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var ErrConversationNotFound = errors.New("ppt conversation not found")
+var ErrConversationActive = errors.New("ppt conversation has an active job")
 
 type HistoryRepository interface {
 	CreateConversation(ctx context.Context, conversation Conversation) (*Conversation, error)
 	GetConversationByID(ctx context.Context, userID int64, id int64) (*Conversation, error)
 	GetConversationByRequestID(ctx context.Context, userID int64, requestID string) (*Conversation, error)
 	ListConversationsByUserID(ctx context.Context, userID int64) ([]*Conversation, error)
+	DeleteConversation(ctx context.Context, userID int64, id int64) ([]string, error)
 	CreateMessage(ctx context.Context, message ConversationMessage) (*ConversationMessage, error)
 	UpdateMessageContent(ctx context.Context, messageID int64, requestID string, contentJSON string) error
 	GetLatestMessageByKindAndRequestID(ctx context.Context, conversationID int64, kind string, requestID string) (*ConversationMessage, error)
@@ -136,6 +139,98 @@ func (r *MySQLHistoryRepository) ListConversationsByUserID(ctx context.Context, 
 	}
 
 	return conversations, nil
+}
+
+func (r *MySQLHistoryRepository) DeleteConversation(ctx context.Context, userID int64, id int64) ([]string, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin delete ppt conversation: %w", err)
+	}
+	defer tx.Rollback()
+
+	var latestRequestID string
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT latest_request_id FROM ppt_chat_conversations WHERE user_id = ? AND id = ? FOR UPDATE`,
+		userID,
+		id,
+	).Scan(&latestRequestID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrConversationNotFound
+		}
+		return nil, fmt.Errorf("lock ppt conversation for deletion: %w", err)
+	}
+
+	requestIDs := make([]string, 0, 2)
+	seenRequestIDs := make(map[string]struct{})
+	appendRequestID := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, exists := seenRequestIDs[value]; exists {
+			return
+		}
+		seenRequestIDs[value] = struct{}{}
+		requestIDs = append(requestIDs, value)
+	}
+	appendRequestID(latestRequestID)
+
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT request_id, status FROM ppt_deck_jobs WHERE user_id = ? AND conversation_id = ? FOR UPDATE`,
+		userID,
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query ppt conversation jobs for deletion: %w", err)
+	}
+	for rows.Next() {
+		var requestID sql.NullString
+		var status DeckJobStatus
+		if err := rows.Scan(&requestID, &status); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan ppt conversation job for deletion: %w", err)
+		}
+		if conversationDeletionBlocked(status) {
+			rows.Close()
+			return nil, ErrConversationActive
+		}
+		if requestID.Valid {
+			appendRequestID(requestID.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate ppt conversation jobs for deletion: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close ppt conversation jobs for deletion: %w", err)
+	}
+
+	result, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM ppt_chat_conversations WHERE user_id = ? AND id = ?`,
+		userID,
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("delete ppt conversation: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return nil, fmt.Errorf("read deleted ppt conversation count: %w", err)
+	} else if affected != 1 {
+		return nil, ErrConversationNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit delete ppt conversation: %w", err)
+	}
+	return requestIDs, nil
+}
+
+func conversationDeletionBlocked(status DeckJobStatus) bool {
+	return !status.Terminal() && !status.Waiting()
 }
 
 func (r *MySQLHistoryRepository) CreateMessage(ctx context.Context, message ConversationMessage) (*ConversationMessage, error) {

@@ -170,15 +170,22 @@ func (s *persistedDeckStream) applyValidationIssues(raw json.RawMessage) {
 	if json.Unmarshal(raw, &payload) != nil {
 		return
 	}
+	for index := range s.statusContent.Slides {
+		s.statusContent.Slides[index].Warnings = nil
+		if s.statusContent.Slides[index].Status == "warning" || s.statusContent.Slides[index].Status == "error" {
+			s.statusContent.Slides[index].Status = "reviewed"
+		}
+	}
+
+	warningsByPage := make(map[int][]string)
 	for _, issue := range payload.Issues {
 		if issue.Page <= 0 || strings.TrimSpace(issue.Description) == "" {
 			continue
 		}
-		status := "warning"
-		if issue.Severity == "must_fix" {
-			status = "error"
-		}
-		s.upsertPersistedSlide(persistedSlideProgress{Index: issue.Page, Status: status, Warnings: []string{issue.Description}})
+		warningsByPage[issue.Page] = appendUniqueStrings(warningsByPage[issue.Page], issue.Description)
+	}
+	for page, warnings := range warningsByPage {
+		s.upsertPersistedSlide(persistedSlideProgress{Index: page, Status: "warning", Warnings: warnings})
 	}
 }
 

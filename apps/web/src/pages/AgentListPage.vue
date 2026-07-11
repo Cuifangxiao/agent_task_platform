@@ -16,10 +16,15 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  save: [payload: AgentConfigPayload & { agent_id?: number }, id?: number]
-  delete: [id: number]
+  save: [payload: AgentConfigPayload & { agent_id?: number }, id: number | undefined, callbacks: FormActionCallbacks]
+  delete: [id: number, callbacks: FormActionCallbacks]
   goPpt: []
 }>()
+
+interface FormActionCallbacks {
+  onError: (message: string) => void
+  onSuccess?: (message?: string) => void
+}
 
 interface BindingDraft {
   node_key: string
@@ -39,11 +44,13 @@ interface Draft {
 }
 
 const draft = reactive<Draft>(emptyDraft())
-const validationError = ref('')
+const formError = ref('')
 const isEditorOpen = ref(false)
 const activeModels = computed(() => props.models.filter((item) => item.status === 'active'))
 const selectedAgent = computed(() => props.agents.find((item) => item.id === Number(draft.agent_id)) ?? null)
 const requiredNodes = computed(() => selectedAgent.value?.nodes.filter((node) => node.requires_model) ?? [])
+const requiredNodesByKey = computed(() => new Map(requiredNodes.value.map((node) => [node.key, node])))
+const modelsByID = computed(() => new Map(props.models.map((model) => [model.id, model])))
 
 watch(
   () => props.agents,
@@ -83,7 +90,7 @@ function syncNodeBindings() {
 }
 
 function edit(config: AgentConfig) {
-  validationError.value = ''
+  formError.value = ''
   Object.assign(draft, {
     id: config.id,
     agent_id: String(config.agent_id),
@@ -103,7 +110,7 @@ function edit(config: AgentConfig) {
 }
 
 function reset(agentId?: number) {
-  validationError.value = ''
+  formError.value = ''
   Object.assign(draft, emptyDraft())
   draft.agent_id = String(agentId ?? props.agents[0]?.id ?? '')
   syncNodeBindings()
@@ -112,17 +119,18 @@ function reset(agentId?: number) {
 
 function closeEditor() {
   isEditorOpen.value = false
+  formError.value = ''
 }
 
 function nodeMeta(nodeKey: string) {
-  return requiredNodes.value.find((node) => node.key === nodeKey)
+  return requiredNodesByKey.value.get(nodeKey)
 }
 
 function bindingVisionWarning(nodeKey: string, modelConfigId: string) {
   if (!['review', 'vlm_review', 'review_vlm'].includes(nodeKey) || !modelConfigId) {
     return ''
   }
-  const model = props.models.find((item) => item.id === Number(modelConfigId))
+  const model = modelsByID.value.get(Number(modelConfigId))
   if (!model) return ''
   const warning = '该模型未声明图片输入能力，视觉审查会明确进入 needs_review。'
   const explicit = model.provider_options.supports_image_input ?? model.provider_options.supports_vision
@@ -132,10 +140,10 @@ function bindingVisionWarning(nodeKey: string, modelConfigId: string) {
 }
 
 function submit() {
-  validationError.value = ''
+  formError.value = ''
   const missing = draft.node_bindings.find((item) => !item.model_config_id)
   if (missing) {
-    validationError.value = `请先为节点 ${nodeMeta(missing.node_key)?.display_name ?? missing.node_key} 选择模型配置。`
+    formError.value = `请先为节点 ${nodeMeta(missing.node_key)?.display_name ?? missing.node_key} 选择模型配置。`
     return
   }
 
@@ -153,18 +161,19 @@ function submit() {
     return binding
   })
 
-  emit(
-    'save',
-    {
-      agent_id: Number(draft.agent_id),
-      name: draft.name.trim(),
-      description: draft.description.trim(),
-      is_default: draft.is_default,
-      status: draft.status,
-      node_bindings,
+  emit('save', {
+    agent_id: Number(draft.agent_id),
+    name: draft.name.trim(),
+    description: draft.description.trim(),
+    is_default: draft.is_default,
+    status: draft.status,
+    node_bindings,
+  }, draft.id, {
+    onError: (message) => {
+      formError.value = message
     },
-    draft.id,
-  )
+    onSuccess: closeEditor,
+  })
 }
 </script>
 
@@ -235,9 +244,16 @@ function submit() {
             <div>
               <h2>{{ draft.id ? '编辑 Agent Config' : '新建 Agent Config' }}</h2>
               <p>只允许绑定 active Model Config。</p>
+              <p v-if="formError" class="form-error modal-feedback" role="alert">{{ formError }}</p>
             </div>
             <div class="modal-head-actions">
-              <button v-if="draft.id" class="icon-btn danger" type="button" title="删除" @click="emit('delete', draft.id)">
+              <button
+                v-if="draft.id"
+                class="icon-btn danger"
+                type="button"
+                title="删除"
+                @click="emit('delete', draft.id, { onError: (message) => { formError = message }, onSuccess: closeEditor })"
+              >
                 <Trash2 :size="18" />
               </button>
               <button class="icon-btn" type="button" title="关闭" @click="closeEditor">
@@ -309,7 +325,6 @@ function submit() {
               </label>
             </div>
 
-            <p v-if="validationError" class="form-error">{{ validationError }}</p>
           </div>
 
           <div class="modal-actions">

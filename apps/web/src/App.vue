@@ -15,6 +15,11 @@ const store = useWorkspaceStore()
 const activePage = ref('dashboard')
 const saving = ref(false)
 
+interface FormActionCallbacks {
+  onError: (message: string) => void
+  onSuccess?: (message?: string) => void
+}
+
 const userLabel = computed(() => store.me.value?.username ? `当前用户：${store.me.value.username}` : '未获取用户信息')
 
 onMounted(() => {
@@ -38,81 +43,96 @@ async function register(username: string, password: string) {
   }
 }
 
-async function saveModelConfig(payload: ModelConfigPayload, id?: number) {
+async function saveModelConfig(payload: ModelConfigPayload, id: number | undefined, callbacks: FormActionCallbacks) {
   saving.value = true
   try {
     if (id) {
-      await store.api.updateModelConfig(id, payload)
+      const modelConfig = await store.api.updateModelConfig(id, payload)
+      store.upsertModelConfig(modelConfig)
       store.notify('Model Config 已更新。', 'success')
     } else {
       if (!payload.api_key) {
         throw new Error('新建 Model Config 必须填写 API Key。')
       }
-      await store.api.createModelConfig(payload)
+      const modelConfig = await store.api.createModelConfig(payload)
+      store.upsertModelConfig(modelConfig)
       store.notify('Model Config 已创建。', 'success')
     }
-    await store.reload()
+    callbacks.onSuccess?.()
   } catch (error) {
-    store.notify(normalizeError(error), 'error')
+    callbacks.onError(normalizeError(error))
   } finally {
     saving.value = false
   }
 }
 
-async function deleteModelConfig(id: number) {
+async function deleteModelConfig(id: number, callbacks: FormActionCallbacks) {
   if (!window.confirm('确认删除这个 Model Config？')) {
     return
   }
   try {
     await store.api.deleteModelConfig(id)
-    await store.reload()
+    store.removeModelConfig(id)
     store.notify('Model Config 已删除。', 'success')
+    callbacks.onSuccess?.()
   } catch (error) {
-    store.notify(normalizeError(error), 'error')
+    callbacks.onError(normalizeError(error))
   }
 }
 
-async function testCredential(provider: string, apiKey: string, baseUrl?: string) {
+async function testCredential(
+  provider: string,
+  apiKey: string,
+  baseUrl: string | undefined,
+  callbacks: FormActionCallbacks,
+) {
   try {
     const result = await store.api.testCredential({ provider, api_key: apiKey, base_url: baseUrl })
-    store.notify(result.message || `凭证测试结果：${result.status}`, result.status === 'ok' ? 'success' : 'info')
+    callbacks.onSuccess?.(result.message || `凭证测试结果：${result.status}`)
   } catch (error) {
-    store.notify(normalizeError(error), 'error')
+    callbacks.onError(normalizeError(error))
   }
 }
 
-async function saveAgentConfig(payload: AgentConfigPayload & { agent_id?: number }, id?: number) {
+async function saveAgentConfig(
+  payload: AgentConfigPayload & { agent_id?: number },
+  id: number | undefined,
+  callbacks: FormActionCallbacks,
+) {
   saving.value = true
   try {
     if (id) {
       const { agent_id: _agentId, ...updatePayload } = payload
-      await store.api.updateAgentConfig(id, updatePayload)
+      const agentConfig = await store.api.updateAgentConfig(id, updatePayload)
+      store.upsertAgentConfig(agentConfig)
       store.notify('Agent Config 已更新。', 'success')
     } else {
       if (!payload.agent_id) {
         throw new Error('请选择 Agent。')
       }
-      await store.api.createAgentConfig(payload as AgentConfigPayload & { agent_id: number })
+      const agentConfig = await store.api.createAgentConfig(payload as AgentConfigPayload & { agent_id: number })
+      store.upsertAgentConfig(agentConfig)
       store.notify('Agent Config 已创建。', 'success')
     }
-    await store.reload()
+    callbacks.onSuccess?.()
   } catch (error) {
-    store.notify(normalizeError(error), 'error')
+    callbacks.onError(normalizeError(error))
   } finally {
     saving.value = false
   }
 }
 
-async function deleteAgentConfig(id: number) {
+async function deleteAgentConfig(id: number, callbacks: FormActionCallbacks) {
   if (!window.confirm('确认删除这个 Agent Config？')) {
     return
   }
   try {
     await store.api.deleteAgentConfig(id)
-    await store.reload()
+    store.removeAgentConfig(id)
     store.notify('Agent Config 已删除。', 'success')
+    callbacks.onSuccess?.()
   } catch (error) {
-    store.notify(normalizeError(error), 'error')
+    callbacks.onError(normalizeError(error))
   }
 }
 

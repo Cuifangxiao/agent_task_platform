@@ -22,7 +22,7 @@
       "python": "${workspaceFolder}/apps/runtime/.venv/Scripts/python.exe",
       "env": {
         "PYTHONPATH": "${workspaceFolder}/apps/runtime:${workspaceFolder}"
-      }
+      } 
     },
     {
       "name": "web",

@@ -45,6 +45,7 @@ type service interface {
 	RecordArtifactDownload(context.Context, int64, string)
 	ListConversations(context.Context, int64) ([]ConversationSummaryResponse, error)
 	GetConversation(context.Context, int64, int64) (*ConversationDetailResponse, error)
+	DeleteConversation(context.Context, int64, int64) error
 	ArtifactAssetPathForUser(context.Context, int64, string, string) (string, error)
 }
 
@@ -251,6 +252,28 @@ func (h *Handler) GetConversation(c *gin.Context) {
 	}
 
 	response.OK(c, resp)
+}
+
+func (h *Handler) DeleteConversation(c *gin.Context) {
+	claims, ok := httpctx.Claims(c)
+	if !ok {
+		response.Internal(c, "missing auth claims")
+		return
+	}
+
+	var req struct {
+		ID int64 `uri:"id" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindUri(&req); err != nil {
+		response.BadRequest(c, "invalid path", err)
+		return
+	}
+
+	if err := h.service.DeleteConversation(c.Request.Context(), claims.UserID, req.ID); err != nil {
+		h.respondError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"deleted": true, "id": req.ID})
 }
 
 func (h *Handler) writeDeckStream(c *gin.Context, stream DeckStream) {
@@ -528,6 +551,8 @@ func (h *Handler) respondError(c *gin.Context, err error) {
 		response.NotFound(c, err.Error())
 	case errors.Is(err, ErrConversationNotFound):
 		response.NotFound(c, err.Error())
+	case errors.Is(err, ErrConversationActive):
+		response.Conflict(c, err.Error())
 	case errors.Is(err, ErrModelConfigNotFound):
 		response.NotFound(c, err.Error())
 	case errors.Is(err, ErrModelConfigInactive):

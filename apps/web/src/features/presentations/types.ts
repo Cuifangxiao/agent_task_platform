@@ -111,6 +111,7 @@ export interface SlideProgress {
 
 export interface SlideProgressUpdate extends Partial<Omit<SlideProgress, 'index'>> {
   index: number
+  replaceWarnings?: boolean
 }
 
 export interface StyleOption {
