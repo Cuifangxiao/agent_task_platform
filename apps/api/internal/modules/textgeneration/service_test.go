@@ -31,6 +31,7 @@ func TestStreamTextUsesDefaultActiveModelConfig(t *testing.T) {
 				ProviderOptions: `{"top_p":0.8}`,
 				Temperature:     0.7,
 				MaxTokens:       1024,
+				ModelType:       modelconfig.ModelTypeText,
 				IsDefault:       true,
 				Status:          modelconfig.StatusActive,
 			},
@@ -95,7 +96,69 @@ func TestStreamTextRejectsInactiveModelConfig(t *testing.T) {
 	}
 }
 
+func TestStreamTextRejectsExplicitImageModelConfig(t *testing.T) {
+	ctx := context.Background()
+	runtimeClient := &fakeRuntimeClient{returnStream: &fakeTextStream{}}
+	repo := &fakeModelConfigRepo{
+		byID: map[int64]*modelconfig.ModelConfig{
+			2: {
+				ID:        2,
+				UserID:    10,
+				ModelType: modelconfig.ModelTypeImage,
+				Status:    modelconfig.StatusActive,
+			},
+		},
+	}
+	service := NewService(repo, runtimeClient)
+
+	_, err := service.StreamText(ctx, actor.User{UserID: 10}, StreamTextRequest{
+		ModelConfigID: 2,
+		Message:       "hello",
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+	if runtimeClient.calls != 0 {
+		t.Fatalf("expected runtime not to be called, got %d calls", runtimeClient.calls)
+	}
+}
+
+func TestStreamTextDefaultSelectionSkipsImageModelConfigs(t *testing.T) {
+	ctx := context.Background()
+	runtimeClient := &fakeRuntimeClient{returnStream: &fakeTextStream{}}
+	repo := &fakeModelConfigRepo{
+		configs: []*modelconfig.ModelConfig{
+			{
+				ID:        1,
+				UserID:    10,
+				ModelType: modelconfig.ModelTypeImage,
+				IsDefault: true,
+				Status:    modelconfig.StatusActive,
+			},
+			{
+				ID:        2,
+				UserID:    10,
+				Provider:  "deepseek",
+				ModelName: "deepseek-chat",
+				APIKey:    "sk-test",
+				ModelType: modelconfig.ModelTypeText,
+				Status:    modelconfig.StatusActive,
+			},
+		},
+	}
+	service := NewService(repo, runtimeClient)
+
+	_, err := service.StreamText(ctx, actor.User{UserID: 10}, StreamTextRequest{Message: "hello"})
+	if err != nil {
+		t.Fatalf("StreamText returned error: %v", err)
+	}
+	if runtimeClient.lastReq.Model != "deepseek-chat" {
+		t.Fatalf("expected text fallback model, got %q", runtimeClient.lastReq.Model)
+	}
+}
+
 type fakeRuntimeClient struct {
+	calls        int
 	lastReq      RuntimeStreamTextRequest
 	returnStream TextStream
 }
@@ -105,6 +168,7 @@ func (c *fakeRuntimeClient) StreamText(
 	_ actor.User,
 	req RuntimeStreamTextRequest,
 ) (TextStream, error) {
+	c.calls++
 	c.lastReq = req
 	return c.returnStream, nil
 }

@@ -14,7 +14,7 @@ models:
   - id: qwen-plus
     model_name: qwen-plus
     display_name: Qwen Plus
-    type: chat
+    type: text
     parameters:
       - name: enable_thinking
         display_name: Thinking mode
@@ -41,7 +41,7 @@ models:
   - id: qwen3.7-plus
     model_name: qwen3.7-plus
     display_name: Qwen3.7 Plus
-    type: chat
+    type: text
     parameters:
       - name: enable_thinking
         display_name: Thinking mode
@@ -56,7 +56,7 @@ models:
   - id: qwen3.7-max
     model_name: qwen3.7-max
     display_name: Qwen3.7 Max
-    type: chat
+    type: text
     parameters:
       - name: enable_thinking
         display_name: Thinking mode
@@ -71,7 +71,7 @@ models:
   - id: qwen3-vl-plus
     model_name: qwen3-vl-plus
     display_name: Qwen3 VL Plus
-    type: chat
+    type: multimodal
     parameters:
       - name: max_tokens
         display_name: Max tokens
@@ -82,7 +82,7 @@ models:
   - id: qwen3-vl-flash
     model_name: qwen3-vl-flash
     display_name: Qwen3 VL Flash
-    type: chat
+    type: multimodal
     parameters:
       - name: max_tokens
         display_name: Max tokens
@@ -93,7 +93,7 @@ models:
   - id: qwen-vl-plus
     model_name: qwen-vl-plus
     display_name: Qwen VL Plus
-    type: chat
+    type: multimodal
     parameters:
       - name: max_tokens
         display_name: Max tokens

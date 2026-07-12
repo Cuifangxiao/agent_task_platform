@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   AlertCircle,
   CheckCircle2,
+  Clock3,
   Download,
   Loader2,
   Maximize2,
@@ -12,16 +13,32 @@ import {
 import {
   currentProgressLabel,
   currentProgressStageLabel,
-  progressChecklist,
+  formatProgressDuration,
+  progressStepDurationMs,
+  progressStepIsRunning,
+  progressStepStateLabel,
   slideStatusLabel,
   slideStatusPillClass,
   statusStateLabel,
 } from '../lib/progressView'
-import type { ChatMessage, PresentationMessageAction } from '../types'
+import type { ChatMessage, PresentationMessageAction, ProgressStep, StyleOption } from '../types'
+
+const confirmationOrder = ['canvas', 'page_count', 'audience', 'style', 'colors', 'icons', 'typography', 'images']
+const confirmationLabels: Record<string, string> = {
+  canvas: '画布',
+  page_count: '页数与节奏',
+  audience: '受众与目标',
+  style: '风格组合',
+  colors: '配色',
+  icons: '图标',
+  typography: '字体层级',
+  images: '图片',
+}
 
 const props = defineProps<{
   conversationTitle: string | null
   messages: ChatMessage[]
+  outlineFeedback: Record<number, string>
   previewSrc: (requestId: string | undefined, thumbB64: string, pngPath: string) => string
   running: boolean
   slideFeedback: Record<number, string>
@@ -30,6 +47,36 @@ const props = defineProps<{
 
 const emit = defineEmits<{ action: [action: PresentationMessageAction] }>()
 const threadRef = ref<HTMLElement | null>(null)
+const elapsedNow = ref(Date.now())
+let elapsedTimer: ReturnType<typeof window.setInterval> | null = null
+
+const hasRunningProgressStep = computed(() => props.messages.some((message) =>
+  message.kind === 'status' && message.steps.some(progressStepIsRunning),
+))
+
+function syncElapsedTimer() {
+  if (hasRunningProgressStep.value) {
+    elapsedNow.value = Date.now()
+    if (elapsedTimer === null) {
+      elapsedTimer = window.setInterval(() => { elapsedNow.value = Date.now() }, 1000)
+    }
+    return
+  }
+  if (elapsedTimer !== null) {
+    window.clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+function stepDuration(step: ProgressStep) {
+  return formatProgressDuration(progressStepDurationMs(step, elapsedNow.value))
+}
+
+watch(hasRunningProgressStep, syncElapsedTimer, { immediate: true })
+onMounted(syncElapsedTimer)
+onBeforeUnmount(() => {
+  if (elapsedTimer !== null) window.clearInterval(elapsedTimer)
+})
 
 async function scrollToBottom(smooth = true) {
   await nextTick()
@@ -45,6 +92,38 @@ function messageRequestId(message: ChatMessage) {
 
 function preview(requestId: string | undefined, thumb: string, path: string, title: string, subtitle: string) {
   emit('action', { type: 'preview', src: props.previewSrc(requestId, thumb, path), title, subtitle })
+}
+
+function confirmationEntries(option: StyleOption) {
+  const ordered = confirmationOrder
+    .filter((key) => option.confirmations[key])
+    .map((key) => ({ key, label: confirmationLabels[key] ?? key, value: option.confirmations[key] }))
+  const extras = Object.entries(option.confirmations)
+    .filter(([key]) => !confirmationOrder.includes(key))
+    .map(([key, value]) => ({ key, label: confirmationLabels[key] ?? key, value }))
+  return [...ordered, ...extras]
+}
+
+function templateStatus(option: StyleOption) {
+  if (!option.templateId && !option.templateMode) return null
+  const freeDesign = option.templateMode === 'free_design'
+  return {
+    label: freeDesign ? '自由设计' : '模板已应用',
+    className: freeDesign ? 'is-free' : 'is-applied',
+    detail: option.templateSummary || option.templateId,
+  }
+}
+
+function hasDirectionDetails(option: StyleOption) {
+  return Boolean(
+    option.communicationMode ||
+    option.visualStyle ||
+    option.rationale ||
+    option.templateId ||
+    option.layoutPrinciples.length ||
+    option.imageStrategy ||
+    confirmationEntries(option).length,
+  )
 }
 
 defineExpose({ scrollToBottom })
@@ -95,7 +174,7 @@ defineExpose({ scrollToBottom })
           <div v-if="message.steps.length || message.state === 'running'" class="active-progress-card">
             <div class="active-progress-icon" :class="`is-${message.state}`">
               <Loader2 v-if="message.state === 'running'" class="spin" :size="18" />
-              <AlertCircle v-else-if="message.state === 'error'" :size="18" />
+              <AlertCircle v-else-if="message.state === 'error' || message.state === 'cancelled'" :size="18" />
               <CheckCircle2 v-else :size="18" />
             </div>
             <div>
@@ -105,19 +184,25 @@ defineExpose({ scrollToBottom })
             </div>
           </div>
 
-          <ol v-if="message.steps.length || message.state !== 'waiting'" class="status-checklist">
-            <li v-for="item in progressChecklist(message)" :key="item.key" :class="`is-${item.status}`">
-              <span class="checklist-marker">
-                <Loader2 v-if="item.status === 'running'" class="spin" :size="15" />
-                <CheckCircle2 v-else-if="item.status === 'done'" :size="15" />
-                <AlertCircle v-else-if="item.status === 'error'" :size="15" />
-              </span>
-              <div>
-                <strong>{{ item.label }}</strong>
-                <p>{{ item.description }}</p>
-              </div>
-            </li>
-          </ol>
+          <section v-if="message.steps.length" class="progress-timing-card" aria-label="步骤耗时">
+            <div class="progress-timing-head">
+              <strong>步骤耗时</strong>
+              <span>进行中的步骤会实时计时</span>
+            </div>
+            <ol class="progress-timing-list">
+              <li v-for="step in message.steps" :key="step.id" :class="`is-${step.state}`">
+                <Clock3 :size="16" />
+                <div class="progress-timing-copy">
+                  <strong>{{ step.label }}</strong>
+                  <p>{{ step.message }}</p>
+                </div>
+                <div class="progress-timing-value">
+                  <strong>{{ stepDuration(step) }}</strong>
+                  <span>{{ progressStepStateLabel(step) }}</span>
+                </div>
+              </li>
+            </ol>
+          </section>
 
           <div v-if="message.slides.length" class="slide-progress-list">
             <article
@@ -185,15 +270,6 @@ defineExpose({ scrollToBottom })
             </article>
           </div>
 
-          <details v-if="message.steps.length" class="status-details">
-            <summary>查看过程</summary>
-            <ol class="status-step-list">
-              <li v-for="step in message.steps" :key="step.id" :class="step.tone">
-                <span class="step-dot" />
-                <div><strong>{{ step.label }}</strong><p>{{ step.message }}</p></div>
-              </li>
-            </ol>
-          </details>
         </template>
 
         <template v-else-if="message.kind === 'outline'">
@@ -212,6 +288,14 @@ defineExpose({ scrollToBottom })
             rows="12"
             spellcheck="false"
             @input="$emit('action', { type: 'update-outline', messageId: message.id, value: ($event.target as HTMLTextAreaElement).value })"
+          />
+          <textarea
+            v-if="message.awaitingConfirm"
+            :value="outlineFeedback[message.id] ?? ''"
+            class="outline-editor"
+            rows="2"
+            placeholder="可选：告诉我怎样重新生成，例如压缩到 8 页、增加竞品对比"
+            @input="$emit('action', { type: 'update-outline-feedback', messageId: message.id, value: ($event.target as HTMLTextAreaElement).value })"
           />
           <div v-if="message.awaitingConfirm" class="outline-actions">
             <button class="btn primary" type="button" :disabled="running" @click="$emit('action', { type: 'approve-outline', message })">
@@ -244,7 +328,11 @@ defineExpose({ scrollToBottom })
             @input="$emit('action', { type: 'update-style-feedback', messageId: message.id, value: ($event.target as HTMLTextAreaElement).value })"
           />
           <div class="style-options">
-            <article v-for="option in message.options" :key="option.styleId" class="style-option-card">
+            <article
+              v-for="option in message.options"
+              :key="option.styleId"
+              :class="['style-option-card', { 'has-preview': option.thumbB64 || option.coverPng }]"
+            >
               <button
                 v-if="option.thumbB64 || option.coverPng"
                 class="style-preview-frame"
@@ -260,10 +348,72 @@ defineExpose({ scrollToBottom })
                 <span v-else class="slide-preview-placeholder">Loading preview</span>
                 <span class="slide-preview-action"><Maximize2 :size="14" /> Full preview</span>
               </button>
-              <div><strong>{{ option.name }}</strong><p>{{ option.tokensSummary }}</p></div>
+              <div class="style-option-content">
+                <div class="style-option-heading">
+                  <div>
+                    <strong>{{ option.name }}</strong>
+                    <div v-if="option.communicationMode || option.visualStyle" class="style-axis-badges">
+                      <span v-if="option.communicationMode">{{ option.communicationMode }}</span>
+                      <span v-if="option.visualStyle">{{ option.visualStyle }}</span>
+                    </div>
+                  </div>
+                  <span
+                    v-if="templateStatus(option)"
+                    :class="['template-status-badge', templateStatus(option)?.className]"
+                  >
+                    {{ templateStatus(option)?.label }}
+                  </span>
+                </div>
+
+                <p v-if="option.rationale" class="style-rationale">{{ option.rationale }}</p>
+
+                <div
+                  v-if="templateStatus(option)"
+                  :class="['template-status-panel', templateStatus(option)?.className]"
+                >
+                  <CheckCircle2 :size="16" />
+                  <div>
+                    <strong>{{ templateStatus(option)?.label }}</strong>
+                    <p>{{ templateStatus(option)?.detail }}</p>
+                    <code v-if="option.templateId">{{ option.templateId }}</code>
+                  </div>
+                </div>
+
+                <p v-if="option.tokensSummary" class="style-token-summary">
+                  <strong>色彩与字体</strong>
+                  {{ option.tokensSummary }}
+                </p>
+
+                <template v-if="hasDirectionDetails(option)">
+                  <section v-if="confirmationEntries(option).length" class="style-confirmation-section">
+                    <div class="style-section-heading">
+                      <strong>执行前确认</strong>
+                      <span>{{ confirmationEntries(option).length }} 项设计约束</span>
+                    </div>
+                    <dl class="style-confirmation-grid">
+                      <div v-for="item in confirmationEntries(option)" :key="item.key">
+                        <dt>{{ item.label }}</dt>
+                        <dd>{{ item.value }}</dd>
+                      </div>
+                    </dl>
+                  </section>
+
+                  <section v-if="option.layoutPrinciples.length" class="style-principles-section">
+                    <strong>版式原则</strong>
+                    <ul class="style-principles-list">
+                      <li v-for="principle in option.layoutPrinciples" :key="principle">{{ principle }}</li>
+                    </ul>
+                  </section>
+
+                  <section v-if="option.imageStrategy" class="style-image-strategy">
+                    <strong>图像策略</strong>
+                    <p>{{ option.imageStrategy }}</p>
+                  </section>
+                </template>
+              </div>
               <button
                 v-if="message.awaitingConfirm"
-                class="btn primary"
+                class="btn primary style-select-button"
                 type="button"
                 :disabled="running"
                 @click="$emit('action', { type: 'choose-style', message, option })"

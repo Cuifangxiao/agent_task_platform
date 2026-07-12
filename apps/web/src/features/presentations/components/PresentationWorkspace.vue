@@ -30,6 +30,7 @@ interface ThreadHandle {
 
 const composer = reactive({ text: '', files: [] as File[] })
 const generationMode = ref<'quick' | 'step_by_step'>('step_by_step')
+const outlineFeedback = reactive<Record<number, string>>({})
 const slideFeedback = reactive<Record<number, string>>({})
 const styleFeedback = reactive<Record<number, string>>({})
 const threadRef = ref<ThreadHandle | null>(null)
@@ -43,6 +44,7 @@ const job = usePresentationJobController({
   api: props.api,
   messages: messageStore,
   onEvent: handleEvent,
+  outlineFeedback,
   slideFeedback,
   styleFeedback,
   syncConversation: () => syncConversation(),
@@ -127,20 +129,23 @@ async function startGeneration() {
 
   composer.text = ''
   clearFiles()
-  const uploadStartedAt = performance.now()
+  const uploadStartedAt = Date.now()
   uploadState.value = selectedFiles.length ? '正在上传并创建后台任务…' : '正在创建后台任务…'
   try {
     await job.create(payload, (createdJob) => {
       conversations.currentConversationId.value = createdJob.conversation_id
       uploadState.value = selectedFiles.length ? '附件已上传，等待解析。' : '后台任务已创建。'
       messageStore.updateStatusMessage(statusId, (status) => {
-        const duration = (performance.now() - uploadStartedAt) / 1000
+        const completedAt = Date.now()
         status.steps.push({
           id: messageStore.nextStepId(),
           label: selectedFiles.length ? '附件上传' : '任务创建',
-          message: `${selectedFiles.length ? '附件上传完成' : '后台任务创建完成'} · ${duration.toFixed(1)}s`,
+          message: selectedFiles.length ? '附件上传完成' : '后台任务创建完成',
           stage: 'brief',
           tone: 'done',
+          state: 'done',
+          startedAt: uploadStartedAt,
+          completedAt,
         })
       })
     })
@@ -172,6 +177,9 @@ function handleMessageAction(action: PresentationMessageAction) {
     case 'update-outline':
       messageStore.updateOutlineMessage(action.messageId, (message) => { message.outlineMarkdown = action.value }, false)
       break
+    case 'update-outline-feedback':
+      outlineFeedback[action.messageId] = action.value
+      break
     case 'toggle-outline-editor':
       messageStore.updateOutlineMessage(action.messageId, (message) => { message.showEditor = !message.showEditor }, false)
       break
@@ -185,7 +193,13 @@ function handleMessageAction(action: PresentationMessageAction) {
 }
 
 function addFiles(files: File[]) {
-  composer.files = [...composer.files, ...files]
+  const nextFiles = [...composer.files, ...files]
+  const error = validateSourceFiles(nextFiles)
+  if (error) {
+    job.error.value = error
+    return
+  }
+  composer.files = nextFiles
   job.error.value = ''
 }
 
@@ -253,6 +267,7 @@ function confirmDeleteConversation(conversation: PptConversationSummary) {
           ref="threadRef"
           :conversation-title="conversations.currentConversationSummary.value?.title ?? null"
           :messages="messageStore.messages.value"
+          :outline-feedback="outlineFeedback"
           :preview-src="assets.previewSrc"
           :running="job.running.value"
           :slide-feedback="slideFeedback"

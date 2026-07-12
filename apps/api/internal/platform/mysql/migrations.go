@@ -26,11 +26,17 @@ func Migrate(ctx context.Context, db *sql.DB, confPath string) ([]string, error)
 		return nil, err
 	}
 
-	if _, err := db.ExecContext(ctx, createSchemaMigrationsTableSQL); err != nil {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire mysql migration connection failed: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, createSchemaMigrationsTableSQL); err != nil {
 		return nil, fmt.Errorf("ensure schema_migrations table failed: %w", err)
 	}
 
-	applied, err := loadAppliedMigrations(ctx, db)
+	applied, err := loadAppliedMigrations(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
@@ -57,12 +63,12 @@ func Migrate(ctx context.Context, db *sql.DB, confPath string) ([]string, error)
 
 		statements := splitSQLStatements(string(script))
 		for _, statement := range statements {
-			if _, err := db.ExecContext(ctx, statement); err != nil {
+			if _, err := conn.ExecContext(ctx, statement); err != nil {
 				return nil, fmt.Errorf("apply migration %s failed: %w", entry.Name(), err)
 			}
 		}
 
-		if _, err := db.ExecContext(
+		if _, err := conn.ExecContext(
 			ctx,
 			`INSERT INTO schema_migrations (version) VALUES (?)`,
 			entry.Name(),
@@ -113,7 +119,11 @@ func findDirectoryUpward(start string, relativePath string) (string, bool) {
 	}
 }
 
-func loadAppliedMigrations(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
+type migrationQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func loadAppliedMigrations(ctx context.Context, db migrationQueryer) (map[string]struct{}, error) {
 	rows, err := db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("query applied migrations failed: %w", err)

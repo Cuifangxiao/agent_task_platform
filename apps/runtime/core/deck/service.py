@@ -19,7 +19,7 @@ from core.deck.paths import artifact_dir
 from core.deck.pipeline import build_deck_graph
 from core.deck.pipeline.regenerate import regenerate_slide_from_artifacts
 from core.deck.rendering.browser import BrowserSession
-from core.deck.sources import derive_deck_title, parse_uploaded_files_with_provenance
+from core.deck.sources import derive_deck_title, materialize_source_images, parse_uploaded_files_with_provenance
 
 logger = logging.getLogger(__name__)
 PAYLOAD_JSON_MAX_BYTES = 64_000
@@ -40,8 +40,10 @@ class DeckService:
 
             llms = build_deck_llms(inp)
             browser_session = BrowserSession()
-            graph = build_deck_graph(llms, artifact_dir(), self._checkpointer, browser_session)
+            artifacts_root = artifact_dir()
+            graph = build_deck_graph(llms, artifacts_root, self._checkpointer, browser_session)
             parse_started_at = time.perf_counter()
+            source_images = materialize_source_images(inp, artifacts_root / request_id)
             uploaded_file_names, uploaded_file_text, source_chunks = parse_uploaded_files_with_provenance(inp)
             parse_duration_ms = round((time.perf_counter() - parse_started_at) * 1000)
             deck_title = derive_deck_title(
@@ -56,6 +58,7 @@ class DeckService:
                 "uploaded_file_name": uploaded_file_names,
                 "uploaded_file_text": uploaded_file_text,
                 "source_chunks": source_chunks,
+                "source_images": source_images,
                 "generation_mode": inp.generation_mode,
                 "user_description": description,
             }
@@ -80,6 +83,7 @@ class DeckService:
                             "phase": "parse",
                             "source_files": len(inp.source_files),
                             "source_chunks": len(source_chunks),
+                            "source_images": len(source_images),
                             "metrics": {"duration_ms": parse_duration_ms},
                         },
                         ensure_ascii=False,
@@ -365,7 +369,7 @@ def _build_resume_payload(inp: ResumeDeckInput, action: str) -> dict[str, Any]:
             raise ValueError("outline_markdown is required")
         return {"action": action, "outline_markdown": outline_markdown}
     if action == "regenerate_outline":
-        return {"action": action}
+        return {"action": action, "feedback": str(payload.get("feedback") or "").strip(), "payload": payload}
     if action == "choose_style":
         style_id = str(payload.get("style_id") or payload.get("styleId") or "").strip()
         feedback = str(payload.get("feedback") or "").strip()

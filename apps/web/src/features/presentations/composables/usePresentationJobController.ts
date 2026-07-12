@@ -34,6 +34,7 @@ interface JobControllerOptions {
   messages: MessageCommands
   onEvent: (event: ParsedSseEvent) => void
   syncConversation: () => Promise<void>
+  outlineFeedback: Record<number, string>
   styleFeedback: Record<number, string>
   slideFeedback: Record<number, string>
 }
@@ -43,6 +44,7 @@ export function usePresentationJobController(options: JobControllerOptions) {
   const currentJobId = ref('')
   const error = ref('')
   const lastEventSequence = ref(0)
+  const pendingAction = ref('')
   const running = ref(false)
   const seenEventSequences = new Set<number>()
 
@@ -54,6 +56,7 @@ export function usePresentationJobController(options: JobControllerOptions) {
     currentJobId.value = ''
     lastEventSequence.value = 0
     running.value = false
+    pendingAction.value = ''
     seenEventSequences.clear()
     error.value = ''
   }
@@ -135,13 +138,14 @@ export function usePresentationJobController(options: JobControllerOptions) {
       options.messages.updateOutlineMessage(message.id, (draft) => { draft.showEditor = true })
       return
     }
-    options.messages.updateOutlineMessage(message.id, (draft) => { draft.awaitingConfirm = false })
-    options.messages.pushMessage({
-      id: options.messages.nextMessageId(), role: 'user', kind: 'user',
-      text: '好的，按这个大纲继续生成完整 PPT。',
+    await runAction({ action: 'approve_outline', outline_markdown: outlineMarkdown }, 'approve-outline', () => {
+      options.messages.updateOutlineMessage(message.id, (draft) => { draft.awaitingConfirm = false })
+      options.messages.pushMessage({
+        id: options.messages.nextMessageId(), role: 'user', kind: 'user',
+        text: '好的，按这个大纲继续生成完整 PPT。',
+      })
+      options.messages.createStatusMessage('继续生成 PPT', '正在根据确认后的大纲展开每一页内容。')
     })
-    options.messages.createStatusMessage('继续生成 PPT', '正在根据确认后的大纲展开每一页内容。')
-    await runAction({ action: 'approve_outline', outline_markdown: outlineMarkdown })
   }
 
   async function regenerateOutline(message: OutlineMessage) {
@@ -149,21 +153,25 @@ export function usePresentationJobController(options: JobControllerOptions) {
       error.value = '缺少 job_id，请刷新对话后重试。'
       return
     }
-    options.messages.updateOutlineMessage(message.id, (draft) => { draft.awaitingConfirm = false })
-    options.messages.createStatusMessage('重新生成大纲', '正在重新规划叙事结构和页面重点。')
-    await runAction({ action: 'regenerate_outline' })
+    const feedback = options.outlineFeedback[message.id]?.trim() ?? ''
+    await runAction({ action: 'regenerate_outline', payload: { feedback } }, 'regenerate-outline', () => {
+      options.messages.updateOutlineMessage(message.id, (draft) => { draft.awaitingConfirm = false })
+      options.outlineFeedback[message.id] = ''
+      options.messages.createStatusMessage('重新生成大纲', '正在重新规划叙事结构和页面重点。')
+    })
   }
 
   async function chooseStyle(message: StyleMessage, option: StyleOption) {
     error.value = ''
-    options.messages.updateStyleMessage(message.id, (draft) => { draft.awaitingConfirm = false })
     const feedback = options.styleFeedback[message.id]?.trim() ?? ''
-    options.messages.pushMessage({
-      id: options.messages.nextMessageId(), role: 'user', kind: 'user',
-      text: `选择风格：${option.name}${feedback ? `；调整意见：${feedback}` : ''}`,
+    await runAction({ action: 'choose_style', payload: { style_id: option.styleId, feedback } }, 'choose-style', () => {
+      options.messages.updateStyleMessage(message.id, (draft) => { draft.awaitingConfirm = false })
+      options.messages.pushMessage({
+        id: options.messages.nextMessageId(), role: 'user', kind: 'user',
+        text: `选择风格：${option.name}${feedback ? `；调整意见：${feedback}` : ''}`,
+      })
+      options.messages.createStatusMessage('生成页面预览', '正在按选定风格生成每一页的 SVG 预览。')
     })
-    options.messages.createStatusMessage('生成页面预览', '正在按选定风格生成每一页的 HTML 预览。')
-    await runAction({ action: 'choose_style', payload: { style_id: option.styleId, feedback } })
   }
 
   async function regenerateSlide(slide: SlideProgress) {
@@ -177,8 +185,10 @@ export function usePresentationJobController(options: JobControllerOptions) {
       return
     }
     error.value = ''
-    options.messages.createStatusMessage('重做单页', `正在按反馈重做第 ${slide.index} 页。`)
-    await runAction({ action: 'regenerate_slide', payload: { index: slide.index, feedback } })
+    await runAction({ action: 'regenerate_slide', payload: { index: slide.index, feedback } }, `regenerate-slide-${slide.index}`, () => {
+      options.slideFeedback[slide.index] = ''
+      options.messages.createStatusMessage('重做单页', `正在按反馈重做第 ${slide.index} 页。`)
+    })
   }
 
   async function cancel() {
@@ -196,20 +206,33 @@ export function usePresentationJobController(options: JobControllerOptions) {
     }
   }
 
-  async function runAction(payload: Parameters<PresentationApi['submitJobAction']>[1]) {
+  async function runAction(
+    payload: Parameters<PresentationApi['submitJobAction']>[1],
+    actionKey: string,
+    onAccepted?: () => void,
+  ) {
     if (!currentJobId.value) {
       error.value = '缺少可恢复的 job_id，请刷新对话后重试。'
       options.messages.markCurrentRunAsFailed(error.value)
-      return
+      return false
+    }
+    if (pendingAction.value) {
+      return false
     }
     const after = lastEventSequence.value
+    pendingAction.value = actionKey
     running.value = true
     try {
       await options.api.submitJobAction(currentJobId.value, payload)
+      onAccepted?.()
       await follow(currentJobId.value, after)
+      return true
     } catch (cause) {
-      handleFailure(cause)
+      if (!isAbort(cause)) error.value = errorMessage(cause)
+      running.value = false
+      return false
     } finally {
+      pendingAction.value = ''
       await options.syncConversation()
     }
   }
@@ -230,6 +253,7 @@ export function usePresentationJobController(options: JobControllerOptions) {
     error,
     follow,
     lastEventSequence,
+    pendingAction,
     regenerateOutline,
     regenerateSlide,
     reset,

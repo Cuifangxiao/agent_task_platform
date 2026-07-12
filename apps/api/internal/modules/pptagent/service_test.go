@@ -3,6 +3,7 @@ package pptagent
 import (
 	"agent-task-platform/apps/api/internal/shared/actor"
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -31,6 +32,60 @@ func TestSupportsImageInputRecognizesQwenVLModels(t *testing.T) {
 				t.Fatalf("supportsImageInput(%q) = %v, want %v", tc.modelName, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestModelConfigSupportsImageInputUsesModelType(t *testing.T) {
+	config := &modelconfig.ModelConfig{
+		ModelName: "custom-model",
+		ModelType: modelconfig.ModelTypeMultimodal,
+	}
+
+	if !modelConfigSupportsImageInput(config) {
+		t.Fatal("multimodal model config should support image input")
+	}
+
+	config.ProviderOptions = `{"supports_image_input":false}`
+	if modelConfigSupportsImageInput(config) {
+		t.Fatal("explicit image-input opt-out should override model type")
+	}
+}
+
+func TestImageModelConfigNeverSupportsImageInput(t *testing.T) {
+	config := &modelconfig.ModelConfig{
+		ModelName:       "gpt-5-image",
+		ModelType:       modelconfig.ModelTypeImage,
+		ProviderOptions: `{"supports_image_input":true}`,
+	}
+
+	if modelConfigSupportsImageInput(config) {
+		t.Fatal("image generation model must not be treated as a chat model with image input")
+	}
+}
+
+func TestRuntimeModelsFromConfigRejectsImageModel(t *testing.T) {
+	service := NewService(
+		&fakeModelConfigRepo{config: &modelconfig.ModelConfig{
+			ID:        100,
+			UserID:    7,
+			ModelType: modelconfig.ModelTypeImage,
+			Status:    modelconfig.StatusActive,
+		}},
+		nil,
+		nil,
+		nil,
+		t.TempDir(),
+	)
+	agentConfig := &agentconfig.AgentConfig{
+		NodeBindings: []agentconfig.NodeBinding{{NodeKey: "outline", ModelConfigID: 100}},
+	}
+	agent := &agentconfig.AgentDefinition{
+		Nodes: []agentconfig.NodeDefinition{{Key: "outline", RequiresModel: true}},
+	}
+
+	_, err := service.runtimeModelsFromConfig(context.Background(), 7, agentConfig, agent)
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
 	}
 }
 

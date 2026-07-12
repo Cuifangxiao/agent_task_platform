@@ -119,7 +119,9 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     assert style_interrupts
     style_payload = style_interrupts[0].value
     assert style_payload["stage"] == "style_review"
-    assert len(style_payload["style_options"]) == 2
+    assert len(style_payload["style_options"]) == 3
+    assert all(option.get("template_id") for option in style_payload["style_options"])
+    assert all(option.get("confirmations") for option in style_payload["style_options"])
 
     for part in graph.stream(
         Command(resume={"action": "choose_style", "style_id": "style_1"}),

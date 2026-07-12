@@ -1,5 +1,7 @@
 export type Status = 'active' | 'inactive'
 
+export type ModelType = 'text' | 'multimodal' | 'image'
+
 export interface SessionState {
   access_token: string
   refresh_token: string
@@ -60,6 +62,7 @@ export interface ModelConfig {
   name: string
   provider: string
   model_name: string
+  model_type: ModelType
   base_url: string
   api_key_masked: string
   has_api_key: boolean
@@ -76,6 +79,7 @@ export interface ModelConfigPayload {
   name: string
   provider: string
   model_name: string
+  model_type: ModelType
   base_url?: string
   api_key?: string
   provider_options?: Record<string, unknown>

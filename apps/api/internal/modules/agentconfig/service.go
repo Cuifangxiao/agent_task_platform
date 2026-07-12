@@ -206,6 +206,9 @@ func (s *Service) validateNodeBindings(
 		if config.Status != modelconfig.StatusActive {
 			return fmt.Errorf("%w: model_config_id %d for node '%s' is not active", ErrInvalidRequest, binding.ModelConfigID, binding.NodeKey)
 		}
+		if config.ModelType == modelconfig.ModelTypeImage {
+			return fmt.Errorf("%w: model_config_id %d for node '%s' is an image model", ErrInvalidRequest, binding.ModelConfigID, binding.NodeKey)
+		}
 	}
 
 	for _, nodeKey := range requiredNodes {

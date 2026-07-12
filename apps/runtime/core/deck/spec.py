@@ -1,4 +1,4 @@
-"""Deck spec v2 contracts and deterministic normalization helpers."""
+"""Authoritative deck contracts and deterministic normalization helpers."""
 
 from __future__ import annotations
 
@@ -117,6 +117,7 @@ class SlideSpec:
     sources: list[str] = field(default_factory=list)
     layout_variant: str = "balanced"
     design: dict[str, Any] = field(default_factory=dict)
+    spec_hash: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -159,6 +160,7 @@ class DeckSpec:
                     sources=[str(source).strip() for source in item.get("sources") or [] if str(source).strip()],
                     layout_variant=_normalize_layout_variant(item.get("layout_variant")),
                     design=_normalize_design(item.get("design")),
+                    spec_hash=str(item.get("spec_hash") or "").strip(),
                 )
                 for index, item in enumerate(raw.get("slides") or [])
                 if isinstance(item, dict)
@@ -193,6 +195,7 @@ DECK_SPEC_SCHEMA: dict[str, Any] = {
                 "sources": {"type": "array", "items": {"type": "string"}},
                 "layout_variant": {"type": "string", "enum": ["balanced", "editorial", "split"]},
                 "design": {"type": "object"},
+                "spec_hash": {"type": "string"},
             },
         }
     },
@@ -229,7 +232,7 @@ def normalize_slide_spec(
     deck_title: str = "",
     narrative: str = "",
 ) -> SlideSpec:
-    """Accept spec v2 or the legacy slide JSON and return a valid SlideSpec."""
+    """Normalize one semantic slide payload into the authoritative SlideSpec."""
 
     outline = outline or {}
     source = _extract_single_slide_source(raw, index)

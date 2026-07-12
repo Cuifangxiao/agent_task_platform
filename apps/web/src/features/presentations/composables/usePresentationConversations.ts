@@ -126,11 +126,9 @@ export function usePresentationConversations(options: ConversationOptions) {
   }
 
   async function syncCurrentConversationFromServer() {
-    if (!currentConversationId.value) {
-      await refreshHistory()
-      return
-    }
-    await refreshHistory({ selectConversationId: currentConversationId.value })
+    // The active stream is already projected locally. Refresh only the history list so
+    // live timing records are not replaced by the server's compact event snapshot.
+    await refreshHistory()
   }
 
   return {

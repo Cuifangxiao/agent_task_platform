@@ -8,9 +8,10 @@ provider-specific client construction all live together.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from langchain_openai import ChatOpenAI
@@ -65,7 +66,7 @@ class ProviderModelDefinition(BaseModel):
     id: str
     model_name: str
     display_name: str
-    type: str = "chat"
+    type: Literal["text", "multimodal", "image"] = "text"
     reasoning_supported: bool = False
     disabled: bool = False
     parameters: list[ProviderModelParameter] = Field(default_factory=list)
@@ -175,6 +176,10 @@ class ProviderConfigManager:
         if model is None:
             raise ValueError(
                 f"model '{model_name}' is not configured for provider '{provider.name}'"
+            )
+        if model.type == "image":
+            raise ValueError(
+                f"image model '{model.model_name}' cannot be used as a chat model"
             )
 
         client_class = PROVIDER_CHAT_MODELS.get(provider.manager)
@@ -293,6 +298,14 @@ def _normalize_model_definition(model: dict[str, Any]) -> dict[str, Any]:
     normalized_model.setdefault("id", normalized_model.get("model_name", ""))
     normalized_model.setdefault("model_name", normalized_model.get("id", ""))
     normalized_model.setdefault("display_name", normalized_model.get("model_name", ""))
+    model_type = str(normalized_model.get("type") or "text").strip().lower()
+    # Older catalogs used `chat` for every conversational model. Keep those
+    # definitions loadable while exposing the capability-oriented enum.
+    normalized_model["type"] = (
+        _infer_legacy_chat_model_type(str(normalized_model.get("model_name") or ""))
+        if model_type == "chat"
+        else model_type
+    )
 
     parameters = _normalize_model_parameters(normalized_model.get("parameters", []))
     normalized_model["parameters"] = parameters
@@ -311,6 +324,26 @@ def _normalize_model_definition(model: dict[str, Any]) -> dict[str, Any]:
         )
 
     return normalized_model
+
+
+def _infer_legacy_chat_model_type(model_name: str) -> str:
+    name = model_name.strip().lower()
+    if re.search(r"(?:^|[-_. ])vl(?:[-_. ]|$)", name):
+        return "multimodal"
+    if any(
+        marker in name
+        for marker in (
+            "gpt-4o",
+            "gpt-4.1",
+            "gpt-5",
+            "vision",
+            "gemini",
+            "claude-3",
+            "claude-4",
+        )
+    ):
+        return "multimodal"
+    return "text"
 
 
 def _normalize_model_parameters(raw_parameters: Any) -> list[dict[str, Any]]:

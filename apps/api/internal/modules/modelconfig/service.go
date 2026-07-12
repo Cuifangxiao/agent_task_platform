@@ -48,6 +48,7 @@ func (s *Service) Create(ctx context.Context, user actor.User, req CreateRequest
 		Name:            req.Name,
 		Provider:        req.Provider,
 		ModelName:       req.ModelName,
+		ModelType:       req.ModelType,
 		BaseURL:         req.BaseURL,
 		APIKey:          req.APIKey,
 		ProviderOptions: req.ProviderOptions,
@@ -59,7 +60,7 @@ func (s *Service) Create(ctx context.Context, user actor.User, req CreateRequest
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateProviderModel(ctx, &config); err != nil {
+	if err := s.validateProviderModel(ctx, &config, strings.TrimSpace(req.ModelType) != ""); err != nil {
 		return nil, err
 	}
 	if err := s.runCredentialTest(ctx, user, config); err != nil {
@@ -121,6 +122,7 @@ func (s *Service) Update(ctx context.Context, user actor.User, id int64, req Upd
 		Name:            existing.Name,
 		Provider:        existing.Provider,
 		ModelName:       existing.ModelName,
+		ModelType:       string(existing.ModelType),
 		BaseURL:         existing.BaseURL,
 		APIKey:          existing.APIKey,
 		ProviderOptions: json.RawMessage(existing.ProviderOptions),
@@ -138,6 +140,9 @@ func (s *Service) Update(ctx context.Context, user actor.User, id int64, req Upd
 	}
 	if req.ModelName != nil {
 		input.ModelName = *req.ModelName
+	}
+	if req.ModelType != nil {
+		input.ModelType = *req.ModelType
 	}
 	if req.BaseURL != nil {
 		input.BaseURL = *req.BaseURL
@@ -165,7 +170,8 @@ func (s *Service) Update(ctx context.Context, user actor.User, id int64, req Upd
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateProviderModel(ctx, &config); err != nil {
+	modelTypeExplicit := req.ModelType != nil && strings.TrimSpace(*req.ModelType) != ""
+	if err := s.validateProviderModel(ctx, &config, modelTypeExplicit); err != nil {
 		return nil, err
 	}
 	if shouldRetestCredential(existing, config) {
@@ -195,7 +201,7 @@ func (s *Service) Delete(ctx context.Context, userID int64, id int64) error {
 	return s.repo.Delete(ctx, userID, id)
 }
 
-func (s *Service) validateProviderModel(ctx context.Context, config *ModelConfig) error {
+func (s *Service) validateProviderModel(ctx context.Context, config *ModelConfig, modelTypeExplicit bool) error {
 	if s.providerCatalogService == nil {
 		return fmt.Errorf("provider catalog service is not configured")
 	}
@@ -212,6 +218,18 @@ func (s *Service) validateProviderModel(ctx context.Context, config *ModelConfig
 
 		for _, model := range provider.Models {
 			if strings.EqualFold(model.ModelName, config.ModelName) || strings.EqualFold(model.ID, config.ModelName) {
+				if catalogType, ok := modelTypeFromCatalog(model.Type, model.ModelName); ok {
+					if modelTypeExplicit && config.ModelType != catalogType {
+						return fmt.Errorf(
+							"%w: model_type '%s' does not match catalog type '%s' for model '%s'",
+							ErrInvalidRequest,
+							config.ModelType,
+							catalogType,
+							model.ModelName,
+						)
+					}
+					config.ModelType = catalogType
+				}
 				config.ModelName = model.ModelName
 				return nil
 			}
@@ -221,6 +239,37 @@ func (s *Service) validateProviderModel(ctx context.Context, config *ModelConfig
 	}
 
 	return fmt.Errorf("%w: provider '%s' is not supported", ErrInvalidRequest, config.Provider)
+}
+
+func modelTypeFromCatalog(raw string, modelName string) (ModelType, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "chat":
+		if legacyChatModelSupportsImageInput(modelName) {
+			return ModelTypeMultimodal, true
+		}
+		return ModelTypeText, true
+	case string(ModelTypeText):
+		return ModelTypeText, true
+	case string(ModelTypeMultimodal):
+		return ModelTypeMultimodal, true
+	case string(ModelTypeImage):
+		return ModelTypeImage, true
+	default:
+		return "", false
+	}
+}
+
+func legacyChatModelSupportsImageInput(modelName string) bool {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if strings.Contains(name, "qwen") && (strings.Contains(name, "-vl") || strings.Contains(name, "vl-")) {
+		return true
+	}
+	for _, marker := range []string{"gpt-4o", "gpt-4.1", "gpt-5", "vision", "gemini", "claude-3", "claude-4"} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) runCredentialTest(ctx context.Context, user actor.User, config ModelConfig) error {
@@ -264,6 +313,7 @@ func toResponse(config *ModelConfig) *Response {
 		Name:            config.Name,
 		Provider:        config.Provider,
 		ModelName:       config.ModelName,
+		ModelType:       string(config.ModelType),
 		BaseURL:         config.BaseURL,
 		APIKeyMasked:    maskAPIKey(config.APIKey),
 		HasAPIKey:       config.APIKey != "",
@@ -293,6 +343,7 @@ type modelConfigInput struct {
 	Name            string
 	Provider        string
 	ModelName       string
+	ModelType       string
 	BaseURL         string
 	APIKey          string
 	ProviderOptions json.RawMessage
@@ -306,6 +357,10 @@ func normalizeInput(input modelConfigInput) (ModelConfig, error) {
 	name := strings.TrimSpace(input.Name)
 	provider := strings.ToLower(strings.TrimSpace(input.Provider))
 	modelName := strings.TrimSpace(input.ModelName)
+	modelType := ModelType(strings.ToLower(strings.TrimSpace(input.ModelType)))
+	if modelType == "" {
+		modelType = ModelTypeText
+	}
 	baseURL := strings.TrimSpace(input.BaseURL)
 	apiKey := strings.TrimSpace(input.APIKey)
 	providerOptions, err := normalizeProviderOptions(input.ProviderOptions)
@@ -321,6 +376,9 @@ func normalizeInput(input modelConfigInput) (ModelConfig, error) {
 	}
 	if modelName == "" {
 		return ModelConfig{}, fmt.Errorf("%w: model_name is required", ErrInvalidRequest)
+	}
+	if modelType != ModelTypeText && modelType != ModelTypeMultimodal && modelType != ModelTypeImage {
+		return ModelConfig{}, fmt.Errorf("%w: model_type must be text, multimodal, or image", ErrInvalidRequest)
 	}
 	if apiKey == "" {
 		return ModelConfig{}, fmt.Errorf("%w: api_key is required", ErrInvalidRequest)
@@ -360,6 +418,7 @@ func normalizeInput(input modelConfigInput) (ModelConfig, error) {
 		Name:            name,
 		Provider:        provider,
 		ModelName:       modelName,
+		ModelType:       modelType,
 		BaseURL:         baseURL,
 		APIKey:          apiKey,
 		ProviderOptions: providerOptions,

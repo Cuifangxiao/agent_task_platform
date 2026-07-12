@@ -13,7 +13,7 @@ var ErrNameAlreadyExists = errors.New("model config name already exists")
 
 const selectModelConfigColumns = `
 	SELECT
-		id, user_id, name, provider, model_name, base_url, api_key, provider_options,
+		id, user_id, name, provider, model_name, model_type, base_url, api_key, provider_options,
 		temperature, max_tokens, is_default, status, created_at, updated_at
 	FROM model_configs
 `
@@ -58,15 +58,16 @@ func (r *MySQLRepository) Create(ctx context.Context, config ModelConfig) (*Mode
 		ctx,
 		`
 			INSERT INTO model_configs (
-				user_id, name, provider, model_name, base_url, api_key, provider_options,
+				user_id, name, provider, model_name, model_type, base_url, api_key, provider_options,
 				temperature, max_tokens, is_default, status
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 		config.UserID,
 		config.Name,
 		config.Provider,
 		config.ModelName,
+		config.ModelType,
 		config.BaseURL,
 		config.APIKey,
 		config.ProviderOptions,
@@ -171,6 +172,7 @@ func (r *MySQLRepository) Update(ctx context.Context, config ModelConfig) (*Mode
 				name = ?,
 				provider = ?,
 				model_name = ?,
+				model_type = ?,
 				base_url = ?,
 				api_key = ?,
 				provider_options = ?,
@@ -183,6 +185,7 @@ func (r *MySQLRepository) Update(ctx context.Context, config ModelConfig) (*Mode
 		config.Name,
 		config.Provider,
 		config.ModelName,
+		config.ModelType,
 		config.BaseURL,
 		config.APIKey,
 		config.ProviderOptions,
@@ -285,6 +288,7 @@ func scanModelConfig(src scanner) (*ModelConfig, error) {
 		&config.Name,
 		&config.Provider,
 		&config.ModelName,
+		&config.ModelType,
 		&config.BaseURL,
 		&config.APIKey,
 		&providerOptions,

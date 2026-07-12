@@ -163,6 +163,37 @@ func TestCreateRejectsInactiveModelConfig(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsImageModelConfig(t *testing.T) {
+	repo := &stubRepo{agents: map[int64]*AgentDefinition{1: testPPTAgent()}}
+	service := NewService(
+		repo,
+		&stubModelConfigRepo{byID: map[int64]*modelconfig.ModelConfig{
+			1: {ID: 1, Status: modelconfig.StatusActive, ModelType: modelconfig.ModelTypeText},
+			2: {ID: 2, Status: modelconfig.StatusActive, ModelType: modelconfig.ModelTypeImage},
+		}},
+	)
+
+	_, err := service.CreateConfig(context.Background(), testUser(), CreateConfigRequest{
+		AgentID: 1,
+		Name:    "image model",
+		NodeBindings: []NodeBindingRequest{
+			{NodeKey: "brief", ModelConfigID: 1},
+			{NodeKey: "outline", ModelConfigID: 1},
+			{NodeKey: "style", ModelConfigID: 1},
+			{NodeKey: "writer", ModelConfigID: 2},
+			{NodeKey: "designer", ModelConfigID: 1},
+			{NodeKey: "review", ModelConfigID: 1},
+			{NodeKey: "coherence", ModelConfigID: 1},
+		},
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+	if repo.createCalls != 0 {
+		t.Fatalf("expected config not to be saved, got %d create calls", repo.createCalls)
+	}
+}
+
 func testPPTAgent() *AgentDefinition {
 	return &AgentDefinition{
 		ID:       1,

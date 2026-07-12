@@ -7,10 +7,10 @@ Agent Task Platform 是一个面向 AI Agent 工作流的多应用项目。目�
 ## 核心能力
 
 - JWT access/refresh token，Redis 会话、refresh token 与 access token 黑名单。
-- Provider 目录、凭据连通性测试、按用户隔离的模型配置。
+- Provider 目录、凭据连通性测试、按用户隔离的模型配置，以及文本、多模态、生图三类模型能力分类。
 - Agent 定义与节点级模型绑定；节点可覆盖 temperature 和 max tokens。
 - 文本生成 SSE。
-- PPT 后台 Job：持久化状态、事件、操作、会话与版本化产物；支持刷新恢复、SSE 续传、取消、大纲/风格确认和单页重做。
+- PPT 后台 Job：持久化状态、事件、操作、会话与版本化产物；支持刷新恢复、SSE 续传、取消、大纲/风格确认、设计规范锁定、原生 SVG 导出和单页重做。
 - MySQL 增量迁移与启动时任务恢复。
 - Vue 3 管理界面和 PPT 生成工作台。
 
@@ -81,6 +81,49 @@ flowchart LR
 `apps/web` 使用 `/api/v1`，开发服务器将 `/api` 原样代理到 `127.0.0.1:8080`。生产环境应由同源网关转发 `/api/v1`，或另外配置所需的跨域策略。
 
 `contracts` 是 Go/Python 共享协议的唯一真源。生成代码可以提交，但不能手工修改。`migrations` 由 API 启动时统一执行；`deploy` 当前只启动 MySQL 和 Redis，不包含三个应用进程。
+
+## PPT 质量优先流程
+
+```text
+素材/图片解析 → brief → 叙事大纲（节奏、版式意图、可视化、证据）→ 用户编辑/确认
+→ Strategist 生成三套完整美术方向（八项确认 + 模板策略）→ 用户选择
+→ Art Director 编译 Design Spec、执行锁、逐页蓝图、实际模板 SVG 与资产清单
+→ 逐页顺序执行：Content Editor 写语义内容 → SVG Artist 生成完整页面
+→ SVG 静态门禁 ↔ 定向回修 → Chromium PNG → VLM 美术复核 ↔ 重做问题页
+→ 跨页连贯性与重复构图检查 → SVG 转原生 PowerPoint 形状 → PPTX 结构校验
+```
+
+- `slides/{n}.svg` 是页面的权威矢量源；PNG 只用于预览和视觉复核。
+- 正常路径由 Designer 模型直接生成完整 SVG；旧固定组件渲染器只在 Designer 未配置或多轮回修仍不合格时兜底。
+- 模板不是导出时叠加的背景：每页蓝图会携带实际 `template_svg_source`、`layout_id` 和来源信息，并作为 SVG Artist 的直接输入。
+- `design-spec.json` 是权威设计规格，`spec-lock.json` 是机器执行锁；可读版本写入 `design-spec.md` 与 `spec-lock.md`。
+- SVG 仅允许可安全映射到 DrawingML 的 `rect/circle/ellipse/line/polyline/polygon/text/g/image` 子集，禁止脚本、网络外链、`foreignObject`、filter 和任务目录之外的本地文件引用。
+- 相邻页面会传递视觉签名，避免连续复用相同卡片网格、分栏和几何构图；模板一致性与页面节奏变化同时受控。
+- 导出优先生成可编辑的 PowerPoint 形状和文本框；旧任务或单页转换失败时仍保留原 HTML/PNG 混合导出作为兼容降级。
+- SVG 结构错误、内容/数字丢失、字体漂移、越界、模板漂移和重复构图属于硬门禁；VLM 继续检查层级、构图、留白、对比度、素材质量和整体美术完成度。
+- `designer` 节点需要输出完整 SVG，建议绑定代码/长文本能力较好的模型并将 `max_tokens` 配到至少 8K；`review` 节点必须绑定声明支持图片输入的多模态模型。
+
+每个请求的主要产物位于 `apps/runtime/artifacts/decks/{request_id}/`：
+
+```text
+design-spec.json
+design-spec.md
+spec-lock.json
+spec-lock.md
+page-blueprints.json
+asset-manifest.json
+template-manifest.json
+templates/page-{n}.svg
+images/*
+slides/{n}.svg
+slides/{n}.html
+slides/{n}.png
+spec.raw.json
+spec.final.json
+generation-manifest.json
+export-manifest.json
+deck.pptx
+```
 
 ## 依赖方向
 

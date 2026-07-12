@@ -3,8 +3,11 @@ import { computed, reactive, ref, watch } from 'vue'
 import { Bot, Plus, Save, Trash2, X } from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
+import ModelTypeBadge from '@/components/ModelTypeBadge.vue'
 import NodeBindingList from '@/components/NodeBindingList.vue'
+import ProviderIcon from '@/components/ProviderIcon.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import { MODEL_TYPE_OPTIONS, modelTypeLabel, normalizeModelType } from '@/features/models/modelPresentation'
 import { modelNameSupportsImageInput } from '@/features/presentations/lib/workflow'
 import type { AgentConfig, AgentConfigNodeBinding, AgentConfigPayload, AgentDefinition, ModelConfig, Status } from '@/types'
 
@@ -46,7 +49,16 @@ interface Draft {
 const draft = reactive<Draft>(emptyDraft())
 const formError = ref('')
 const isEditorOpen = ref(false)
-const activeModels = computed(() => props.models.filter((item) => item.status === 'active'))
+const activeModels = computed(() => props.models.filter((item) => (
+  item.status === 'active' && normalizeModelType(item.model_type) !== 'image'
+)))
+const activeModelGroups = computed(() => MODEL_TYPE_OPTIONS
+  .filter((type) => type.value !== 'image')
+  .map((type) => ({
+    ...type,
+    models: activeModels.value.filter((model) => normalizeModelType(model.model_type) === type.value),
+  }))
+  .filter((group) => group.models.length > 0))
 const selectedAgent = computed(() => props.agents.find((item) => item.id === Number(draft.agent_id)) ?? null)
 const requiredNodes = computed(() => selectedAgent.value?.nodes.filter((node) => node.requires_model) ?? [])
 const requiredNodesByKey = computed(() => new Map(requiredNodes.value.map((node) => [node.key, node])))
@@ -126,6 +138,11 @@ function nodeMeta(nodeKey: string) {
   return requiredNodesByKey.value.get(nodeKey)
 }
 
+function bindingModel(modelConfigId: string) {
+  if (!modelConfigId) return null
+  return modelsByID.value.get(Number(modelConfigId)) ?? null
+}
+
 function bindingVisionWarning(nodeKey: string, modelConfigId: string) {
   if (!['review', 'vlm_review', 'review_vlm'].includes(nodeKey) || !modelConfigId) {
     return ''
@@ -136,6 +153,7 @@ function bindingVisionWarning(nodeKey: string, modelConfigId: string) {
   const explicit = model.provider_options.supports_image_input ?? model.provider_options.supports_vision
   if (explicit === true) return ''
   if (explicit === false) return warning
+  if (normalizeModelType(model.model_type) === 'multimodal') return ''
   return modelNameSupportsImageInput(model.model_name) ? '' : warning
 }
 
@@ -223,13 +241,13 @@ function submit() {
       />
 
       <div v-else class="list-stack">
-        <button v-for="config in agentConfigs" :key="config.id" class="list-item tall" type="button" @click="edit(config)">
-          <div>
+        <button v-for="config in agentConfigs" :key="config.id" class="list-item tall agent-config-list-item" type="button" @click="edit(config)">
+          <div class="agent-config-content">
             <strong>{{ config.name }}</strong>
             <span>{{ config.agent_name }} / {{ config.description || '无描述' }}</span>
             <NodeBindingList :config="config" :agents="agents" :models="models" />
           </div>
-          <div class="row-actions">
+          <div class="row-actions agent-config-status">
             <StatusBadge v-if="config.is_default" tone="blue" label="默认" />
             <StatusBadge :tone="config.status === 'active' ? 'green' : 'gray'" :label="config.status" />
           </div>
@@ -293,10 +311,20 @@ function submit() {
                   Model Config
                   <select v-model="binding.model_config_id" required>
                     <option value="">请选择 active 模型配置</option>
-                    <option v-for="model in activeModels" :key="model.id" :value="String(model.id)">
-                      {{ model.name }} / {{ model.provider }} / {{ model.model_name }}
-                    </option>
+                    <optgroup v-for="group in activeModelGroups" :key="group.value" :label="group.label">
+                      <option v-for="model in group.models" :key="model.id" :value="String(model.id)">
+                        [{{ modelTypeLabel(model.model_type) }}] {{ model.name }} / {{ model.provider }} / {{ model.model_name }}
+                      </option>
+                    </optgroup>
                   </select>
+                  <div v-if="bindingModel(binding.model_config_id)" class="binding-model-summary">
+                    <ProviderIcon :provider="bindingModel(binding.model_config_id)!.provider" :size="32" />
+                    <div>
+                      <strong>{{ bindingModel(binding.model_config_id)!.name }}</strong>
+                      <small>{{ bindingModel(binding.model_config_id)!.provider }} / {{ bindingModel(binding.model_config_id)!.model_name }}</small>
+                    </div>
+                    <ModelTypeBadge :model-type="bindingModel(binding.model_config_id)!.model_type" />
+                  </div>
                   <small v-if="bindingVisionWarning(binding.node_key, binding.model_config_id)" class="form-error">
                     {{ bindingVisionWarning(binding.node_key, binding.model_config_id) }}
                   </small>

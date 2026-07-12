@@ -125,3 +125,9 @@ def test_must_fix_and_degraded_export_are_reported_as_needs_review(tmp_path, mon
     assert result["export_degraded"] is True
     assert artifact["payload"]["needs_review"] is True
     assert artifact["payload"]["degraded"] is True
+    manifest_path = tmp_path / request_id / "generation-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema"] == "deck-generation-manifest"
+    assert manifest["quality"]["status"] == "needs_review"
+    assert manifest["pages"][0]["title"] == "Title"
+    assert result["generation_manifest"] == manifest

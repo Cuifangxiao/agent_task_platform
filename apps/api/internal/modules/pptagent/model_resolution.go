@@ -119,6 +119,9 @@ func (s *Service) runtimeModelsFromConfig(
 		if config.Status != modelconfig.StatusActive {
 			return nil, fmt.Errorf("%w: model config for node '%s' is inactive", ErrModelConfigInactive, nodeKey)
 		}
+		if config.ModelType == modelconfig.ModelTypeImage {
+			return nil, fmt.Errorf("%w: image model config for node '%s' is not supported", ErrInvalidRequest, nodeKey)
+		}
 
 		temperature := config.Temperature
 		if binding.Temperature != nil {
@@ -138,23 +141,34 @@ func (s *Service) runtimeModelsFromConfig(
 			ProviderOptionsJSON: normalizedProviderOptions(config.ProviderOptions),
 			Temperature:         temperature,
 			MaxTokens:           maxTokens,
-			SupportsImageInput:  supportsImageInput(config.ModelName, config.ProviderOptions),
+			SupportsImageInput:  modelConfigSupportsImageInput(config),
 		})
 	}
 
 	return runtimeModels, nil
 }
 
-func supportsImageInput(modelName string, providerOptions string) bool {
-	var options map[string]any
-	if json.Unmarshal([]byte(normalizedProviderOptions(providerOptions)), &options) == nil {
-		if value, ok := options["supports_image_input"].(bool); ok {
-			return value
-		}
-		if value, ok := options["supports_vision"].(bool); ok {
-			return value
-		}
+func modelConfigSupportsImageInput(config *modelconfig.ModelConfig) bool {
+	if config == nil {
+		return false
 	}
+	if config.ModelType == modelconfig.ModelTypeImage {
+		return false
+	}
+	if value, configured := imageInputCapabilityOverride(config.ProviderOptions); configured {
+		return value
+	}
+	if config.ModelType == modelconfig.ModelTypeMultimodal {
+		return true
+	}
+	return supportsImageInput(config.ModelName, config.ProviderOptions)
+}
+
+func supportsImageInput(modelName string, providerOptions string) bool {
+	if value, configured := imageInputCapabilityOverride(providerOptions); configured {
+		return value
+	}
+
 	name := strings.ToLower(modelName)
 	if strings.Contains(name, "qwen") && (strings.Contains(name, "-vl") || strings.Contains(name, "vl-")) {
 		return true
@@ -165,6 +179,19 @@ func supportsImageInput(modelName string, providerOptions string) bool {
 		}
 	}
 	return false
+}
+
+func imageInputCapabilityOverride(providerOptions string) (bool, bool) {
+	var options map[string]any
+	if json.Unmarshal([]byte(normalizedProviderOptions(providerOptions)), &options) == nil {
+		if value, ok := options["supports_image_input"].(bool); ok {
+			return value, true
+		}
+		if value, ok := options["supports_vision"].(bool); ok {
+			return value, true
+		}
+	}
+	return false, false
 }
 
 func legacyModelNodeFallback(nodeKey string) string {

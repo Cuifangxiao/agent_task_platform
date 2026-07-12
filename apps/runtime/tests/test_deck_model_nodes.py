@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 
 import core.deck.pipeline.coherence as coherence_pipeline
-from core.deck.pipeline.slides import apply_designer_direction
+from core.deck.pipeline.slides import apply_designer_direction, relevant_source_context
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.spec import COMPONENTS, DeckSpec, SlideSpec, default_theme
 
@@ -16,6 +16,20 @@ class CountingJSONLLM:
         assert messages
         self.calls += 1
         return SimpleNamespace(content=json.dumps(self.payload))
+
+
+def test_cjk_source_ranking_does_not_require_whitespace_tokens():
+    state = {
+        "source_chunks": [
+            {"source_file": "a.md", "page": 1, "section": "intro", "excerpt": "无关的组织背景介绍。"},
+            {"source_file": "b.md", "page": 2, "section": "growth", "excerpt": "市场增长主要由企业客户续费驱动。"},
+        ]
+    }
+
+    context = relevant_source_context(state, {"title": "市场增长的驱动因素", "key_message": "企业客户续费", "role": "evidence"}, limit=1)
+
+    assert "b.md" in context
+    assert "企业客户续费" in context
 
 
 def test_designer_model_is_called_and_only_controlled_fields_apply():
@@ -58,7 +72,7 @@ def test_coherence_model_is_called_and_duplicate_titles_are_fixed(monkeypatch):
     assert any((event.get("payload") or {}).get("reason") == "title_update" for event in emitted)
 
 
-def test_coherence_applies_safe_terminology_and_page_order_but_rejects_number_changes(monkeypatch):
+def test_coherence_applies_safe_terminology_keeps_locked_page_order_and_rejects_number_changes(monkeypatch):
     monkeypatch.setattr(coherence_pipeline, "get_stream_writer", lambda: lambda _event: None)
     llm = CountingJSONLLM(
         {
@@ -80,9 +94,10 @@ def test_coherence_applies_safe_terminology_and_page_order_but_rejects_number_ch
         ],
     )
     result = coherence_pipeline.review_coherence({"deck_spec": deck.to_dict(), "validation_issues": []}, {"coherence": llm})
-    assert [slide["title"] for slide in result["slides"]] == ["Opening", "Revenue 40%"]
-    assert result["slides"][0]["content"]["subtitle"] == "customer context"
-    assert result["slides"][1]["content"]["body"] == "customer result"
+    assert [slide["title"] for slide in result["slides"]] == ["Revenue 40%", "Opening"]
+    assert any(issue["kind"] == "page_order_locked" for issue in result["validation_issues"])
+    assert result["slides"][0]["content"]["body"] == "customer result"
+    assert result["slides"][1]["content"]["subtitle"] == "customer context"
 
 
 def test_every_catalogued_component_has_three_rendered_geometry_variants():

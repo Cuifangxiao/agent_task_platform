@@ -17,14 +17,25 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from core.deck.export.text_layer import HIDE_TEXT_JS, TEXT_LAYER_JS
+from core.deck.quality.svg import validate_svg_page
+from core.deck.rendering.svg import svg_preview_html
 from core.deck.runtime_metrics import record_fallback
-from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, SlideSpec, ThemeTokens
+from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, SlideSpec, ThemeTokens, default_theme
 from core.deck.quality.rules import DOM_VALIDATION_JS, ValidationIssue, validate_dom_result, validate_html_static
 
 logger = logging.getLogger(__name__)
 THUMB_MAX_BYTES = 60_000
 RENDER_TIMEOUT_MS = 10_000
 BROWSER_DEVICE_SCALE_FACTOR = 2
+SVG_BROWSER_BLOCKING_ISSUES = frozenset(
+    {
+        "svg_invalid_xml",
+        "svg_missing_root",
+        "svg_unsupported_element",
+        "svg_forbidden_attribute",
+        "svg_image_href",
+    }
+)
 
 
 @dataclass
@@ -33,8 +44,10 @@ class SlideArtifact:
     version: int
     html_path: Path
     png_path: Path
+    svg_path: Path | None
     html_rel: str
     png_rel: str
+    svg_rel: str
     thumb_b64: str
     issues: list[ValidationIssue]
     renderer: str
@@ -54,6 +67,9 @@ class BrowserSession:
     def capture(self, html: str, png_path: Path) -> None:
         self._dispatch(self._capture, html, png_path)
 
+    def capture_file(self, html_path: Path, png_path: Path) -> None:
+        self._dispatch(self._capture_file, html_path, png_path)
+
     def _capture(self, html: str, png_path: Path) -> None:
         started_at = time.perf_counter()
         logger.info("deck browser capture start: png=%s html_bytes=%s", png_path, len(html.encode("utf-8")))
@@ -61,6 +77,15 @@ class BrowserSession:
         page.set_content(html, wait_until="load")
         page.screenshot(path=str(png_path), full_page=False)
         logger.info("deck browser capture done: png=%s bytes=%s elapsed=%.2fs", png_path, png_path.stat().st_size if png_path.exists() else 0, time.perf_counter() - started_at)
+
+    def _capture_file(self, html_path: Path, png_path: Path) -> None:
+        started_at = time.perf_counter()
+        resolved = html_path.expanduser().resolve(strict=True)
+        logger.info("deck browser file capture start: html=%s png=%s", resolved, png_path)
+        page = self._get_page()
+        page.goto(resolved.as_uri(), wait_until="load")
+        page.screenshot(path=str(png_path), full_page=False)
+        logger.info("deck browser file capture done: png=%s bytes=%s elapsed=%.2fs", png_path, png_path.stat().st_size if png_path.exists() else 0, time.perf_counter() - started_at)
 
     def inspect_dom(self, page_index: int) -> list[ValidationIssue]:
         return self._dispatch(self._inspect_dom, page_index)
@@ -71,14 +96,14 @@ class BrowserSession:
             return []
         return validate_dom_result(page.evaluate(DOM_VALIDATION_JS), page=page_index)
 
-    def extract_hidden_text_background(self, html: str, bg_path: Path) -> list[dict[str, Any]]:
+    def extract_hidden_text_background(self, html: str | Path, bg_path: Path) -> list[dict[str, Any]]:
         return self._dispatch(self._extract_hidden_text_background, html, bg_path)
 
-    def _extract_hidden_text_background(self, html: str, bg_path: Path) -> list[dict[str, Any]]:
+    def _extract_hidden_text_background(self, html: str | Path, bg_path: Path) -> list[dict[str, Any]]:
         started_at = time.perf_counter()
-        logger.info("deck browser text background start: png=%s html_bytes=%s", bg_path, len(html.encode("utf-8")))
+        logger.info("deck browser text background start: png=%s source=%s", bg_path, html)
         page = self._get_page()
-        page.set_content(html, wait_until="load")
+        _load_browser_source(page, html)
         text_layer = page.evaluate(TEXT_LAYER_JS)
         page.evaluate(HIDE_TEXT_JS)
         page.screenshot(path=str(bg_path), full_page=False)
@@ -86,12 +111,12 @@ class BrowserSession:
         logger.info("deck browser text background done: png=%s text_count=%s bytes=%s elapsed=%.2fs", bg_path, text_count, bg_path.stat().st_size if bg_path.exists() else 0, time.perf_counter() - started_at)
         return text_layer if isinstance(text_layer, list) else []
 
-    def extract_text_layer(self, html: str) -> list[dict[str, Any]]:
+    def extract_text_layer(self, html: str | Path) -> list[dict[str, Any]]:
         return self._dispatch(self._extract_text_layer, html)
 
-    def _extract_text_layer(self, html: str) -> list[dict[str, Any]]:
+    def _extract_text_layer(self, html: str | Path) -> list[dict[str, Any]]:
         page = self._get_page()
-        page.set_content(html, wait_until="load")
+        _load_browser_source(page, html)
         result = page.evaluate(TEXT_LAYER_JS)
         return result if isinstance(result, list) else []
 
@@ -162,6 +187,7 @@ class BrowserRenderer:
         *,
         version: int = 1,
         theme: ThemeTokens | None = None,
+        svg: str = "",
     ) -> SlideArtifact:
         request_dir = self._request_dir(request_id)
         slides_dir = request_dir / "slides"
@@ -169,16 +195,31 @@ class BrowserRenderer:
 
         html_path = slides_dir / f"{slide.index}.html"
         png_path = slides_dir / f"{slide.index}.png"
+        svg_path = slides_dir / f"{slide.index}.svg" if svg.strip() else None
         history_html_path = slides_dir / f"{slide.index}_v{version}.html" if version > 1 else None
         history_png_path = slides_dir / f"{slide.index}_v{version}.png" if version > 1 else None
-        html_path.write_text(html, encoding="utf-8")
+        history_svg_path = slides_dir / f"{slide.index}_v{version}.svg" if version > 1 and svg_path is not None else None
+        effective_html = svg_preview_html(svg) if svg_path is not None else html
+        html_path.write_text(effective_html, encoding="utf-8")
+        if svg_path is not None:
+            svg_path.write_text(svg, encoding="utf-8")
         if history_html_path is not None:
-            history_html_path.write_text(html, encoding="utf-8")
+            history_html_path.write_text(effective_html, encoding="utf-8")
+        if history_svg_path is not None:
+            history_svg_path.write_text(svg, encoding="utf-8")
 
         renderer = "playwright"
         dom_issues: list[ValidationIssue] = []
+        svg_issues = (
+            validate_svg_page(svg, page=slide.index, theme=theme or default_theme(), expected_spec_hash=slide.spec_hash)
+            if svg_path is not None
+            else []
+        )
         try:
-            self._capture_with_playwright(html, png_path)
+            blocking = [issue for issue in svg_issues if issue.kind in SVG_BROWSER_BLOCKING_ISSUES]
+            if blocking:
+                raise ValueError(f"unsafe SVG is not eligible for browser navigation: {blocking[0].kind}")
+            self._capture_with_playwright(html_path, png_path)
             dom_issues = self._inspect_dom(slide.index)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             renderer = "pillow-fallback"
@@ -188,7 +229,8 @@ class BrowserRenderer:
         if history_png_path is not None:
             shutil.copyfile(png_path, history_png_path)
 
-        issues = validate_html_static(html, page=slide.index) + dom_issues
+        issues = validate_html_static(effective_html, page=slide.index) + dom_issues
+        issues.extend(svg_issues)
         if renderer != "playwright":
             issues.append(
                 ValidationIssue(
@@ -205,8 +247,10 @@ class BrowserRenderer:
             version=version,
             html_path=html_path,
             png_path=png_path,
+            svg_path=svg_path,
             html_rel=_relative_to_request(history_html_path or html_path, request_dir),
             png_rel=_relative_to_request(history_png_path or png_path, request_dir),
+            svg_rel=_relative_to_request(history_svg_path or svg_path, request_dir) if svg_path is not None else "",
             thumb_b64=thumb_b64,
             issues=issues,
             renderer=renderer,
@@ -220,7 +264,7 @@ class BrowserRenderer:
         png_path = styles_dir / f"{style_id}.png"
         html_path.write_text(html, encoding="utf-8")
         try:
-            self._capture_with_playwright(html, png_path)
+            self._capture_with_playwright(html_path, png_path)
             renderer = "playwright"
         except Exception as exc:  # pylint: disable=broad-exception-caught
             record_fallback()
@@ -239,13 +283,19 @@ class BrowserRenderer:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _capture_with_playwright(self, html: str, png_path: Path) -> None:
+    def _capture_with_playwright(self, html: str | Path, png_path: Path) -> None:
         if self._browser_session is not None:
-            self._browser_session.capture(html, png_path)
+            if isinstance(html, Path):
+                self._browser_session.capture_file(html, png_path)
+            else:
+                self._browser_session.capture(html, png_path)
             return
         session = BrowserSession()
         try:
-            session.capture(html, png_path)
+            if isinstance(html, Path):
+                session.capture_file(html, png_path)
+            else:
+                session.capture(html, png_path)
         finally:
             session.close()
 
@@ -392,3 +442,10 @@ def _blend(a: tuple[int, int, int], b: tuple[int, int, int], ratio: float) -> tu
 
 def _relative_to_request(path: Path, request_dir: Path) -> str:
     return path.resolve().relative_to(request_dir.resolve()).as_posix()
+
+
+def _load_browser_source(page: Any, source: str | Path) -> None:
+    if isinstance(source, Path):
+        page.goto(source.expanduser().resolve(strict=True).as_uri(), wait_until="load")
+        return
+    page.set_content(source, wait_until="load")

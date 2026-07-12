@@ -462,7 +462,7 @@ func sourceFilesFromMultipart(c *gin.Context) ([]SourceFile, error) {
 
 func supportedSourceFileName(name string) bool {
 	switch strings.ToLower(filepath.Ext(strings.TrimSpace(name))) {
-	case ".pdf", ".txt", ".md", ".markdown", ".csv", ".json", ".yaml", ".yml", ".docx":
+	case ".pdf", ".txt", ".md", ".markdown", ".csv", ".json", ".yaml", ".yml", ".docx", ".png", ".jpg", ".jpeg", ".webp":
 		return true
 	default:
 		return false
@@ -536,7 +536,8 @@ func (h *Handler) DownloadArtifact(c *gin.Context) {
 		c.FileAttachment(path, "deck-"+c.Param("request_id")+".pptx")
 		return
 	}
-	if strings.HasSuffix(strings.ToLower(path), ".html") {
+	lowerPath := strings.ToLower(path)
+	if strings.HasSuffix(lowerPath, ".html") || strings.HasSuffix(lowerPath, ".svg") {
 		c.Header("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; sandbox")
 		c.Header("X-Content-Type-Options", "nosniff")
 	}

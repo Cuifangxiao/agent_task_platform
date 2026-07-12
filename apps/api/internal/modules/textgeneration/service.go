@@ -53,6 +53,9 @@ func (s *Service) StreamText(
 	if config.Status != modelconfig.StatusActive {
 		return nil, ErrModelConfigInactive
 	}
+	if config.ModelType == modelconfig.ModelTypeImage {
+		return nil, fmt.Errorf("%w: image model configs cannot be used for text generation", ErrInvalidRequest)
+	}
 
 	providerOptions := strings.TrimSpace(config.ProviderOptions)
 	if providerOptions == "" {
@@ -91,7 +94,7 @@ func (s *Service) resolveModelConfig(ctx context.Context, userID int64, id int64
 
 	var firstActive *modelconfig.ModelConfig
 	for _, config := range configs {
-		if config == nil || config.Status != modelconfig.StatusActive {
+		if config == nil || config.Status != modelconfig.StatusActive || config.ModelType == modelconfig.ModelTypeImage {
 			continue
 		}
 		if config.IsDefault {

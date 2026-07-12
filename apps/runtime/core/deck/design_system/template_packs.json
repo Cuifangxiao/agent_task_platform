@@ -1,0 +1,163 @@
+{
+  "schema": "template-packs",
+  "packs": [
+    {
+      "template_id": "editorial_freeform",
+      "name": "Editorial Freeform",
+      "communication_mode": "general",
+      "template_mode": "free_design",
+      "summary": "杂志式自由设计，以非对称构图、留白和重点排版建立节奏，适合产品、品牌、培训与通用汇报。",
+      "visual_style": "high-contrast editorial minimalism",
+      "image_strategy": "optional",
+      "icon_strategy": {"library": "geometric", "weight": "medium", "rule": "one visual language per deck"},
+      "theme": {
+        "name": "Editorial Freeform",
+        "palette": {"bg": "#F5F1E8", "surface": "#FFFFFF", "ink": "#172033", "muted": "#667085", "accent": "#0E7490", "accent2": "#E85D3F", "line": "#D8D2C7"},
+        "fonts": {"display": "Microsoft YaHei", "body": "Microsoft YaHei", "display_weight": 700},
+        "type_scale": {"h1": 54, "h2": 34, "body": 19, "caption": 13},
+        "spacing_unit": 8,
+        "radius": 8,
+        "motif": "editorial rules, cropped geometry, and asymmetric negative space"
+      },
+      "layout_principles": [
+        "Use one dominant idea per page and let whitespace carry hierarchy",
+        "Prefer 7:3 or 2:3 asymmetry over uniform card grids",
+        "Alternate dense evidence pages with breathing emphasis pages",
+        "Use lines, fields and typography before adding containers or shadows"
+      ],
+      "layouts": [
+        {"layout_id": "editorial_hero", "components": ["cover", "section", "end"], "rhythms": ["anchor", "breathing"], "composition": "Oversized headline on the left with a vertical color field and cropped geometric motif on the right", "geometry": {"headline": [72, 150, 760, 300], "visual": [930, 54, 290, 590]}},
+        {"layout_id": "editorial_split", "components": ["content-basic", "comparison", "chart-takeaway"], "rhythms": ["dense", "breathing"], "composition": "Asymmetric 7:3 evidence and implication split without repeated cards", "geometry": {"primary": [70, 180, 760, 430], "secondary": [875, 210, 330, 360]}},
+        {"layout_id": "editorial_sequence", "components": ["agenda", "timeline", "steps"], "rhythms": ["dense", "anchor"], "composition": "A strong horizontal or Z-shaped reading path with numbered anchors and generous connective whitespace", "geometry": {"path": [80, 210, 1120, 350]}},
+        {"layout_id": "editorial_pause", "components": ["quote", "summary", "content-basic"], "rhythms": ["breathing"], "composition": "One statement or number occupies the visual center; supporting copy is reduced to one narrow column", "geometry": {"hero": [120, 180, 900, 260], "support": [760, 480, 400, 90]}}
+      ]
+    },
+    {
+      "template_id": "consulting_signal",
+      "name": "Consulting Signal",
+      "communication_mode": "top_consulting",
+      "template_mode": "layout_pack",
+      "summary": "结论先行、数据清晰、页眉与证据区严格对齐，适合管理层、董事会、战略方案与经营分析。",
+      "visual_style": "restrained top-consulting clarity",
+      "image_strategy": "rare",
+      "icon_strategy": {"library": "geometric", "weight": "light", "rule": "icons label evidence; never decorate"},
+      "theme": {
+        "name": "Consulting Signal",
+        "palette": {"bg": "#FFFFFF", "surface": "#F4F7FA", "ink": "#102A43", "muted": "#627D98", "accent": "#005587", "accent2": "#D04A02", "line": "#CBD5E1"},
+        "fonts": {"display": "Arial", "body": "Microsoft YaHei", "display_weight": 700},
+        "type_scale": {"h1": 48, "h2": 31, "body": 18, "caption": 12},
+        "spacing_unit": 8,
+        "radius": 4,
+        "motif": "precise rules, restrained data color, and conclusion-led headers"
+      },
+      "layout_principles": [
+        "Every page title states the answer, not the topic",
+        "Use one primary visualization and one implication zone",
+        "Color carries data meaning; decoration stays neutral",
+        "Show comparisons, baselines and source context around important numbers"
+      ],
+      "layouts": [
+        {"layout_id": "consulting_cover", "components": ["cover", "section", "end"], "rhythms": ["anchor"], "composition": "Minimal cover with a strong left title rail, date and confidentiality footer", "geometry": {"headline": [76, 170, 850, 230], "meta": [78, 530, 500, 44]}},
+        {"layout_id": "consulting_evidence", "components": ["content-basic", "chart-takeaway", "data-table"], "rhythms": ["dense"], "composition": "Conclusion header, 72% evidence canvas, 28% implication rail and source footer", "geometry": {"evidence": [68, 174, 820, 440], "implication": [920, 194, 290, 385]}},
+        {"layout_id": "consulting_metrics", "components": ["kpi-cards", "summary"], "rhythms": ["dense"], "composition": "One hero metric plus three supporting metrics with flat separators rather than floating cards", "geometry": {"hero": [70, 200, 420, 330], "support": [540, 205, 650, 310]}},
+        {"layout_id": "consulting_compare", "components": ["comparison", "quadrant"], "rhythms": ["dense"], "composition": "Two evidence columns share one baseline and converge into a single recommendation band", "geometry": {"left": [70, 195, 520, 330], "right": [650, 195, 520, 330], "answer": [250, 555, 780, 58]}},
+        {"layout_id": "consulting_sequence", "components": ["timeline", "steps", "agenda"], "rhythms": ["dense", "anchor"], "composition": "Milestones aligned to a common axis with explicit outputs and ownership", "geometry": {"axis": [100, 340, 1080, 8], "labels": [80, 190, 1120, 330]}}
+      ]
+    },
+    {
+      "template_id": "keynote_canvas",
+      "name": "Keynote Canvas",
+      "communication_mode": "general",
+      "template_mode": "layout_pack",
+      "summary": "以大标题、强视觉锚点和低密度叙事推进故事，适合发布会、路演、产品介绍与培训演讲。",
+      "visual_style": "bold keynote with cinematic negative space",
+      "image_strategy": "preferred",
+      "icon_strategy": {"library": "geometric", "weight": "bold", "rule": "large symbols only; no icon lists"},
+      "theme": {
+        "name": "Keynote Canvas",
+        "palette": {"bg": "#0B1220", "surface": "#162033", "ink": "#F8FAFC", "muted": "#A5B4C7", "accent": "#55D6BE", "accent2": "#FFB000", "line": "#334155"},
+        "fonts": {"display": "Arial Black", "body": "Microsoft YaHei", "display_weight": 800},
+        "type_scale": {"h1": 64, "h2": 38, "body": 21, "caption": 14},
+        "spacing_unit": 10,
+        "radius": 18,
+        "motif": "cinematic fields, oversized numerals, and luminous geometric anchors"
+      },
+      "layout_principles": [
+        "Make one object or statement dominate at first glance",
+        "Use 40-60 percent negative space on breathing pages",
+        "Keep supporting copy to one short sentence or three fragments",
+        "Prefer full-canvas composition over nested panels"
+      ],
+      "layouts": [
+        {"layout_id": "keynote_hero", "components": ["cover", "section", "end", "quote"], "rhythms": ["anchor", "breathing"], "composition": "Full-canvas field with oversized text and one cropped orbital form", "geometry": {"headline": [90, 170, 930, 260], "orbital": [930, 80, 300, 560]}},
+        {"layout_id": "keynote_number", "components": ["kpi-cards", "summary", "content-basic"], "rhythms": ["breathing"], "composition": "One 120px hero number or phrase with a short interpretation below", "geometry": {"hero": [110, 190, 780, 230], "interpretation": [120, 470, 760, 90]}},
+        {"layout_id": "keynote_story", "components": ["content-basic", "timeline", "steps"], "rhythms": ["dense", "breathing"], "composition": "Three moments arranged along a Z-path with no enclosing card grid", "geometry": {"story": [90, 185, 1080, 390]}},
+        {"layout_id": "keynote_contrast", "components": ["comparison", "chart-takeaway"], "rhythms": ["dense"], "composition": "A bold dividing field separates before and after; the answer crosses the boundary", "geometry": {"before": [60, 180, 560, 440], "after": [660, 180, 560, 440]}}
+      ]
+    },
+    {
+      "template_id": "technical_blueprint",
+      "name": "Technical Blueprint",
+      "communication_mode": "consulting",
+      "template_mode": "layout_pack",
+      "summary": "以深色技术蓝图呈现系统层级与精确连接关系，适合架构说明、AI/软件方案与技术评审。",
+      "visual_style": "dark technical blueprint",
+      "image_strategy": "diagram_first",
+      "icon_strategy": {"library": "geometric", "weight": "light", "rule": "icons identify system roles consistently"},
+      "theme": {
+        "name": "Technical Blueprint",
+        "palette": {"bg": "#07111F", "surface": "#0E2238", "ink": "#E6F1FF", "muted": "#8EA9C1", "accent": "#38BDF8", "accent2": "#A3E635", "line": "#28506F"},
+        "fonts": {"display": "Segoe UI", "body": "Microsoft YaHei", "display_weight": 700},
+        "type_scale": {"h1": 50, "h2": 32, "body": 17, "caption": 12},
+        "spacing_unit": 8,
+        "radius": 6,
+        "motif": "blueprint grid, precise connectors, system labels, and luminous endpoints"
+      },
+      "layout_principles": [
+        "Show hierarchy, direction and boundaries before adding explanatory text",
+        "Use aligned layers and connectors with semantic endpoint shapes",
+        "Keep each system node to a name plus one short responsibility",
+        "Use the accent color for active paths and the secondary accent for outputs"
+      ],
+      "layouts": [
+        {"layout_id": "blueprint_cover", "components": ["cover", "section", "end"], "rhythms": ["anchor"], "composition": "Technical title block over a sparse blueprint grid and one system motif", "geometry": {"headline": [78, 180, 780, 220], "diagram": [850, 115, 350, 470]}},
+        {"layout_id": "blueprint_layers", "components": ["content-basic", "data-table", "summary"], "rhythms": ["dense"], "composition": "Three to five horizontal system layers with labeled interfaces", "geometry": {"layers": [90, 190, 1090, 390]}},
+        {"layout_id": "blueprint_flow", "components": ["timeline", "steps", "agenda"], "rhythms": ["dense"], "composition": "Directional flow with explicit inputs, processors and outputs", "geometry": {"flow": [75, 215, 1130, 330]}},
+        {"layout_id": "blueprint_matrix", "components": ["comparison", "quadrant", "kpi-cards"], "rhythms": ["dense"], "composition": "Structured matrix with aligned labels and highlighted active cells", "geometry": {"matrix": [100, 190, 1080, 410]}},
+        {"layout_id": "blueprint_focus", "components": ["quote", "chart-takeaway"], "rhythms": ["breathing"], "composition": "One highlighted system node or metric with dependency lines fading into the background", "geometry": {"focus": [330, 210, 620, 280]}}
+      ]
+    },
+    {
+      "template_id": "academic_defense",
+      "name": "Academic Defense",
+      "communication_mode": "consulting",
+      "template_mode": "layout_pack",
+      "summary": "面向论文答辩、研究汇报和课题申请，强调研究问题、方法、证据与结论的连续性。",
+      "visual_style": "formal academic clarity",
+      "image_strategy": "evidence_only",
+      "icon_strategy": {"library": "geometric", "weight": "light", "rule": "use only for section navigation and methods"},
+      "theme": {
+        "name": "Academic Defense",
+        "palette": {"bg": "#F7FAFC", "surface": "#FFFFFF", "ink": "#1A365D", "muted": "#5A7184", "accent": "#2B6CB0", "accent2": "#B7791F", "line": "#CBD5E0"},
+        "fonts": {"display": "Cambria", "body": "Microsoft YaHei", "display_weight": 700},
+        "type_scale": {"h1": 50, "h2": 32, "body": 18, "caption": 12},
+        "spacing_unit": 8,
+        "radius": 5,
+        "motif": "academic rules, evidence frames, restrained institutional blue and gold"
+      },
+      "layout_principles": [
+        "Move from research question to method, evidence, finding and contribution",
+        "Reserve visual space for figures, tables and citations",
+        "Use institutional color sparingly and keep data marks neutral",
+        "Keep source and method labels visible on evidence pages"
+      ],
+      "layouts": [
+        {"layout_id": "academic_cover", "components": ["cover", "section", "end"], "rhythms": ["anchor"], "composition": "Institutional title block, research subtitle, author metadata and a restrained geometric seal", "geometry": {"headline": [100, 155, 900, 220], "meta": [105, 470, 750, 80]}},
+        {"layout_id": "academic_question", "components": ["content-basic", "quote"], "rhythms": ["breathing"], "composition": "One research question or hypothesis with a narrow context band", "geometry": {"question": [120, 210, 900, 190], "context": [170, 460, 850, 85]}},
+        {"layout_id": "academic_method", "components": ["steps", "timeline", "agenda"], "rhythms": ["dense"], "composition": "Method stages connected vertically or horizontally with inputs and outputs", "geometry": {"method": [90, 190, 1100, 400]}},
+        {"layout_id": "academic_evidence", "components": ["chart-takeaway", "data-table", "kpi-cards"], "rhythms": ["dense"], "composition": "Large evidence region, explicit figure caption and one finding statement", "geometry": {"figure": [70, 180, 820, 420], "finding": [930, 210, 280, 330]}},
+        {"layout_id": "academic_conclusion", "components": ["comparison", "summary", "quadrant"], "rhythms": ["dense", "breathing"], "composition": "Findings align to contribution, limitation and next-work columns", "geometry": {"findings": [80, 190, 720, 390], "implications": [850, 210, 340, 350]}}
+      ]
+    }
+  ]
+}

@@ -10,6 +10,7 @@ export interface StreamEventProjection {
 }
 
 export function projectStreamEvent(data: PptStreamChunk): StreamEventProjection {
+  const state = progressStepState(data)
   return {
     slideUpdate: slideProgressFromChunk(data),
     qualityUpdates: qualityWarningUpdates(data),
@@ -18,14 +19,18 @@ export function projectStreamEvent(data: PptStreamChunk): StreamEventProjection 
       label: eventStepLabel(data),
       message: displayStepMessage(data),
       stage: normalizeProgressStage(data.stage || data.event_type || 'progress'),
-      tone:
-        data.stage_status === 'error' || data.error
-          ? 'error'
-          : data.stage_status === 'done' || data.done
-            ? 'done'
-            : 'normal',
+      tone: state === 'error' ? 'error' : state === 'done' ? 'done' : 'normal',
+      state,
     },
   }
+}
+
+export function progressStepState(data: PptStreamChunk): StreamEventProjection['step']['state'] {
+  if (data.error || data.stage_status === 'error') return 'error'
+  if (data.event_type === 'interrupt' || data.stage_status === 'waiting') return 'waiting'
+  if (data.stage_status === 'pending') return 'pending'
+  if (data.stage_status === 'done' || data.done) return 'done'
+  return 'running'
 }
 export function slideProgressFromChunk(data: PptStreamChunk): SlideProgressUpdate | null {
   const trackedEvents = new Set([
@@ -79,6 +84,7 @@ export function slideProgressFromChunk(data: PptStreamChunk): SlideProgressUpdat
     speakerNotes: typeof payload.speaker_notes === 'string' ? payload.speaker_notes : undefined,
     previewPng: typeof payload.png === 'string' ? payload.png : undefined,
     previewHtml: typeof payload.html === 'string' ? payload.html : undefined,
+    previewSvg: typeof payload.svg === 'string' ? payload.svg : undefined,
     previewThumb: typeof payload.thumb_b64 === 'string' ? payload.thumb_b64 : undefined,
     version: Number.isFinite(Number(payload.version)) ? Number(payload.version) : undefined,
     status: normalizeSlideStatus(payload.status ?? statusFromEvent),
@@ -246,6 +252,12 @@ export function describeChunk(data: PptStreamChunk) {
         text: '请选择一套视觉方向继续。',
         state: data.done ? ('waiting' as const) : ('running' as const),
       }
+    case 'design_lock':
+      return {
+        title: '正在冻结设计规范',
+        text: '正在锁定画布、色板、字体、页面节奏和 SVG 导出约束。',
+        state: 'running' as const,
+      }
     case 'slides':
     case 'writer':
       return {
@@ -327,6 +339,8 @@ export function eventStepLabel(data: PptStreamChunk) {
 
 export function stageLabel(stage: string) {
   switch (stage) {
+    case 'design_lock':
+      return '设计规范锁定'
     case 'brief':
       return '需求理解'
     case 'outline':

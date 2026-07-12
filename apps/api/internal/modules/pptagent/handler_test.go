@@ -16,6 +16,10 @@ func TestValidateGenerateDeckRequest(t *testing.T) {
 			request: GenerateDeckRequest{Mode: "quick", SourceFiles: []SourceFile{{FileName: "brief.md", Content: []byte("hello")}}},
 		},
 		{
+			name:    "valid raster image",
+			request: GenerateDeckRequest{Mode: "quick", SourceFiles: []SourceFile{{FileName: "hero.WeBP", Content: []byte("image")}}},
+		},
+		{
 			name:    "invalid mode",
 			request: GenerateDeckRequest{Mode: "fast"},
 			wantErr: "mode",

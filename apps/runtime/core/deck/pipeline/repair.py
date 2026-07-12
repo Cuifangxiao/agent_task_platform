@@ -13,10 +13,11 @@ from langgraph.config import get_stream_writer
 
 import core.deck.events as events
 from core.deck.pipeline.llm import invoke_json_with_retries, llm_for_node, load_node_prompt
-from core.deck.pipeline.slides import legacy_slide_payload
+from core.deck.pipeline.slides import apply_design_contract, legacy_slide_payload
 from core.deck.runtime_metrics import record_fallback
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import issues_to_dicts, validate_slide_spec
+from core.deck.rendering.artist import render_svg_artwork
 from core.deck.rendering.browser import BrowserRenderer
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.spec import DeckSpec, SlideSpec, normalize_slide_spec
@@ -54,6 +55,7 @@ def repair_deck(
 
     repaired_pages: set[int] = set()
     new_issues: list[dict[str, Any]] = []
+    artifacts = list(state.get("artifacts") or [])
     for slide in list(deck.slides):
         if slide.index not in pages:
             continue
@@ -82,9 +84,42 @@ def repair_deck(
                     )
                 )
                 continue
+        repaired = apply_design_contract(repaired, state)
         deck.slides = [repaired if item.index == repaired.index else item for item in deck.slides]
+        existing_svg = _existing_svg(request_id, repaired.index, browser)
+        prior_signatures = [
+            item.get("visual_signature")
+            for item in sorted(
+                (item for item in artifacts if isinstance(item, dict) and int(item.get("index") or 0) < repaired.index),
+                key=lambda item: int(item.get("index") or 0),
+            )[-2:]
+            if isinstance(item.get("visual_signature"), dict)
+        ]
+        plan_pages = (state.get("plan") or {}).get("slides") if isinstance(state.get("plan"), dict) else []
+        outline = next(
+            (item for item in plan_pages or [] if isinstance(item, dict) and int(item.get("index") or 0) == repaired.index),
+            {},
+        )
+        artwork = render_svg_artwork(
+            llm=llm_registry.get("designer"),
+            state=state,
+            deck=deck,
+            slide=repaired,
+            outline=outline,
+            previous_visual_signatures=prior_signatures,
+            quality_feedback=page_to_issues[slide.index],
+            existing_svg=existing_svg,
+        )
+        new_issues.extend(issues_to_dicts(artwork.issues))
         logger.info("deck repair slide render start: request_id=%s round=%s index=%s", request_id, round_index, repaired.index)
-        artifact = browser.render_slide(request_id, repaired, html_renderer.render(deck, repaired), version=round_index + 1, theme=deck.theme)
+        artifact = browser.render_slide(
+            request_id,
+            repaired,
+            html_renderer.render(deck, repaired),
+            version=round_index + 1,
+            theme=deck.theme,
+            svg=artwork.svg,
+        )
         logger.info(
             "deck repair slide done: request_id=%s round=%s index=%s renderer=%s issues=%s elapsed=%.2fs",
             request_id,
@@ -104,10 +139,20 @@ def repair_deck(
             {
                 "png": artifact.png_rel,
                 "html": artifact.html_rel,
+                "svg": artifact.svg_rel,
                 "version": artifact.version,
                 "renderer": artifact.renderer,
+                "svg_renderer": artwork.render_mode,
+                "template_id": artwork.template_id,
+                "layout_id": artwork.layout_id,
+                "page_rhythm": artwork.page_rhythm,
+                "artist_repair_count": artwork.repair_count,
+                "visual_signature": artwork.visual_signature,
+                "artist_rejected_issues": artwork.rejected_issues,
             }
         )
+        artifacts = [item for item in artifacts if int(item.get("index") or 0) != repaired.index]
+        artifacts.append(dict(preview_payload))
         writer(events.slide_preview(f"Slide {repaired.index} preview repaired", preview_payload))
 
     retained_issues = [issue for issue in issues if int(issue.get("page") or 0) not in repaired_pages] + new_issues
@@ -117,9 +162,24 @@ def repair_deck(
         "slides": [slide.to_dict() for slide in deck.slides],
         "final_slides": [slide.to_dict() for slide in deck.slides],
         "validation_issues": retained_issues,
+        "artifacts": sorted(artifacts, key=lambda item: int(item.get("index") or 0)),
         "repair_round": round_index,
+        "vlm_reviewed": False if repaired_pages else bool(state.get("vlm_reviewed")),
         "coherence_reviewed": False if repaired_pages else bool(state.get("coherence_reviewed")),
     }
+
+
+def _existing_svg(request_id: str, page_index: int, browser: BrowserRenderer) -> str:
+    """Read only the current request's canonical SVG when the renderer exposes its output root."""
+
+    root = getattr(browser, "_output_root", None)  # pylint: disable=protected-access
+    if root is None:
+        return ""
+    path = root / request_id / "slides" / f"{page_index}.svg"
+    try:
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        return ""
 
 
 def deterministic_downgrade(slide: SlideSpec) -> SlideSpec:
@@ -151,7 +211,7 @@ def _rewrite_with_writer(
 def _repair_prompt(deck: DeckSpec, slide: SlideSpec, issues: list[dict[str, Any]]) -> str:
     return json.dumps(
         {
-            "task": "Repair this single SlideSpec v2 so it passes validation.",
+            "task": "Repair this single authoritative SlideSpec so it passes validation.",
             "deck": {"title": deck.title, "language": deck.language, "narrative": deck.narrative},
             "slide": slide.to_dict(),
             "issues": issues,

@@ -77,6 +77,12 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 			Text:  "请选择一套视觉方向继续。",
 			State: string(ConversationStatusRunning),
 		}
+	case "design_lock":
+		return &persistedChunkSnapshot{
+			Title: "正在冻结设计规范",
+			Text:  "正在锁定画布、色板、字体、页面节奏和 SVG 导出约束。",
+			State: string(ConversationStatusRunning),
+		}
 	case "slides", "writer":
 		return &persistedChunkSnapshot{
 			Title: "正在展开页面",
@@ -136,6 +142,8 @@ func stageLabelForPersistence(stage string, eventType string) string {
 		return "风格样张"
 	case stage == "style_review":
 		return "风格选择"
+	case stage == "design_lock":
+		return "设计规范锁定"
 	case stage == "slides", stage == "writer":
 		return "页面展开"
 	case stage == "design_slides", stage == "designer":

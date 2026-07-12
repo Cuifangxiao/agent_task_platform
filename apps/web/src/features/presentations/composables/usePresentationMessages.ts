@@ -46,7 +46,7 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
     stepSeed = 0
   }
 
-  function applyStreamChunk(data: PptStreamChunk) {
+  function applyStreamChunk(data: PptStreamChunk, occurredAt = Date.now()) {
     const statusId = currentStatusMessageId.value
     if (!statusId) return
 
@@ -68,7 +68,7 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
       for (const warningUpdate of projection.qualityUpdates) {
         upsertSlideProgress(status, warningUpdate)
       }
-      status.steps.push({ id: nextStepId(), ...projection.step })
+      upsertProgressStep(status, projection.step, occurredAt)
       if (projection.snapshot) {
         status.title = projection.snapshot.title
         status.text = projection.snapshot.text
@@ -141,6 +141,7 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
         speakerNotes: '',
         previewPng: '',
         previewHtml: '',
+        previewSvg: '',
         previewThumb: '',
         version: 0,
         status: 'pending',
@@ -176,6 +177,9 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
     if (update.previewHtml !== undefined) {
       slide.previewHtml = update.previewHtml
     }
+    if (update.previewSvg !== undefined) {
+      slide.previewSvg = update.previewSvg
+    }
     if (update.previewThumb !== undefined) {
       slide.previewThumb = update.previewThumb
     }
@@ -195,6 +199,41 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
     }
 
     status.slides.sort((left, right) => left.index - right.index)
+  }
+
+  function upsertProgressStep(status: StatusMessage, incoming: Omit<StatusMessage['steps'][number], 'id' | 'startedAt' | 'completedAt'>, occurredAt: number) {
+    const previous = status.steps.at(-1)
+    const previousIsRunning = previous?.state === 'running' && !previous.completedAt
+    const sameStage = Boolean(previous && previous.stage === incoming.stage && previous.label === incoming.label)
+
+    if (!previous || !previousIsRunning || !sameStage) {
+      if (previousIsRunning) {
+        previous.completedAt = occurredAt
+        previous.state = 'done'
+        previous.tone = 'done'
+      }
+      status.steps.push({
+        id: nextStepId(),
+        ...incoming,
+        startedAt: occurredAt,
+        ...(incoming.state === 'running' ? {} : { completedAt: occurredAt }),
+      })
+      return
+    }
+
+    previous.label = incoming.label
+    previous.message = incoming.message
+    previous.tone = incoming.tone
+    previous.state = incoming.state
+    if (incoming.state !== 'running') previous.completedAt = occurredAt
+  }
+
+  function finishRunningProgressStep(status: StatusMessage, occurredAt: number, state: 'done' | 'error') {
+    const current = status.steps.at(-1)
+    if (!current || current.state !== 'running' || current.completedAt) return
+    current.completedAt = occurredAt
+    current.state = state
+    current.tone = state === 'error' ? 'error' : 'done'
   }
 
   function updateOutlineMessage(id: number, updater: (message: OutlineMessage) => void, shouldScroll = true) {
@@ -231,6 +270,8 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
       return
     }
     updateStatusMessage(statusId, (status) => {
+      const occurredAt = Date.now()
+      finishRunningProgressStep(status, occurredAt, 'error')
       status.state = 'cancelled'
       status.title = '已取消'
       status.text = message
@@ -240,6 +281,9 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
         message,
         stage: 'error',
         tone: 'error',
+        state: 'error',
+        startedAt: occurredAt,
+        completedAt: occurredAt,
       })
     })
   }
@@ -250,6 +294,8 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
       return
     }
     updateStatusMessage(statusId, (status) => {
+      const occurredAt = Date.now()
+      finishRunningProgressStep(status, occurredAt, 'error')
       status.state = 'error'
       status.title = '生成失败'
       status.text = message
@@ -259,6 +305,9 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
         message,
         stage: 'error',
         tone: 'error',
+        state: 'error',
+        startedAt: occurredAt,
+        completedAt: occurredAt,
       })
     })
   }
@@ -361,8 +410,21 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
       return
     }
 
-    const existing = messages.value.find((item) => item.kind === 'result' && item.requestId === requestId)
-    if (existing) {
+    const existingIndex = messages.value.findIndex((item) => item.kind === 'result' && item.requestId === requestId)
+    const fileName = extractArtifactFileName(data) || `deck-${requestId}.pptx`
+    const warnings = normalizeArtifactWarnings(data)
+    const degraded = artifactBoolean(data, 'degraded')
+    const qualityStatus = artifactString(data, 'quality_status')
+    if (existingIndex >= 0) {
+      const existing = messages.value[existingIndex]
+      if (existing.kind !== 'result') return
+      const updated = { ...existing, fileName, warnings, degraded, qualityStatus }
+      messages.value = [
+        ...messages.value.slice(0, existingIndex),
+        ...messages.value.slice(existingIndex + 1),
+        updated,
+      ]
+      void scrollToBottom()
       return
     }
 
@@ -373,10 +435,10 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
       title: 'PPT 已准备好',
       text: '整套内容已经生成完成，你可以直接下载这份 PPT。',
       requestId,
-      fileName: extractArtifactFileName(data) || `deck-${requestId}.pptx`,
-      warnings: normalizeArtifactWarnings(data),
-      degraded: artifactBoolean(data, 'degraded'),
-      qualityStatus: artifactString(data, 'quality_status'),
+      fileName,
+      warnings,
+      degraded,
+      qualityStatus,
     })
   }
   return {

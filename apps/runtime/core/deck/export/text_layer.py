@@ -4,23 +4,26 @@ TEXT_LAYER_JS = """
 () => Array.from(document.querySelectorAll('[data-text]')).map((el) => {
   const rect = el.getBoundingClientRect();
   const style = window.getComputedStyle(el);
-  const fontSize = parseFloat(style.fontSize || '18');
+  const declaredBox = (el.dataset.box || '').split(',').map((item) => Number.parseFloat(item));
+  const hasDeclaredBox = declaredBox.length === 4 && declaredBox.every((item) => Number.isFinite(item));
+  const sourceText = el.dataset.value || el.innerText || el.textContent || '';
+  const fontSize = parseFloat(el.dataset.fontSize || style.fontSize || '18');
   const lineHeight = parseFloat(style.lineHeight || '');
-  const fontCandidates = (style.fontFamily || 'Noto Sans SC').split(',').map((item) => item.trim().replace(/^['\"]|['\"]$/g, '')).filter(Boolean);
-  const resolvedFontFamily = fontCandidates.find((font) => document.fonts.check(`${fontSize}px "${font}"`, el.innerText || 'Aa中')) || fontCandidates[0] || 'Arial';
+  const fontCandidates = (el.dataset.fontFamily || style.fontFamily || 'Noto Sans SC').split(',').map((item) => item.trim().replace(/^['\"]|['\"]$/g, '')).filter(Boolean);
+  const resolvedFontFamily = fontCandidates.find((font) => document.fonts.check(`${fontSize}px "${font}"`, sourceText || 'Aa中')) || fontCandidates[0] || 'Arial';
   return {
-    text: el.innerText || el.textContent || '',
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
+    text: sourceText,
+    x: hasDeclaredBox ? declaredBox[0] : rect.x,
+    y: hasDeclaredBox ? declaredBox[1] : rect.y,
+    width: hasDeclaredBox ? declaredBox[2] : rect.width,
+    height: hasDeclaredBox ? declaredBox[3] : rect.height,
     fontSize,
-    fontWeight: style.fontWeight || '400',
+    fontWeight: el.dataset.bold === 'true' ? '700' : (style.fontWeight || '400'),
     color: style.color || 'rgb(20, 33, 61)',
     lineHeight: Number.isFinite(lineHeight) ? lineHeight : fontSize * 1.45,
-    textAlign: style.textAlign || 'left',
+    textAlign: el.dataset.align || style.textAlign || 'left',
     fontFamily: resolvedFontFamily,
-    fontAvailable: document.fonts.check(`${fontSize}px "${resolvedFontFamily}"`, el.innerText || 'Aa中'),
+    fontAvailable: document.fonts.check(`${fontSize}px "${resolvedFontFamily}"`, sourceText || 'Aa中'),
     isListItem: el.tagName === 'LI'
   };
 })

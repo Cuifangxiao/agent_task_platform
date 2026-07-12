@@ -9,6 +9,7 @@ type CreateRequest struct {
 	Name            string          `json:"name" binding:"required,min=2,max=64"`
 	Provider        string          `json:"provider" binding:"required,min=2,max=32"`
 	ModelName       string          `json:"model_name" binding:"required,min=1,max=128"`
+	ModelType       string          `json:"model_type" binding:"omitempty,max=16"`
 	BaseURL         string          `json:"base_url" binding:"omitempty,max=255"`
 	APIKey          string          `json:"api_key" binding:"required,min=1,max=512"`
 	ProviderOptions json.RawMessage `json:"provider_options"`
@@ -22,6 +23,7 @@ type UpdateRequest struct {
 	Name            *string          `json:"name" binding:"omitempty,min=2,max=64"`
 	Provider        *string          `json:"provider" binding:"omitempty,min=2,max=32"`
 	ModelName       *string          `json:"model_name" binding:"omitempty,min=1,max=128"`
+	ModelType       *string          `json:"model_type" binding:"omitempty,max=16"`
 	BaseURL         *string          `json:"base_url" binding:"omitempty,max=255"`
 	APIKey          *string          `json:"api_key" binding:"omitempty,max=512"`
 	ProviderOptions *json.RawMessage `json:"provider_options"`
@@ -40,6 +42,7 @@ type Response struct {
 	Name            string         `json:"name"`
 	Provider        string         `json:"provider"`
 	ModelName       string         `json:"model_name"`
+	ModelType       string         `json:"model_type"`
 	BaseURL         string         `json:"base_url"`
 	APIKeyMasked    string         `json:"api_key_masked"`
 	HasAPIKey       bool           `json:"has_api_key"`

@@ -1,17 +1,19 @@
-import type { PipelineStageStatus, PipelineStageView, SlideProgressStatus, StatusMessage } from '../types'
+import type { ProgressStep, SlideProgressStatus, StatusMessage } from '../types'
+
 export const pipelineStages = [
   { key: 'brief', label: '理解需求', description: '整理目标、受众和上下文' },
   { key: 'outline', label: '规划大纲', description: '生成 PPT 结构和每页重点' },
   { key: 'outline_review', label: '确认大纲', description: '等待你确认或调整大纲' },
   { key: 'style', label: '准备风格', description: '生成视觉方向和封面样张' },
   { key: 'style_review', label: '选择风格', description: '等待选择视觉方向' },
+  { key: 'design_lock', label: '冻结设计规范', description: '锁定画布、色板、字体、页面节奏和 SVG 约束' },
   { key: 'writer', label: '撰写页面', description: '把大纲扩展成逐页结构化内容' },
-  { key: 'designer', label: '设计页面', description: '选择版式并渲染 HTML 和 PNG 预览' },
-  { key: 'validate', label: '质量校验', description: '检查版式、密度和结构' },
+  { key: 'designer', label: '设计页面', description: '生成权威 SVG 和 PNG 预览' },
+  { key: 'validate', label: '质量校验', description: '检查版式、密度、SVG 和内容结构' },
   { key: 'repair', label: '自动修复', description: '修复校验发现的问题' },
   { key: 'review_vlm', label: '视觉复核', description: '检查视觉质量和完整性' },
   { key: 'coherence', label: '统一表达', description: '检查跨页连贯性' },
-  { key: 'export', label: '导出 PPT', description: '生成可下载的 PPT 文件' },
+  { key: 'export', label: '导出 PPT', description: '把 SVG 转成可编辑的 PowerPoint 形状' },
   { key: 'artifact', label: '完成结果', description: '准备下载文件' },
 ] as const
 
@@ -22,6 +24,7 @@ export function normalizeProgressStage(value: string | undefined) {
     case 'outline_review':
     case 'style':
     case 'style_review':
+    case 'design_lock':
     case 'writer':
     case 'designer':
     case 'validate':
@@ -48,15 +51,12 @@ export function normalizeProgressStage(value: string | undefined) {
 }
 
 export function latestProgressStep(message: StatusMessage) {
-  return [...message.steps].reverse().find((step) => step.stage && step.stage !== 'error') ?? null
+  return [...message.steps].reverse().find((step) => step.stage) ?? null
 }
 
 export function currentProgressLabel(message: StatusMessage) {
   const latest = latestProgressStep(message)
-  if (!latest) {
-    return message.text
-  }
-  return latest.message || message.text
+  return latest?.message || message.text
 }
 
 export function currentProgressStageLabel(message: StatusMessage) {
@@ -67,26 +67,41 @@ export function currentProgressStageLabel(message: StatusMessage) {
   return pipelineStages.find((stage) => stage.key === latest.stage)?.label ?? latest.label
 }
 
-export function progressChecklist(message: StatusMessage): PipelineStageView[] {
-  const latest = latestProgressStep(message)
-  const latestKey = latest?.stage ?? ''
-  const latestIndex = pipelineStages.findIndex((stage) => stage.key === latestKey)
-  const failed = message.state === 'error'
+export function progressStepIsRunning(step: ProgressStep) {
+  return step.state === 'running' && !step.completedAt && typeof step.startedAt === 'number'
+}
 
-  return pipelineStages.map((stage, index) => {
-    let status: PipelineStageStatus = 'pending'
-    if (message.state === 'done') {
-      status = 'done'
-    } else if (latestIndex >= 0 && index < latestIndex) {
-      status = 'done'
-    } else if (latestIndex >= 0 && index === latestIndex) {
-      status = failed ? 'error' : message.state === 'waiting' ? 'waiting' : 'running'
-    }
-    return {
-      ...stage,
-      status,
-    }
-  })
+export function progressStepDurationMs(step: ProgressStep, now = Date.now()) {
+  if (typeof step.startedAt !== 'number') return null
+  const end = step.completedAt ?? (progressStepIsRunning(step) ? now : step.startedAt)
+  return Math.max(0, end - step.startedAt)
+}
+
+export function formatProgressDuration(durationMs: number | null) {
+  if (durationMs === null) return '—'
+  const seconds = Math.floor(durationMs / 1000)
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const remainingSeconds = seconds % 60
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+}
+
+export function progressStepStateLabel(step: ProgressStep) {
+  switch (step.state) {
+    case 'running':
+      return '计时中'
+    case 'waiting':
+      return '等待确认'
+    case 'done':
+      return '已完成'
+    case 'error':
+      return '已中断'
+    default:
+      return '未开始'
+  }
 }
 
 export function statusStateLabel(state: StatusMessage['state']) {
@@ -109,17 +124,17 @@ export function statusStateLabel(state: StatusMessage['state']) {
 export function slideStatusLabel(status: SlideProgressStatus) {
   switch (status) {
     case 'running':
-      return 'Generating'
+      return '生成中'
     case 'ready':
-      return 'Ready'
+      return '已就绪'
     case 'reviewed':
-      return 'Checked'
+      return '已检查'
     case 'warning':
-      return 'Review'
+      return '需复核'
     case 'error':
-      return 'Error'
+      return '异常'
     default:
-      return 'Queued'
+      return '排队中'
   }
 }
 
@@ -138,4 +153,3 @@ export function slideStatusPillClass(status: SlideProgressStatus) {
       return 'is-waiting'
   }
 }
-

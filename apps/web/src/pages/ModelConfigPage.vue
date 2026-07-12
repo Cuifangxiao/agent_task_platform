@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Database, KeyRound, Plus, Save, Trash2, X } from '@lucide/vue'
+import { Database, Image as ImageIcon, KeyRound, MessageSquareText, Plus, Save, ScanEye, Trash2, X } from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
+import ModelTypeBadge from '@/components/ModelTypeBadge.vue'
+import ProviderIcon from '@/components/ProviderIcon.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import type { ModelConfig, ModelConfigPayload, Provider, ProviderParameter, Status } from '@/types'
+import { MODEL_TYPE_OPTIONS, inferModelType, normalizeModelType } from '@/features/models/modelPresentation'
+import type { ModelConfig, ModelConfigPayload, ModelType, Provider, ProviderParameter, Status } from '@/types'
 
 const props = defineProps<{
   providers: Provider[]
@@ -28,6 +31,7 @@ interface Draft {
   name: string
   provider: string
   model_name: string
+  model_type: ModelType
   base_url: string
   api_key: string
   provider_options: Record<string, unknown>
@@ -41,6 +45,7 @@ const draft = reactive<Draft>(emptyDraft())
 const formError = ref('')
 const formNotice = ref('')
 const isEditorOpen = ref(false)
+const selectedTypeFilter = ref<'all' | ModelType>('all')
 
 const selectedProvider = computed(() => props.providers.find((item) => item.name === draft.provider) ?? null)
 const selectedModel = computed(
@@ -49,6 +54,19 @@ const selectedModel = computed(
 const dynamicParameters = computed(() =>
   (selectedModel.value?.parameters ?? []).filter((item) => !['temperature', 'max_tokens'].includes(item.name)),
 )
+const visibleModels = computed(() => (
+  selectedTypeFilter.value === 'all'
+    ? props.models
+    : props.models.filter((model) => normalizeModelType(model.model_type) === selectedTypeFilter.value)
+))
+const typeFilters = computed(() => [
+  { value: 'all' as const, label: '全部', count: props.models.length },
+  ...MODEL_TYPE_OPTIONS.map((option) => ({
+    value: option.value,
+    label: option.label,
+    count: props.models.filter((model) => normalizeModelType(model.model_type) === option.value).length,
+  })),
+])
 
 watch(
   () => props.providers,
@@ -64,11 +82,16 @@ watch(
 watch(
   () => draft.provider,
   () => syncProviderDefaults(),
+  { flush: 'sync' },
 )
 
 watch(
   () => draft.model_name,
-  () => syncParameterDefaults(),
+  () => {
+    syncParameterDefaults()
+    draft.model_type = inferModelType(selectedModel.value)
+  },
+  { flush: 'sync' },
 )
 
 function emptyDraft(): Draft {
@@ -76,6 +99,7 @@ function emptyDraft(): Draft {
     name: '',
     provider: '',
     model_name: '',
+    model_type: 'text',
     base_url: '',
     api_key: '',
     provider_options: {},
@@ -93,6 +117,7 @@ function syncProviderDefaults() {
   }
   draft.base_url = provider.default_base_url
   draft.model_name = provider.models[0]?.model_name ?? ''
+  draft.model_type = inferModelType(provider.models[0])
   syncParameterDefaults()
 }
 
@@ -124,6 +149,7 @@ function edit(model: ModelConfig) {
     name: model.name,
     provider: model.provider,
     model_name: model.model_name,
+    model_type: normalizeModelType(model.model_type),
     base_url: model.base_url,
     api_key: '',
     provider_options: { ...model.provider_options },
@@ -132,6 +158,9 @@ function edit(model: ModelConfig) {
     is_default: model.is_default,
     status: model.status,
   })
+  // The provider catalog is the capability source of truth. Reconcile stale
+  // records before the next save rather than exposing an invalid combination.
+  draft.model_type = selectedModel.value ? inferModelType(selectedModel.value) : normalizeModelType(model.model_type)
   isEditorOpen.value = true
 }
 
@@ -140,7 +169,6 @@ function reset() {
   Object.assign(draft, emptyDraft())
   if (props.providers[0]) {
     draft.provider = props.providers[0].name
-    syncProviderDefaults()
   }
   isEditorOpen.value = true
 }
@@ -156,6 +184,7 @@ function submit() {
     name: draft.name.trim(),
     provider: draft.provider,
     model_name: draft.model_name,
+    model_type: draft.model_type,
     base_url: draft.base_url.trim() || undefined,
     provider_options: draft.provider_options,
     temperature: Number(draft.temperature),
@@ -193,6 +222,12 @@ function clearFormFeedback() {
   formError.value = ''
   formNotice.value = ''
 }
+
+function modelTypeIcon(modelType: ModelType) {
+  if (modelType === 'multimodal') return ScanEye
+  if (modelType === 'image') return ImageIcon
+  return MessageSquareText
+}
 </script>
 
 <template>
@@ -215,17 +250,40 @@ function clearFormFeedback() {
       text="先创建一个 active Model Config，之后才能给 Agent 节点绑定模型。"
     />
 
-    <div v-else class="list-stack">
-      <button v-for="model in models" :key="model.id" class="list-item" type="button" @click="edit(model)">
-        <div>
-          <strong>{{ model.name }}</strong>
-          <span>{{ model.provider }} / {{ model.model_name }}</span>
-        </div>
-        <div class="row-actions">
-          <StatusBadge v-if="model.is_default" tone="blue" label="默认" />
-          <StatusBadge :tone="model.status === 'active' ? 'green' : 'gray'" :label="model.status" />
-        </div>
-      </button>
+    <div v-else class="model-catalog">
+      <div class="model-type-filters" role="group" aria-label="按模型类型筛选">
+        <button
+          v-for="filter in typeFilters"
+          :key="filter.value"
+          class="model-type-filter"
+          :class="{ active: selectedTypeFilter === filter.value }"
+          type="button"
+          :aria-pressed="selectedTypeFilter === filter.value"
+          @click="selectedTypeFilter = filter.value"
+        >
+          {{ filter.label }}
+          <span>{{ filter.count }}</span>
+        </button>
+      </div>
+
+      <div v-if="visibleModels.length" class="list-stack">
+        <button v-for="model in visibleModels" :key="model.id" class="list-item model-list-item" type="button" @click="edit(model)">
+          <div class="model-list-identity">
+            <ProviderIcon :provider="model.provider" :size="38" />
+            <div class="model-list-copy">
+              <strong>{{ model.name }}</strong>
+              <span>{{ model.provider }} / {{ model.model_name }}</span>
+            </div>
+          </div>
+          <div class="row-actions">
+            <ModelTypeBadge :model-type="model.model_type" />
+            <StatusBadge v-if="model.is_default" tone="blue" label="默认" />
+            <StatusBadge :tone="model.status === 'active' ? 'green' : 'gray'" :label="model.status" />
+          </div>
+        </button>
+      </div>
+
+      <div v-else class="model-filter-empty">该分类下暂无模型配置。</div>
     </div>
 
     <Teleport to="body">
@@ -263,11 +321,14 @@ function clearFormFeedback() {
             <div class="form-grid">
               <label>
                 Provider
-                <select v-model="draft.provider" required>
-                  <option v-for="provider in providers" :key="provider.name" :value="provider.name">
-                    {{ provider.display_name || provider.name }}
-                  </option>
-                </select>
+                <div class="select-with-provider-icon">
+                  <ProviderIcon v-if="draft.provider" :provider="draft.provider" :size="36" />
+                  <select v-model="draft.provider" required>
+                    <option v-for="provider in providers" :key="provider.name" :value="provider.name">
+                      {{ provider.display_name || provider.name }}
+                    </option>
+                  </select>
+                </div>
               </label>
               <label>
                 Model
@@ -278,6 +339,26 @@ function clearFormFeedback() {
                 </select>
               </label>
             </div>
+
+            <fieldset class="model-type-fieldset" aria-describedby="model-type-help">
+              <legend>模型类型</legend>
+              <div class="model-type-options">
+                <label
+                  v-for="option in MODEL_TYPE_OPTIONS"
+                  :key="option.value"
+                  class="model-type-option"
+                  :class="{ active: draft.model_type === option.value }"
+                >
+                  <input v-model="draft.model_type" type="radio" name="model-type" :value="option.value" disabled />
+                  <component :is="modelTypeIcon(option.value)" :size="20" aria-hidden="true" />
+                  <span>
+                    <strong>{{ option.label }}</strong>
+                    <small>{{ option.description }}</small>
+                  </span>
+                </label>
+              </div>
+              <p id="model-type-help" class="model-type-help">类型由 Provider 模型目录自动同步，切换 Model 后会自动更新。</p>
+            </fieldset>
 
             <label>
               Base URL

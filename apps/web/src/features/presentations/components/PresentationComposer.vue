@@ -69,7 +69,7 @@ function onFilesSelected(event: Event) {
             <input
               type="file"
               multiple
-              accept=".pdf,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              accept=".pdf,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.docx,.png,.jpg,.jpeg,.webp,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp"
               @change="onFilesSelected"
             />
           </label>
@@ -91,7 +91,7 @@ function onFilesSelected(event: Event) {
         </div>
 
         <div class="composer-footnote">
-          <span class="chat-note">支持 PDF、DOCX、Markdown、TXT 等文件。</span>
+          <span class="chat-note">支持 PDF、DOCX、Markdown、数据文件，以及 PNG/JPEG/WebP 视觉素材。</span>
           <span v-if="uploadState" class="chat-note">{{ uploadState }}</span>
         </div>
         <div class="composer-toolbar-actions">

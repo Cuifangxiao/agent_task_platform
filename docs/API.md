@@ -266,7 +266,7 @@ Authorization: Bearer <access_token>
             "id": "gpt-4o-mini",
             "model_name": "gpt-4o-mini",
             "display_name": "GPT-4o mini",
-            "type": "chat",
+            "type": "multimodal",
             "reasoning_supported": false,
             "parameters": [
               {
@@ -328,6 +328,7 @@ Runtime 捕获 Provider 连接失败时也可能返回 HTTP 200、`status: "fail
 | `name` | string | 用户内唯一名称 |
 | `provider` | string | Provider key |
 | `model_name` | string | 目录中的模型名 |
+| `model_type` | string | 能力分类：`text`、`multimodal` 或 `image` |
 | `base_url` | string | 自定义地址或空字符串 |
 | `api_key_masked` | string | 仅保留最后 4 位；长度 ≤4 时全部为 `*` |
 | `has_api_key` | boolean | 是否保存了 API Key |
@@ -349,6 +350,7 @@ Runtime 捕获 Provider 连接失败时也可能返回 HTTP 200、`status: "fail
 | `name` | string | 是 | 2–64 字符，用户内唯一 |
 | `provider` | string | 是 | 2–32 字符，必须存在于 Provider 目录 |
 | `model_name` | string | 是 | 1–128 字符，必须属于该 Provider |
+| `model_type` | string | 否 | `text`、`multimodal` 或 `image`；基础默认值为 `text`，最终以 Provider 目录中的能力类型为准 |
 | `base_url` | string | 否 | 最长 255；有效 HTTP/HTTPS URL |
 | `api_key` | string | 是 | 1–512 字符 |
 | `provider_options` | object | 否 | 默认 `{}`；必须是 JSON object |
@@ -357,7 +359,9 @@ Runtime 捕获 Provider 连接失败时也可能返回 HTTP 200、`status: "fail
 | `is_default` | boolean | 否 | 默认 `false`；设为 true 会清除用户其他默认项 |
 | `status` | string | 否 | 默认 `active`；可为 `active`/`inactive` |
 
-创建前会从 Runtime 验证 Provider/模型，并执行凭据测试；凭据状态不是 `ok` 时返回 `400 invalid_request`，不会写入配置。成功返回 `201` 和完整 `ModelConfig`。
+创建前会从 Runtime 验证 Provider/模型，并执行凭据测试；凭据状态不是 `ok` 时返回 `400 invalid_request`，不会写入配置。模型能力分类以 Provider 目录为真源：显式传入的 `model_type` 若与目录冲突，同样返回 `400 invalid_request`。成功返回 `201` 和完整 `ModelConfig`。
+
+为兼容旧 Provider 目录，旧目录中的 `type: chat` 会转换为能力分类：Qwen VL，以及名称包含 GPT-4o、GPT-4.1、GPT-5、Vision、Gemini、Claude 3/4 标记的模型映射为 `multimodal`，其余映射为 `text`。
 
 ### 6.3 列表与详情
 
@@ -368,9 +372,9 @@ Runtime 捕获 Provider 连接失败时也可能返回 HTTP 200、`status: "fail
 
 `PATCH /api/v1/model-configs/:id`
 
-body 中所有字段均可选：`name`、`provider`、`model_name`、`base_url`、`api_key`、`provider_options`、`temperature`、`max_tokens`、`is_default`、`status`。字段约束与创建相同；未传字段保持原值。不能用空字符串清除 API Key。
+body 中所有字段均可选：`name`、`provider`、`model_name`、`model_type`、`base_url`、`api_key`、`provider_options`、`temperature`、`max_tokens`、`is_default`、`status`。字段约束与创建相同；未传字段保持原值，但 `model_type` 会在每次更新时按当前 Provider 目录重新同步。不能用空字符串清除 API Key。
 
-只有 `provider`、`api_key` 或 `base_url` 改变时才重新执行凭据测试；模型名仍会在每次更新时对照目录验证。
+只有 `provider`、`api_key` 或 `base_url` 改变时才重新执行凭据测试；模型名与能力分类仍会在每次更新时对照目录验证，显式 `model_type` 与目录冲突时返回 `400 invalid_request`。
 
 ### 6.5 删除
 
@@ -433,9 +437,11 @@ Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `node_key` | string | 是 | Agent 返回的可配置节点 key |
-| `model_config_id` | integer | 是 | 当前用户拥有的 active 模型配置 |
+| `model_config_id` | integer | 是 | 当前用户拥有的 active 文本或多模态模型配置；不接受 `model_type: image` |
 | `temperature` | number | 否 | 节点覆盖值，0–2；省略则使用模型配置值 |
 | `max_tokens` | integer | 否 | 节点覆盖值，必须 >0；省略则使用模型配置值 |
+
+当前 Agent 节点运行链只支持文本模型和可接收图片输入的多模态模型。绑定生图模型（`model_type: image`）会返回 `400 invalid_request`，不会保存 Agent 配置。
 
 ### 7.3 创建
 
@@ -486,9 +492,11 @@ Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent
 
 | 字段 | 类型 | 必填 | 约束/行为 |
 | --- | --- | --- | --- |
-| `model_config_id` | integer | 否 | >0 时使用指定配置；省略/0 时选默认 active 配置，否则选第一个 active 配置 |
+| `model_config_id` | integer | 否 | >0 时使用指定配置；省略/0 时选默认 active 非生图配置，否则选第一个 active 非生图配置 |
 | `message` | string | 是 | 1–20000 字符，trim 后不能为空 |
 | `system_prompt` | string | 否 | 最长 20000 字符 |
+
+文本生成当前不接受 `model_type: image`：显式指定生图配置时返回 `400 invalid_request`；自动选择模型配置时会跳过所有 `image` 配置，仅在 active 的文本/多模态配置中选择。
 
 成功后返回 SSE，不使用 `{data,meta}`：
 
@@ -626,8 +634,10 @@ curl -X POST http://127.0.0.1:8080/api/v1/presentations/jobs \
 multipart 上传允许扩展名（大小写不敏感）：
 
 ```text
-.pdf  .txt  .md  .markdown  .csv  .json  .yaml  .yml  .docx
+.pdf  .txt  .md  .markdown  .csv  .json  .yaml  .yml  .docx  .png  .jpg  .jpeg  .webp
 ```
+
+PNG/JPEG/WebP 不进入文本解析。Runtime 会解码、校验并去除元数据后重新编码到当前任务的 `images/` 目录；限制为单文件 20 MiB、单边 8192 px、总像素 40 MP。SVG 只能通过资产清单引用该任务目录中的受控相对路径。
 
 | 限制 | 值 |
 | --- | --- |
@@ -801,6 +811,8 @@ brief -> outline -> outline_review -> style -> style_review -> writer
 | `repair_progress` | 自动修复或用户单页重做进度 |
 | `export_progress` | 导出进度 |
 | `artifact` | PPTX/质量信息就绪，并增加 `artifact_url` |
+
+`style_options` 的每个候选方向除预览图外，还包含 `communication_mode`、`visual_style`、`template_id`、`template_mode`、`template_summary`、`rationale`、`confirmations`（八项执行确认）、`layout_principles` 与 `image_strategy`。`template_mode=free_design` 表示自由设计；其他模式会在逐页蓝图中实际注入模板 SVG 结构，而不是只记录模板名称。
 | `interrupt` | 等待大纲确认或风格选择；`done: true` |
 | `action_accepted` | API 已接受幂等 Action |
 | `subscription_disconnected` | 订阅断开但 Job 继续，用于指标 |
@@ -945,7 +957,7 @@ Provider 目录和凭据测试的 Go 调用超时为 5 秒；流式调用使用�
 | `supports_credential_test`, `supports_custom_base_url` | `bool` |
 | `models` | repeated `ProviderModel` |
 
-`ProviderModel` 包含 `id`、`model_name`、`display_name`、`type`、`reasoning_supported`、`parameters[]`。`ProviderModelParameter` 包含 `name`、`display_name`、`type`、`description`、`default_value`、`options[]`、`required`，以及带 presence 的 optional `min`/`max` double。
+`ProviderModel` 包含 `id`、`model_name`、`display_name`、`type`、`reasoning_supported`、`parameters[]`。其中 `type` 只使用 `text`、`multimodal`、`image` 三种能力分类；旧 Provider 目录中的 `chat` 会按模型名称兼容归一为 `text` 或 `multimodal`。`ProviderModelParameter` 包含 `name`、`display_name`、`type`、`description`、`default_value`、`options[]`、`required`，以及带 presence 的 optional `min`/`max` double。
 
 ### 14.5 文本 RPC
 

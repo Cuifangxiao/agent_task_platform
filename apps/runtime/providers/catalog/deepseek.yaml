@@ -14,7 +14,7 @@ models:
   - id: deepseek-v4-flash
     model_name: deepseek-v4-flash
     display_name: DeepSeek V4 Flash
-    type: chat
+    type: text
     parameters:
       - name: thinking
         display_name: Thinking mode
@@ -35,7 +35,7 @@ models:
   - id: deepseek-v4-pro
     model_name: deepseek-v4-pro
     display_name: DeepSeek V4 Pro
-    type: chat
+    type: text
     parameters:
       - name: thinking
         display_name: Thinking mode

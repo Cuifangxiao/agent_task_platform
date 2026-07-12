@@ -36,9 +36,10 @@ def test_repair_loop_validates_repairs_and_terminates(monkeypatch):
         def __init__(self):
             self.rendered_slide = None
 
-        def render_slide(self, request_id, slide, html, *, version, theme):
+        def render_slide(self, request_id, slide, html, *, version, theme, svg=""):
             assert request_id == "req"
             assert html
+            assert svg
             assert version == 2
             assert theme.name == default_theme().name
             self.rendered_slide = slide
@@ -46,6 +47,7 @@ def test_repair_loop_validates_repairs_and_terminates(monkeypatch):
                 issues=[],
                 png_rel="slides/1.png",
                 html_rel="slides/1.html",
+                svg_rel="slides/1.svg",
                 thumb_b64="",
                 version=version,
                 renderer="fake",
@@ -63,7 +65,8 @@ def test_repair_loop_validates_repairs_and_terminates(monkeypatch):
     state.update(validate_deck(state))
 
     assert state["repair_round"] == 1
-    assert state["validation_issues"] == []
+    assert [issue["kind"] for issue in state["validation_issues"]] == ["svg_artist_fallback"]
+    assert state["validation_issues"][0]["severity"] == "nice_to_have"
     assert fake_browser.rendered_slide is not None
     final_slide = DeckSpec.from_dict(state["deck_spec"]).slides[0]
     assert final_slide.content["body"] == body

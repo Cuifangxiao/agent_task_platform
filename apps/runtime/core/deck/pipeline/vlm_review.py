@@ -68,7 +68,11 @@ def review_vlm(state: DeckGraphState, llm_registry: dict[str, Any], output_dir: 
     sheets = [contact_sheet]
     if len(slide_paths) > 8:
         sheets.extend(
-            build_contact_sheet(slide_paths[offset : offset + 8], review_dir / f"batch_{offset // 8 + 1}.png")
+            build_contact_sheet(
+                slide_paths[offset : offset + 8],
+                review_dir / f"batch_{offset // 8 + 1}.png",
+                start_index=offset + 1,
+            )
             for offset in range(0, len(slide_paths), 8)
         )
     logger.info("deck vlm review llm start: request_id=%s sheets=%s", request_id, len(sheets))
@@ -78,8 +82,18 @@ def review_vlm(state: DeckGraphState, llm_registry: dict[str, Any], output_dir: 
         for sheet in sheets:
             response = review_llm.invoke(
                 [
-                    SystemMessage(content="You are a visual QA reviewer for presentation slides."),
-                    HumanMessage(content=review_message_content(sheet)),
+                    SystemMessage(
+                        content=(
+                            "You are a senior presentation Art Director. Be visually exacting, "
+                            "ground every issue in the supplied image, and return only the requested JSON."
+                        )
+                    ),
+                    HumanMessage(
+                        content=review_message_content(
+                            sheet,
+                            design_context=_design_review_context(state),
+                        )
+                    ),
                 ]
             )
             record_model_response(response)
@@ -110,3 +124,28 @@ def review_vlm(state: DeckGraphState, llm_registry: dict[str, Any], output_dir: 
 
 def _has_must_fix(issues: list[dict[str, Any]]) -> bool:
     return any(issue.get("severity") == "must_fix" and int(issue.get("page") or 0) > 0 for issue in issues)
+
+
+def _design_review_context(state: DeckGraphState) -> dict[str, Any]:
+    contract = state.get("design_contract") if isinstance(state.get("design_contract"), dict) else {}
+    template = contract.get("template") if isinstance(contract.get("template"), dict) else {}
+    pages = state.get("page_blueprints") if isinstance(state.get("page_blueprints"), list) else contract.get("pages") or []
+    return {
+        "template": {
+            "template_id": template.get("template_id") or state.get("template_id") or "",
+            "template_mode": template.get("template_mode") or "",
+            "applied": template.get("applied"),
+        },
+        "art_direction": state.get("art_direction") or {},
+        "page_blueprints": [
+            {
+                "index": item.get("index"),
+                "layout_id": item.get("layout_id"),
+                "page_rhythm": item.get("page_rhythm") or item.get("rhythm"),
+                "composition": item.get("composition"),
+                "visualization": item.get("visualization"),
+            }
+            for item in pages
+            if isinstance(item, dict)
+        ],
+    }

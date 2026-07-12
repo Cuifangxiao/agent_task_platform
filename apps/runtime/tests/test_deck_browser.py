@@ -45,7 +45,7 @@ def test_render_slide_writes_authoritative_and_history_files(tmp_path, monkeypat
 
 
 def test_browser_session_reuses_one_browser_and_closes_idempotently(tmp_path, monkeypatch):
-    calls = {"start": 0, "launch": 0, "new_page": 0, "page_close": 0, "browser_close": 0, "stop": 0}
+    calls = {"start": 0, "launch": 0, "new_page": 0, "goto": 0, "page_close": 0, "browser_close": 0, "stop": 0}
     browser_thread_ids = set()
 
     def record_browser_thread():
@@ -55,6 +55,12 @@ def test_browser_session_reuses_one_browser_and_closes_idempotently(tmp_path, mo
         def set_content(self, html, wait_until):
             record_browser_thread()
             assert html
+            assert wait_until == "load"
+
+        def goto(self, url, wait_until):
+            record_browser_thread()
+            calls["goto"] += 1
+            assert url.startswith("file:")
             assert wait_until == "load"
 
         def screenshot(self, path, full_page):
@@ -109,16 +115,19 @@ def test_browser_session_reuses_one_browser_and_closes_idempotently(tmp_path, mo
     monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api_module)
 
     session = BrowserSession()
+    local_html = tmp_path / "local.html"
+    local_html.write_text('<html><img src="../images/photo.png"></html>', encoding="utf-8")
     caller_thread_id = threading.get_ident()
     with ThreadPoolExecutor(max_workers=2) as callers:
         first = callers.submit(session.capture, "<html>one</html>", tmp_path / "one.png")
         second = callers.submit(session.capture, "<html>two</html>", tmp_path / "two.png")
         first.result()
         second.result()
+        callers.submit(session.capture_file, local_html, tmp_path / "local.png").result()
         assert callers.submit(session.extract_text_layer, "<html>three</html>").result() == []
     session.close()
     session.close()
 
-    assert calls == {"start": 1, "launch": 1, "new_page": 1, "page_close": 1, "browser_close": 1, "stop": 1}
+    assert calls == {"start": 1, "launch": 1, "new_page": 1, "goto": 1, "page_close": 1, "browser_close": 1, "stop": 1}
     assert len(browser_thread_ids) == 1
     assert caller_thread_id not in browser_thread_ids

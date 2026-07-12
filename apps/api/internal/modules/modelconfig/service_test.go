@@ -25,19 +25,21 @@ func (s *stubRepository) Create(_ context.Context, config ModelConfig) (*ModelCo
 	s.lastCreated = config
 	now := time.Now()
 	return &ModelConfig{
-		ID:          1,
-		UserID:      config.UserID,
-		Name:        config.Name,
-		Provider:    config.Provider,
-		ModelName:   config.ModelName,
-		BaseURL:     config.BaseURL,
-		APIKey:      config.APIKey,
-		Temperature: config.Temperature,
-		MaxTokens:   config.MaxTokens,
-		IsDefault:   config.IsDefault,
-		Status:      config.Status,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:              1,
+		UserID:          config.UserID,
+		Name:            config.Name,
+		Provider:        config.Provider,
+		ModelName:       config.ModelName,
+		ModelType:       config.ModelType,
+		BaseURL:         config.BaseURL,
+		APIKey:          config.APIKey,
+		ProviderOptions: config.ProviderOptions,
+		Temperature:     config.Temperature,
+		MaxTokens:       config.MaxTokens,
+		IsDefault:       config.IsDefault,
+		Status:          config.Status,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}, nil
 }
 
@@ -57,19 +59,21 @@ func (s *stubRepository) Update(_ context.Context, config ModelConfig) (*ModelCo
 	s.lastUpdated = config
 	now := time.Now()
 	return &ModelConfig{
-		ID:          config.ID,
-		UserID:      config.UserID,
-		Name:        config.Name,
-		Provider:    config.Provider,
-		ModelName:   config.ModelName,
-		BaseURL:     config.BaseURL,
-		APIKey:      config.APIKey,
-		Temperature: config.Temperature,
-		MaxTokens:   config.MaxTokens,
-		IsDefault:   config.IsDefault,
-		Status:      config.Status,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:              config.ID,
+		UserID:          config.UserID,
+		Name:            config.Name,
+		Provider:        config.Provider,
+		ModelName:       config.ModelName,
+		ModelType:       config.ModelType,
+		BaseURL:         config.BaseURL,
+		APIKey:          config.APIKey,
+		ProviderOptions: config.ProviderOptions,
+		Temperature:     config.Temperature,
+		MaxTokens:       config.MaxTokens,
+		IsDefault:       config.IsDefault,
+		Status:          config.Status,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}, nil
 }
 
@@ -108,6 +112,10 @@ func (s *stubProviderCatalogService) List(_ context.Context) (*catalog.ListRespo
 }
 
 func testCatalog() *catalog.ListResponse {
+	return testCatalogWithModelType("chat")
+}
+
+func testCatalogWithModelType(modelType string) *catalog.ListResponse {
 	return &catalog.ListResponse{
 		Providers: []catalog.ProviderResponse{
 			{
@@ -117,10 +125,12 @@ func testCatalog() *catalog.ListResponse {
 					{
 						ID:        "gpt-4o-mini",
 						ModelName: "gpt-4o-mini",
+						Type:      modelType,
 					},
 					{
 						ID:        "mini-alias",
 						ModelName: "gpt-4o-mini",
+						Type:      modelType,
 					},
 				},
 			},
@@ -163,6 +173,9 @@ func TestCreateTestsCredentialBeforeSaving(t *testing.T) {
 	if resp.ModelName != "gpt-4o-mini" {
 		t.Fatalf("expected normalized model name, got %q", resp.ModelName)
 	}
+	if resp.ModelType != string(ModelTypeMultimodal) {
+		t.Fatalf("expected legacy catalog model type %q, got %q", ModelTypeMultimodal, resp.ModelType)
+	}
 	if repo.createCalls != 1 {
 		t.Fatalf("expected create to be called once, got %d", repo.createCalls)
 	}
@@ -203,7 +216,58 @@ func TestCreateDoesNotSaveWhenCredentialTestFails(t *testing.T) {
 	}
 }
 
-func TestUpdateNameOnlySkipsCredentialRetest(t *testing.T) {
+func TestCreateUsesCatalogModelTypeWhenRequestOmitsIt(t *testing.T) {
+	repo := &stubRepository{}
+	credential := &stubCredentialService{
+		resp: &credential.TestCredentialResponse{Status: "ok"},
+	}
+	catalog := &stubProviderCatalogService{resp: testCatalogWithModelType("multimodal")}
+	service := NewService(repo, credential, catalog)
+
+	resp, err := service.Create(context.Background(), testUser(), CreateRequest{
+		Name:      "vision",
+		Provider:  "openai",
+		ModelName: "gpt-4o-mini",
+		APIKey:    "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if resp.ModelType != string(ModelTypeMultimodal) {
+		t.Fatalf("model type = %q, want %q", resp.ModelType, ModelTypeMultimodal)
+	}
+	if repo.lastCreated.ModelType != ModelTypeMultimodal {
+		t.Fatalf("stored model type = %q, want %q", repo.lastCreated.ModelType, ModelTypeMultimodal)
+	}
+}
+
+func TestCreateRejectsModelTypeThatConflictsWithCatalog(t *testing.T) {
+	repo := &stubRepository{}
+	credential := &stubCredentialService{
+		resp: &credential.TestCredentialResponse{Status: "ok"},
+	}
+	catalog := &stubProviderCatalogService{resp: testCatalog()}
+	service := NewService(repo, credential, catalog)
+
+	_, err := service.Create(context.Background(), testUser(), CreateRequest{
+		Name:      "wrong-type",
+		Provider:  "openai",
+		ModelName: "gpt-4o-mini",
+		ModelType: "image",
+		APIKey:    "sk-test",
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+	if repo.createCalls != 0 {
+		t.Fatalf("expected create not to be called, got %d", repo.createCalls)
+	}
+	if credential.calls != 0 {
+		t.Fatalf("expected credential test not to run, got %d", credential.calls)
+	}
+}
+
+func TestUpdateNameOnlySyncsCatalogModelTypeWithoutCredentialRetest(t *testing.T) {
 	repo := &stubRepository{
 		getResp: &ModelConfig{
 			ID:          1,
@@ -211,6 +275,7 @@ func TestUpdateNameOnlySkipsCredentialRetest(t *testing.T) {
 			Name:        "main",
 			Provider:    "openai",
 			ModelName:   "gpt-4o-mini",
+			ModelType:   ModelTypeText,
 			BaseURL:     "https://api.openai.com/v1",
 			APIKey:      "sk-test",
 			Temperature: 1,
@@ -225,7 +290,7 @@ func TestUpdateNameOnlySkipsCredentialRetest(t *testing.T) {
 			Message: "probe ok",
 		},
 	}
-	catalog := &stubProviderCatalogService{resp: testCatalog()}
+	catalog := &stubProviderCatalogService{resp: testCatalogWithModelType("multimodal")}
 	service := NewService(repo, credential, catalog)
 
 	newName := "renamed"
@@ -239,11 +304,78 @@ func TestUpdateNameOnlySkipsCredentialRetest(t *testing.T) {
 	if resp.Name != "renamed" {
 		t.Fatalf("expected updated name, got %q", resp.Name)
 	}
+	if resp.ModelType != string(ModelTypeMultimodal) {
+		t.Fatalf("expected model type to sync to %q, got %q", ModelTypeMultimodal, resp.ModelType)
+	}
 	if credential.calls != 0 {
 		t.Fatalf("expected credential test not to run, got %d", credential.calls)
 	}
 	if repo.updateCalls != 1 {
 		t.Fatalf("expected update to be called once, got %d", repo.updateCalls)
+	}
+}
+
+func TestNormalizeInputModelType(t *testing.T) {
+	tests := []struct {
+		name      string
+		modelType string
+		want      ModelType
+		wantErr   bool
+	}{
+		{name: "defaults to text", want: ModelTypeText},
+		{name: "normalizes text", modelType: " TEXT ", want: ModelTypeText},
+		{name: "accepts multimodal", modelType: "multimodal", want: ModelTypeMultimodal},
+		{name: "accepts image", modelType: "image", want: ModelTypeImage},
+		{name: "rejects unsupported type", modelType: "audio", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, err := normalizeInput(modelConfigInput{
+				Name:      "main",
+				Provider:  "openai",
+				ModelName: "gpt-4o-mini",
+				ModelType: tt.modelType,
+				APIKey:    "sk-test",
+			})
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidRequest) {
+					t.Fatalf("expected ErrInvalidRequest, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeInput returned error: %v", err)
+			}
+			if config.ModelType != tt.want {
+				t.Fatalf("model type = %q, want %q", config.ModelType, tt.want)
+			}
+		})
+	}
+}
+
+func TestModelTypeFromCatalog(t *testing.T) {
+	tests := []struct {
+		name        string
+		catalogType string
+		modelName   string
+		want        ModelType
+		wantOK      bool
+	}{
+		{name: "legacy text chat", catalogType: "chat", modelName: "deepseek-chat", want: ModelTypeText, wantOK: true},
+		{name: "legacy qwen vl", catalogType: "chat", modelName: "qwen3-vl-plus", want: ModelTypeMultimodal, wantOK: true},
+		{name: "legacy openai vision", catalogType: "chat", modelName: "gpt-4o-mini", want: ModelTypeMultimodal, wantOK: true},
+		{name: "native image", catalogType: "image", modelName: "gpt-image-1", want: ModelTypeImage, wantOK: true},
+		{name: "unknown type", catalogType: "embedding", modelName: "text-embedding-3-small"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := modelTypeFromCatalog(tt.catalogType, tt.modelName)
+			if ok != tt.wantOK || got != tt.want {
+				t.Fatalf("modelTypeFromCatalog(%q, %q) = (%q, %v), want (%q, %v)", tt.catalogType, tt.modelName, got, ok, tt.want, tt.wantOK)
+			}
+		})
 	}
 }
 

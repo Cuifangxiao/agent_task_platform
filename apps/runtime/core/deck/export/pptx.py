@@ -12,11 +12,11 @@ from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 
 from core.deck.errors import ExportError
+from core.deck.export.svg_native import add_svg_as_native_shapes
 from core.deck.export.text_layer import MIN_TEXTBOX_SIZE_PX, TEXTBOX_HEIGHT_SLACK_PX, TEXTBOX_WIDTH_SLACK
 from core.deck.runtime_metrics import record_fallback
 from core.deck.rendering.browser import BrowserSession
@@ -28,6 +28,8 @@ PAGE_WIDTH = Inches(13.333)
 PAGE_HEIGHT = Inches(7.5)
 PX_TO_INCH = 1 / 96
 PPT_FONT = "Noto Sans SC"
+
+
 @dataclass
 class ExportResult:
     path: Path
@@ -54,31 +56,10 @@ class DeckExporter:
         manifest_slides: list[dict[str, Any]] = []
         for slide_spec in deck.slides:
             slide = prs.slides.add_slide(prs.slide_layouts[6])
-            background_path, text_layer, warning = self._decorative_background_and_text(request_dir, slide_spec)
-            if warning:
-                warnings.append(warning)
-            unavailable_fonts = sorted(
-                {
-                    str(item.get("fontFamily") or PPT_FONT)
-                    for item in text_layer
-                    if item.get("fontAvailable") is False
-                }
-            )
-            if unavailable_fonts:
-                warnings.append(f"Slide {slide_spec.index} uses unavailable fonts: {', '.join(unavailable_fonts)}.")
-            _add_full_slide_image(slide, background_path)
-            for item in text_layer:
-                _add_text_box(slide, item)
+            manifest_slide, slide_warnings = self._export_slide(request_dir, slide, slide_spec)
+            warnings.extend(slide_warnings)
             _add_speaker_notes(slide, slide_spec)
-            manifest_slides.append(
-                {
-                    "index": slide_spec.index,
-                    "editable_text_boxes": len(text_layer),
-                    "degraded": not bool(text_layer),
-                    "fonts": sorted({str(item.get("fontFamily") or PPT_FONT) for item in text_layer}),
-                    "preview": f"slides/{slide_spec.index}.png",
-                }
-            )
+            manifest_slides.append(manifest_slide)
 
         path = request_dir / "deck.pptx"
         prs.save(path)
@@ -95,6 +76,82 @@ class DeckExporter:
         }
         (request_dir / "export-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         return ExportResult(path=path.resolve(), warnings=warnings, manifest=manifest)
+
+    def _export_slide(self, request_dir: Path, slide: Any, slide_spec: SlideSpec) -> tuple[dict[str, Any], list[str]]:
+        svg_path = request_dir / "slides" / f"{slide_spec.index}.svg"
+        if svg_path.exists():
+            try:
+                stats = add_svg_as_native_shapes(slide, svg_path)
+                return (
+                    {
+                        "index": slide_spec.index,
+                        "editable_text_boxes": stats.editable_text_boxes,
+                        "native_shape_count": stats.shape_count,
+                        "export_mode": "native_svg",
+                        "degraded": False,
+                        "fonts": stats.fonts,
+                        "preview": f"slides/{slide_spec.index}.png",
+                        "svg": f"slides/{slide_spec.index}.svg",
+                    },
+                    [],
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                record_fallback()
+                logger.warning("native SVG export failed for slide %s: %s", slide_spec.index, exc)
+                warning = f"Slide {slide_spec.index} native SVG export failed; used the previously rendered preview: {exc}"
+                # Do not navigate the browser to HTML containing an SVG that
+                # failed native preflight. Its failure may be a forbidden local
+                # resource reference; the request-scoped preview is the safe
+                # degradation path.
+                manifest = self._export_preview_only_slide(request_dir, slide, slide_spec)
+                return manifest, [warning]
+        manifest, fallback_warnings = self._export_mixed_slide(request_dir, slide, slide_spec)
+        return manifest, fallback_warnings
+
+    def _export_mixed_slide(self, request_dir: Path, slide: Any, slide_spec: SlideSpec) -> tuple[dict[str, Any], list[str]]:
+        background_path, text_layer, warning = self._decorative_background_and_text(request_dir, slide_spec)
+        warnings = [warning] if warning else []
+        unavailable_fonts = sorted(
+            {
+                str(item.get("fontFamily") or PPT_FONT)
+                for item in text_layer
+                if item.get("fontAvailable") is False
+            }
+        )
+        if unavailable_fonts:
+            warnings.append(f"Slide {slide_spec.index} uses unavailable fonts: {', '.join(unavailable_fonts)}.")
+        _add_full_slide_image(slide, background_path)
+        for item in text_layer:
+            _add_text_box(slide, item)
+        return (
+            {
+                "index": slide_spec.index,
+                "editable_text_boxes": len(text_layer),
+                "native_shape_count": 0,
+                "export_mode": "mixed_raster",
+                "degraded": True,
+                "fonts": sorted({str(item.get("fontFamily") or PPT_FONT) for item in text_layer}),
+                "preview": f"slides/{slide_spec.index}.png",
+                "svg": "",
+            },
+            warnings,
+        )
+
+    def _export_preview_only_slide(self, request_dir: Path, slide: Any, slide_spec: SlideSpec) -> dict[str, Any]:
+        preview_path = request_dir / "slides" / f"{slide_spec.index}.png"
+        if not preview_path.exists():
+            raise ExportError(f"Slide {slide_spec.index} has no safe preview fallback.", stage="export")
+        _add_full_slide_image(slide, preview_path)
+        return {
+            "index": slide_spec.index,
+            "editable_text_boxes": 0,
+            "native_shape_count": 0,
+            "export_mode": "preview_raster",
+            "degraded": True,
+            "fonts": [],
+            "preview": f"slides/{slide_spec.index}.png",
+            "svg": f"slides/{slide_spec.index}.svg",
+        }
 
     def _decorative_background_and_text(
         self,
@@ -120,13 +177,12 @@ class DeckExporter:
         )
 
     def _capture_hidden_text_background(self, html_path: Path, request_dir: Path, index: int) -> tuple[Path, list[dict[str, Any]]]:
-        html = html_path.read_text(encoding="utf-8")
         bg_path = request_dir / "slides" / f"{index}_bg.png"
         if self._browser_session is not None:
-            return bg_path, self._browser_session.extract_hidden_text_background(html, bg_path)
+            return bg_path, self._browser_session.extract_hidden_text_background(html_path, bg_path)
         session = BrowserSession()
         try:
-            return bg_path, session.extract_hidden_text_background(html, bg_path)
+            return bg_path, session.extract_hidden_text_background(html_path, bg_path)
         finally:
             session.close()
 
@@ -134,10 +190,9 @@ class DeckExporter:
 def extract_text_layer(html_path: Path) -> list[dict[str, Any]]:
     """Extract editable text geometry from HTML when Playwright is available."""
 
-    html = html_path.read_text(encoding="utf-8")
     session = BrowserSession()
     try:
-        return session.extract_text_layer(html)
+        return session.extract_text_layer(html_path)
     finally:
         session.close()
 
@@ -292,10 +347,10 @@ def _css_rgb_to_rgbcolor(value: str) -> RGBColor | None:
 def _set_east_asian_font(run: Any, font_name: str) -> None:
     try:
         r_pr = run._r.get_or_add_rPr()  # pylint: disable=protected-access
-        r_fonts = r_pr.rFonts
-        if r_fonts is None:
-            r_fonts = OxmlElement("a:rFonts")
-            r_pr.append(r_fonts)
-        r_fonts.set(qn("a:ea"), font_name)
+        east_asian = r_pr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}ea")
+        if east_asian is None:
+            east_asian = OxmlElement("a:ea")
+            r_pr.append(east_asian)
+        east_asian.set("typeface", font_name)
     except Exception:  # pylint: disable=broad-exception-caught
         return

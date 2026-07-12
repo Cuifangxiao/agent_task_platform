@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
-import logging
-import time
 import copy
-from contextvars import copy_context
-from concurrent.futures import ThreadPoolExecutor
+import logging
+import re
+import time
 from typing import Any
 
 from langgraph.config import get_stream_writer
 
 import core.deck.events as events
+from core.deck.pipeline.design_lock import page_contract
 from core.deck.pipeline.helpers import clamp_slide_count, component_from_layout, fallback_slide_title
-from core.deck.pipeline.llm import compose_context_prompt, invoke_json_with_retries, llm_for_node, load_node_prompt
-from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
+from core.deck.pipeline.llm import compose_context_prompt, invoke_json_with_retries, llm_for_node, llm_log_context, load_node_prompt
 from core.deck.pipeline.outline import parse_outline_slides
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import issues_to_dicts, validate_slide_spec
+from core.deck.rendering.artist import render_svg_artwork
 from core.deck.rendering.browser import BrowserRenderer
 from core.deck.rendering.html import HTMLSlideRenderer
+from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
 from core.deck.spec import COMPONENTS, DeckSpec, SlideSpec, ThemeTokens, _normalize_design, default_theme, normalize_slide_spec
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,11 @@ def write_and_design_slides(
         slides=[],
     )
     slide_llm = llm_for_node(llm_registry, "writer", aliases=("slides",))
-    designer_llm = llm_for_node(llm_registry, "designer", aliases=("slides", "writer"))
-    writer(events.stage_started("slides", f"Generating {total} HTML slide previews", {"total": total}))
+    # Full-page SVG authoring must be explicitly configured.  Falling through
+    # to the writer/default model would silently put the legacy component
+    # selector back on the production path.
+    designer_llm = llm_registry.get("designer")
+    writer(events.stage_started("slides", f"Generating {total} SVG slide previews", {"total": total}))
     logger.info("deck slides start: request_id=%s total=%s", request_id, total)
 
     slides: list[SlideSpec] = []
@@ -69,47 +73,22 @@ def write_and_design_slides(
         )
         writer(events.slide_started(f"Generating slide {index}/{total}: {title}", legacy_payload))
 
-    # Explicit per-node registries are production clients; the single `default`
-    # test/fallback client may not be thread-safe.
-    max_workers = min(4, max(1, total)) if "writer" in llm_registry else 1
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="deck-writer") as executor:
-        futures = [
-            executor.submit(
-                copy_context().run,
-                _generate_slide_spec, state, index, outline, plan_slides, total, deck, slide_llm, request_id,
-            )
-            for index, outline in enumerate(plan_slides, start=1)
-        ]
-        generated = [future.result() for future in futures]
+    # Quality-first generation is intentionally sequential: each page receives
+    # the last two completed page specs, preventing repetition and narrative drift.
+    generated: list[tuple[dict[str, Any], SlideSpec, str]] = []
+    previous_slides: list[SlideSpec] = []
+    for index, outline in enumerate(plan_slides, start=1):
+        result = _generate_slide_spec(
+            state, index, outline, plan_slides, total, deck, slide_llm, request_id, previous_slides,
+        )
+        generated.append(result)
+        previous_slides.append(result[1])
 
+    previous_visual_signatures: list[dict[str, Any]] = []
     for raw_slide, slide, recovery_warning in generated:
         raw_slides.append(raw_slide)
-        designer_started_at = time.perf_counter()
-        designer_metrics, designer_token = begin_node_metrics()
-        try:
-            slide = apply_designer_direction(designer_llm, slide, plan_slides[slide.index - 1], theme)
-        finally:
-            end_node_metrics(designer_token)
-        metadata = llm_registry.get("__metadata__") if isinstance(llm_registry.get("__metadata__"), dict) else {}
-        designer_model = metadata.get("designer") or {}
-        writer(
-            events.stage_progress(
-                "designer",
-                f"Designer selected slide {slide.index} component and variant",
-                {
-                    "index": slide.index,
-                    "metrics": {
-                        "duration_ms": round((time.perf_counter() - designer_started_at) * 1000),
-                        "provider": designer_model.get("provider", ""),
-                        "model": designer_model.get("model", ""),
-                        **designer_metrics.snapshot(),
-                        "repair_count": int(state.get("repair_round") or 0),
-                        "vlm_issue_count": 0,
-                        "export_degraded": False,
-                    },
-                },
-            )
-        )
+        source_outline = plan_slides[min(max(slide.index - 1, 0), len(plan_slides) - 1)] if plan_slides else {}
+        slide = apply_design_contract(slide, state)
         if recovery_warning:
             writer(
                 events.stage_progress(
@@ -138,10 +117,59 @@ def write_and_design_slides(
                 )
             )
 
+            designer_started_at = time.perf_counter()
+            designer_metrics, designer_token = begin_node_metrics()
+            try:
+                with llm_log_context(
+                    request_id=request_id,
+                    stage="designer",
+                    slide_index=part.index,
+                    operation="svg_artist",
+                ):
+                    artwork = render_svg_artwork(
+                        llm=designer_llm,
+                        state=state,
+                        deck=deck,
+                        slide=part,
+                        outline=source_outline,
+                        previous_visual_signatures=previous_visual_signatures,
+                    )
+            finally:
+                end_node_metrics(designer_token)
+            previous_visual_signatures.append(artwork.visual_signature)
+            if artwork.issues:
+                all_issues.extend(issues_to_dicts(artwork.issues))
+            metadata = llm_registry.get("__metadata__") if isinstance(llm_registry.get("__metadata__"), dict) else {}
+            designer_model = metadata.get("designer") or {}
+            writer(
+                events.stage_progress(
+                    "designer",
+                    f"SVG Artist completed slide {part.index} with {artwork.render_mode}",
+                    {
+                        "index": part.index,
+                        "render_mode": artwork.render_mode,
+                        "template_id": artwork.template_id,
+                        "layout_id": artwork.layout_id,
+                        "page_rhythm": artwork.page_rhythm,
+                        "artist_repair_count": artwork.repair_count,
+                        "artist_rejected_issue_count": len(artwork.rejected_issues),
+                        "metrics": {
+                            "duration_ms": round((time.perf_counter() - designer_started_at) * 1000),
+                            "provider": designer_model.get("provider", ""),
+                            "model": designer_model.get("model", ""),
+                            **designer_metrics.snapshot(),
+                            "repair_count": artwork.repair_count,
+                            "vlm_issue_count": 0,
+                            "export_degraded": artwork.render_mode != "llm_svg",
+                        },
+                    },
+                )
+            )
             html = html_renderer.render(deck, part)
+            svg = artwork.svg
             render_started_at = time.perf_counter()
             logger.info("deck slide render start: request_id=%s index=%s", request_id, part.index)
-            artifact = browser.render_slide(request_id, part, html, theme=theme)
+            artifact = browser.render_slide(request_id, part, html, theme=theme, svg=svg)
             logger.info(
                 "deck slide render done: request_id=%s index=%s renderer=%s issues=%s elapsed=%.2fs",
                 request_id,
@@ -154,9 +182,17 @@ def write_and_design_slides(
                 "index": part.index,
                 "png": artifact.png_rel,
                 "html": artifact.html_rel,
+                "svg": artifact.svg_rel,
                 "version": artifact.version,
-                "status": "ready" if not (artifact.issues or spec_issues) else "warning",
+                "status": "ready" if not (artifact.issues or spec_issues or artwork.issues) else "warning",
                 "renderer": artifact.renderer,
+                "svg_renderer": artwork.render_mode,
+                "template_id": artwork.template_id,
+                "layout_id": artwork.layout_id,
+                "page_rhythm": artwork.page_rhythm,
+                "artist_repair_count": artwork.repair_count,
+                "visual_signature": artwork.visual_signature,
+                "artist_rejected_issues": artwork.rejected_issues,
             }
             artifacts.append(artifact_payload)
             writer(events.slide_preview(f"Slide {part.index} preview ready", artifact_payload))
@@ -185,29 +221,44 @@ def _generate_slide_spec(
     deck: DeckSpec,
     slide_llm: Any,
     request_id: str,
+    previous_slides: list[SlideSpec],
 ) -> tuple[dict[str, Any], SlideSpec, str]:
     started_at = time.perf_counter()
     raw_slide: dict[str, Any] = {}
     warning = ""
+    logger.info(
+        "event=ppt_slide_writer_start request_id=%s slide_index=%s total=%s previous_slides=%s",
+        request_id,
+        index,
+        total,
+        len(previous_slides),
+    )
     try:
-        raw_slide = invoke_json_with_retries(
-            slide_llm,
-            system=load_node_prompt("writer"),
-            user=slide_prompt(state, outline, [], total, neighbor_outlines=_neighbor_outlines(plan_slides, index)),
-            attempts=3,
-        )
+        with llm_log_context(
+            request_id=request_id,
+            stage="writer",
+            slide_index=index,
+            operation="slide_spec",
+        ):
+            raw_slide = invoke_json_with_retries(
+                slide_llm,
+                system=load_node_prompt("writer"),
+                user=slide_prompt(state, outline, previous_slides, total, neighbor_outlines=_neighbor_outlines(plan_slides, index)),
+                attempts=3,
+            )
     except ValueError as exc:
         warning = str(exc)
         record_fallback()
     slide = normalize_slide_spec(raw_slide, index=index, outline=outline, deck_title=deck.title, narrative=deck.narrative)
     slide = repair_placeholder_slide(slide, outline, deck)
     logger.info(
-        "deck slide writer/designer done: request_id=%s index=%s component=%s variant=%s elapsed=%.2fs",
+        "event=ppt_slide_writer_end request_id=%s slide_index=%s component=%s variant=%s duration_ms=%s recovered=%s",
         request_id,
         index,
         slide.component,
         slide.layout_variant,
-        time.perf_counter() - started_at,
+        round((time.perf_counter() - started_at) * 1000),
+        bool(warning),
     )
     return raw_slide, slide, warning
 
@@ -253,6 +304,92 @@ def apply_designer_direction(designer_llm: Any, slide: SlideSpec, outline: dict[
     return slide
 
 
+def apply_design_contract(slide: SlideSpec, state: DeckGraphState) -> SlideSpec:
+    """Re-apply the confirmed page contract after model-directed styling."""
+
+    locked = page_contract(state, slide.index)
+    component = str(locked.get("component") or "").strip()
+    if component in COMPONENTS:
+        if not _component_accepts_content(component, slide.content, slide.chart):
+            slide.content = _adapt_content_for_component(slide, component)
+        slide.component = component
+    variant = str(locked.get("layout_variant") or "").strip()
+    if variant in {"balanced", "editorial", "split"}:
+        slide.layout_variant = variant
+    contract = state.get("design_contract") if isinstance(state.get("design_contract"), dict) else {}
+    slide.spec_hash = str(contract.get("spec_hash") or "").strip()
+    return slide
+
+
+def _adapt_content_for_component(slide: SlideSpec, component: str) -> dict[str, Any]:
+    """Preserve generated facts when the writer misses the locked component schema."""
+
+    semantic_content = {
+        key: value
+        for key, value in slide.content.items()
+        if key not in {"eyebrow", "meta", "speaker", "left_title", "right_title"}
+    }
+    values = _content_strings(semantic_content)
+    fallback = next(
+        (
+            str(slide.content.get(key) or "").strip()
+            for key in ("body", "takeaway", "subtitle", "quote")
+            if str(slide.content.get(key) or "").strip()
+        ),
+        values[0] if values else slide.title,
+    )
+    items = values or [fallback]
+    if component == "cover":
+        return {"eyebrow": str(slide.content.get("eyebrow") or "PRESENTATION"), "subtitle": "\n".join(items)}
+    if component in {"section", "end"}:
+        return {"subtitle": "\n".join(items)}
+    if component in {"agenda", "timeline", "quadrant", "summary"}:
+        return {"items": items}
+    if component == "steps":
+        return {"steps": items}
+    if component == "kpi-cards":
+        return {"cards": [{"value": "", "label": item, "caption": ""} for item in items]}
+    if component == "comparison":
+        midpoint = max(1, (len(items) + 1) // 2)
+        return {
+            "left_title": str(slide.content.get("left_title") or "Current"),
+            "right_title": str(slide.content.get("right_title") or "Target"),
+            "left": items[:midpoint],
+            "right": items[midpoint:],
+        }
+    if component == "data-table":
+        return {"columns": ["Item"], "rows": [[item] for item in items]}
+    if component == "quote":
+        return {"quote": "\n".join(items), "speaker": str(slide.content.get("speaker") or "")}
+    if component == "chart-takeaway":
+        return {"takeaway": "\n".join(items)}
+    remaining = [item for item in items if item != fallback]
+    return {"body": fallback, "bullets": remaining}
+
+
+def _content_strings(value: Any) -> list[str]:
+    collected: list[str] = []
+
+    def walk(item: Any) -> None:
+        if isinstance(item, str):
+            text = item.strip()
+            if text and text not in collected:
+                collected.append(text)
+        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            text = str(item)
+            if text not in collected:
+                collected.append(text)
+        elif isinstance(item, dict):
+            for child in item.values():
+                walk(child)
+        elif isinstance(item, list):
+            for child in item:
+                walk(child)
+
+    walk(value)
+    return collected
+
+
 def _component_accepts_content(component: str, content: dict[str, Any], chart: dict[str, Any] | None) -> bool:
     requirements = {
         "cover": ("subtitle",),
@@ -274,7 +411,7 @@ def _component_accepts_content(component: str, content: dict[str, Any], chart: d
     required = requirements.get(component, ())
     if component in {"comparison"}:
         return all(content.get(key) for key in required)
-    return any(content.get(key) is not None for key in required) if required else True
+    return any(bool(content.get(key)) for key in required) if required else True
 
 
 def split_slide_preserving_content(slide: SlideSpec) -> list[SlideSpec] | None:
@@ -331,6 +468,11 @@ def slide_prompt(
             "outline_markdown": state.get("outline_markdown", ""),
             "total_slides": total_slides,
             "current_slide_outline": current_slide_outline,
+            "design_contract": {
+                "schema": (state.get("design_contract") or {}).get("schema"),
+                "spec_hash": (state.get("design_contract") or {}).get("spec_hash"),
+                "page": page_contract(state, int(current_slide_outline.get("index") or 0)),
+            },
             "previous_slides": [slide.to_dict() for slide in previous_slides[-2:]],
             "neighbor_outlines": neighbor_outlines or {},
         },
@@ -343,7 +485,7 @@ def relevant_source_context(state: DeckGraphState, outline: dict[str, Any], *, l
     if not chunks:
         return ""
     query = " ".join(str(outline.get(key) or "") for key in ("title", "key_message", "role")).casefold()
-    terms = {term for term in query.replace("，", " ").replace("。", " ").split() if len(term) >= 2}
+    terms = _search_terms(query)
     scored = [
         (sum(1 for term in terms if term in str(chunk.get("excerpt") or "").casefold()), chunk)
         for chunk in chunks
@@ -359,7 +501,7 @@ def relevant_source_context(state: DeckGraphState, outline: dict[str, Any], *, l
 def relevant_brief_context(state: DeckGraphState, outline: dict[str, Any], *, fact_limit: int = 12) -> dict[str, Any]:
     brief = state.get("brief") if isinstance(state.get("brief"), dict) else {}
     query = " ".join(str(outline.get(key) or "") for key in ("title", "key_message", "role")).casefold()
-    terms = {term for term in query.replace("，", " ").replace("。", " ").split() if len(term) >= 2}
+    terms = _search_terms(query)
     facts = [item for item in brief.get("facts") or [] if isinstance(item, dict)]
     scored = [
         (
@@ -381,6 +523,20 @@ def relevant_brief_context(state: DeckGraphState, outline: dict[str, Any], *, fa
     } | {"facts": ranked}
 
 
+def _search_terms(value: str, *, limit: int = 64) -> set[str]:
+    """Tokenize both whitespace languages and unsegmented CJK for source ranking."""
+
+    terms: list[str] = []
+    for token in re.findall(r"[a-z0-9][a-z0-9._/-]+|[\u3400-\u9fff]+", (value or "").casefold()):
+        if len(token) < 2:
+            continue
+        if re.fullmatch(r"[\u3400-\u9fff]+", token) and len(token) > 4:
+            terms.extend(token[index : index + size] for size in (2, 3, 4) for index in range(len(token) - size + 1))
+        else:
+            terms.append(token)
+    return set(terms[:limit])
+
+
 def plan_slide_outlines(state: DeckGraphState) -> list[dict[str, Any]]:
     raw_plan_slides = (state.get("plan") or {}).get("slides") or []
     parsed_slides = raw_plan_slides if isinstance(raw_plan_slides, list) else []
@@ -398,6 +554,10 @@ def plan_slide_outlines(state: DeckGraphState) -> list[dict[str, Any]]:
                 "role": str(source.get("role") or ("hook" if index == 0 else "evidence")).strip(),
                 "component": str(source.get("component") or component_from_layout(source.get("layout"), index)).strip(),
                 "layout": str(source.get("layout") or ("title" if index == 0 else "content")).strip(),
+                "page_rhythm": str(source.get("page_rhythm") or "").strip(),
+                "layout_intent": str(source.get("layout_intent") or "").strip(),
+                "visualization": source.get("visualization") or "none",
+                "evidence": str(source.get("evidence") or "").strip(),
             }
         )
     return outlines

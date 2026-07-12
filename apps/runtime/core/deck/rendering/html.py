@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from core.deck.rendering.charts import chart_is_valid, render_chart_svg
+from core.deck.rendering.svg import SVGSlideRenderer
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec, ThemeTokens, default_theme
 
 
@@ -21,6 +22,7 @@ class HTMLSlideRenderer:
     def __init__(self, design_system_dir: Path | None = None) -> None:
         self._design_system_dir = design_system_dir or DESIGN_SYSTEM_DIR
         self._css = (self._design_system_dir / "deck.css").read_text(encoding="utf-8")
+        self._svg_renderer = SVGSlideRenderer()
 
     def render(self, deck: DeckSpec, slide: SlideSpec) -> str:
         body = self._render_component(slide)
@@ -31,6 +33,7 @@ class HTMLSlideRenderer:
             if key in {"emphasis", "density", "visual_hierarchy", "accent_slot"}
             and str(value).replace("-", "").isalnum()
         )
+
         classes = f"variant-{variant}" + (f" {design_classes}" if design_classes else "")
         body = body.replace('<section class="slide', f'<section class="slide {classes}', 1)
         return "\n".join(
@@ -51,6 +54,11 @@ class HTMLSlideRenderer:
                 "</html>",
             ]
         )
+
+    def render_svg(self, deck: DeckSpec, slide: SlideSpec) -> str:
+        """Return the canonical vector page used for preview QA and PPTX export."""
+
+        return self._svg_renderer.render(deck, slide)
 
     def render_cover_sample(self, title: str, narrative: str, theme: ThemeTokens) -> str:
         deck = DeckSpec(

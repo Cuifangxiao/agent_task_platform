@@ -105,14 +105,39 @@ export function normalizeStoredSteps(value: unknown): ProgressStep[] {
 
   return value.map((item, index) => {
     const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+    const startedAt = normalizeStepTimestamp(record.startedAt)
+    const completedAt = normalizeStepTimestamp(record.completedAt)
     return {
       id: Number(record.id ?? index + 1),
       label: String(record.label ?? '处理中'),
       message: String(record.message ?? ''),
       stage: typeof record.stage === 'string' ? normalizeProgressStage(record.stage) : undefined,
       tone: normalizeStepTone(record.tone),
+      state: normalizeProgressStepState(record.state, record.tone, startedAt),
+      ...(startedAt === undefined ? {} : { startedAt }),
+      ...(completedAt === undefined ? {} : { completedAt }),
     }
   })
+}
+
+export function normalizeStepTimestamp(value: unknown) {
+  const timestamp = Number(value)
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : undefined
+}
+
+export function normalizeProgressStepState(value: unknown, tone: unknown, startedAt: number | undefined): ProgressStep['state'] {
+  switch (value) {
+    case 'pending':
+    case 'running':
+    case 'waiting':
+    case 'done':
+    case 'error':
+      return value
+    default:
+      if (tone === 'error') return 'error'
+      if (tone === 'done') return 'done'
+      return startedAt === undefined ? 'done' : 'running'
+  }
 }
 
 export function normalizeStoredSlides(value: unknown): SlideProgress[] {
@@ -138,6 +163,7 @@ export function normalizeStoredSlides(value: unknown): SlideProgress[] {
         speakerNotes: String(record.speakerNotes ?? record.speaker_notes ?? ''),
         previewPng: String(record.previewPng ?? record.png ?? ''),
         previewHtml: String(record.previewHtml ?? record.html ?? ''),
+        previewSvg: String(record.previewSvg ?? record.svg ?? ''),
         previewThumb: String(record.previewThumb ?? record.thumb_b64 ?? ''),
         version: Number(record.version ?? 0),
         status: normalizeSlideStatus(record.status),
@@ -162,6 +188,15 @@ export function normalizeStyleOptions(value: unknown): StyleOption[] {
       return {
         styleId,
         name: String(record.name ?? styleId),
+        communicationMode: String(record.communication_mode ?? record.communicationMode ?? ''),
+        visualStyle: String(record.visual_style ?? record.visualStyle ?? ''),
+        templateId: String(record.template_id ?? record.templateId ?? ''),
+        templateMode: String(record.template_mode ?? record.templateMode ?? ''),
+        templateSummary: String(record.template_summary ?? record.templateSummary ?? ''),
+        rationale: String(record.rationale ?? ''),
+        confirmations: normalizeStringRecord(record.confirmations),
+        layoutPrinciples: normalizeStringList(record.layout_principles ?? record.layoutPrinciples),
+        imageStrategy: String(record.image_strategy ?? record.imageStrategy ?? ''),
         coverPng: String(record.cover_png ?? record.coverPng ?? ''),
         coverHtml: String(record.cover_html ?? record.coverHtml ?? ''),
         thumbB64: String(record.thumb_b64 ?? record.thumbB64 ?? ''),
@@ -180,6 +215,17 @@ export function normalizeStringList(value: unknown): string[] {
     return []
   }
   return value.map((item) => String(item).trim()).filter(Boolean)
+}
+
+export function normalizeStringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key.trim(), String(item ?? '').trim()] as const)
+      .filter(([key, item]) => Boolean(key && item)),
+  )
 }
 
 export function normalizeSlideStatus(value: unknown): SlideProgressStatus {

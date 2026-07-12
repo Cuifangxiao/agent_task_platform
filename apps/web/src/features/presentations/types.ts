@@ -88,6 +88,9 @@ export interface ProgressStep {
   message: string
   stage?: string
   tone: 'normal' | 'error' | 'done'
+  state: 'pending' | 'running' | 'waiting' | 'done' | 'error'
+  startedAt?: number
+  completedAt?: number
 }
 
 export type SlideProgressStatus = 'pending' | 'running' | 'ready' | 'reviewed' | 'warning' | 'error'
@@ -103,6 +106,7 @@ export interface SlideProgress {
   speakerNotes: string
   previewPng: string
   previewHtml: string
+  previewSvg: string
   previewThumb: string
   version: number
   status: SlideProgressStatus
@@ -117,6 +121,15 @@ export interface SlideProgressUpdate extends Partial<Omit<SlideProgress, 'index'
 export interface StyleOption {
   styleId: string
   name: string
+  communicationMode: string
+  visualStyle: string
+  templateId: string
+  templateMode: string
+  templateSummary: string
+  rationale: string
+  confirmations: Record<string, string>
+  layoutPrinciples: string[]
+  imageStrategy: string
   coverPng: string
   coverHtml: string
   thumbB64: string
@@ -195,15 +208,7 @@ export type PresentationMessageAction =
   | { type: 'regenerate-slide'; slide: SlideProgress }
   | { type: 'download'; requestId: string; fileName: string }
   | { type: 'update-outline'; messageId: number; value: string }
+  | { type: 'update-outline-feedback'; messageId: number; value: string }
   | { type: 'toggle-outline-editor'; messageId: number }
   | { type: 'update-style-feedback'; messageId: number; value: string }
   | { type: 'update-slide-feedback'; slideIndex: number; value: string }
-
-export type PipelineStageStatus = 'done' | 'running' | 'waiting' | 'pending' | 'error'
-
-export interface PipelineStageView {
-  key: string
-  label: string
-  description: string
-  status: PipelineStageStatus
-}
