@@ -159,3 +159,18 @@ def test_design_package_assigns_only_approved_request_image_hrefs():
     assert package["asset_manifest"]["assets"][0]["href"] == "../images/source-01-a1b2c3.png"
     assert package["page_blueprints"][0]["asset_ids"] == ["source-image-01"]
     assert package["page_blueprints"][1]["asset_ids"] == []
+
+
+def test_design_package_rotates_multiple_approved_images_across_image_pages():
+    state = _state()
+    state["source_images"] = [
+        {"asset_id": "image-a", "filename": "a.png", "svg_href": "../images/a.png"},
+        {"asset_id": "image-b", "filename": "b.png", "svg_href": "../images/b.png"},
+    ]
+    for page in state["plan"]["slides"]:
+        page["visualization"] = "使用图片作为主视觉"
+
+    package = compile_design_package(state)
+
+    assert package["page_blueprints"][0]["asset_ids"] == ["image-a"]
+    assert package["page_blueprints"][1]["asset_ids"] == ["image-b"]

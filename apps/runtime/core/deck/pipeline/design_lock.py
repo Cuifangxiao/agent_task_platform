@@ -15,6 +15,7 @@ from core.deck.design.catalog import TemplatePack, compatible_layouts, get_templ
 from core.deck.design.visualizations import public_visualization_catalog
 from core.deck.pipeline.llm import invoke_json_with_retries, load_node_prompt
 from core.deck.pipeline.state import DeckGraphState
+from core.deck.paths import DeckProjectPaths
 from core.deck.runtime_metrics import record_fallback
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, ThemeTokens, default_theme
 
@@ -42,15 +43,15 @@ def freeze_design_contract(
     writer = get_stream_writer()
     writer(events.stage_started("design_lock", "Compiling the approved art direction into page blueprints"))
     package = compile_design_package(state, llm_registry=llm_registry)
-    request_dir = output_dir / str(state["request_id"])
-    request_dir.mkdir(parents=True, exist_ok=True)
+    project = DeckProjectPaths.for_request(output_dir, str(state["request_id"])).ensure()
+    request_dir = project.root
 
-    _write_json(request_dir / "design-spec.json", package["design_spec"])
-    _write_json(request_dir / "spec-lock.json", package["execution_lock"])
-    (request_dir / "design-spec.md").write_text(
+    _write_json(project.design_spec_json, package["design_spec"])
+    _write_json(project.spec_lock_json, package["execution_lock"])
+    project.design_spec_markdown.write_text(
         _design_spec_markdown(package["design_spec"]), encoding="utf-8"
     )
-    (request_dir / "spec-lock.md").write_text(
+    project.spec_lock_markdown.write_text(
         _spec_lock_markdown(package["execution_lock"]), encoding="utf-8"
     )
     _write_json(
@@ -64,8 +65,7 @@ def freeze_design_contract(
     _write_json(request_dir / "asset-manifest.json", package["asset_manifest"])
     _write_json(request_dir / "template-manifest.json", package["template_manifest"])
 
-    template_dir = request_dir / "templates"
-    template_dir.mkdir(exist_ok=True)
+    template_dir = project.templates
     for page in package["page_blueprints"]:
         svg = str(page.get("template_svg_source") or "").strip()
         relative = str(page.get("template_svg_file") or "").strip()
@@ -90,6 +90,7 @@ def freeze_design_contract(
     )
     return {
         **package,
+        "project_dir": str(project.root),
         # Existing slide/repair nodes read this key. It is the same authoritative
         # object, not a legacy parallel contract.
         "design_contract": package["design_spec"],
@@ -110,6 +111,8 @@ def compile_design_package(
     plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
     brief = state.get("brief") if isinstance(state.get("brief"), dict) else {}
     outline_pages = [item for item in plan.get("slides") or [] if isinstance(item, dict)]
+    if not outline_pages:
+        raise ValueError("approved outline contains no executable page sections")
     asset_manifest = _build_asset_manifest(state.get("source_images") or [])
     selection_source = _template_selection_source(state, art_direction)
     theme_source = "approved_theme_tokens" if isinstance(state.get("theme"), dict) and state.get("theme") else "template_catalog"
@@ -458,6 +461,7 @@ def _build_execution_lock(design_spec: dict[str, Any], *, pack: TemplatePack, th
             "spacing_unit": theme.spacing_unit,
             "radius": theme.radius,
             "motif": theme.motif,
+            "minimum_body_font_px": max(16, int(theme.type_scale.get("body") or 18)),
         },
         "page_locks": [
             {
@@ -465,6 +469,13 @@ def _build_execution_lock(design_spec: dict[str, Any], *, pack: TemplatePack, th
                 "component": page["component"],
                 "page_rhythm": page["page_rhythm"],
                 "layout_id": page["layout_id"],
+                "composition": page["composition"],
+                "geometry": page["geometry"],
+                "reading_order": page["reading_order"],
+                "visualization": page["visualization"],
+                "asset_ids": page["asset_ids"],
+                "emphasis": page["emphasis"],
+                "avoid": page["avoid"],
                 "template_svg_file": page["template_svg_file"],
                 "template_provenance": page["template_provenance"],
             }
@@ -605,7 +616,8 @@ def _deterministic_asset_ids(item: dict[str, Any], approved_asset_ids: list[str]
         for key in ("visualization", "layout_intent", "key_message")
     ).casefold()
     if any(token in haystack for token in ("image", "photo", "图片", "照片", "主视觉")):
-        return approved_asset_ids[:1]
+        page_index = max(1, _positive_int(item.get("index")))
+        return [approved_asset_ids[(page_index - 1) % len(approved_asset_ids)]]
     return []
 
 

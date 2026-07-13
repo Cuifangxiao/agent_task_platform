@@ -868,8 +868,8 @@ deck-<request_id>.pptx
 用于下载事件/会话中出现的相对路径，例如：
 
 ```text
-/api/v1/presentations/artifacts/<request_id>/slides/1_v2.png
-/api/v1/presentations/artifacts/<request_id>/slides/1_v2.html
+/api/v1/presentations/artifacts/<request_id>/previews/page-001_v2.png
+/api/v1/presentations/artifacts/<request_id>/previews/page-001_v2.html
 ```
 
 安全与约束：

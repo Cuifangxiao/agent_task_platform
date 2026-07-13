@@ -126,7 +126,7 @@ class _Canvas:
         self.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT, self.palette.bg, element_id="page-background")
         self.rect(0, 0, CANVAS_WIDTH, 8, self.palette.accent, element_id="top-accent")
         self.rect(68, 674, 138, 3, self.palette.accent, element_id="footer-accent")
-        tint = _mix(self.palette.accent, self.palette.bg, 0.16)
+        tint = self.palette.surface
         self.circle(1188, 72, 30, tint, element_id="motif-circle")
         self.polygon([(1168, 54), (1190, 42), (1212, 60), (1188, 78)], self.palette.accent2, element_id="motif-diamond")
 
@@ -286,7 +286,7 @@ def _cover(canvas: _Canvas, slide: SlideSpec) -> None:
     canvas.begin("cover-layout")
     canvas.rect(925, 70, 286, 574, palette.accent, radius=canvas.radius * 1.4, element_id="cover-panel")
     canvas.rect(970, 116, 92, 404, palette.accent2, radius=canvas.radius, element_id="cover-stripe")
-    canvas.circle(1120, 530, 58, _mix(palette.surface, palette.accent, 0.76), element_id="cover-orbit")
+    canvas.circle(1120, 530, 58, palette.surface, element_id="cover-orbit")
     canvas.text(slide.content.get("eyebrow") or "PRESENTATION", 72, 104, 720, 38, size=canvas.caption + 2, color=palette.accent, bold=True, element_id="eyebrow")
     canvas.text(slide.title, 72, 170, 775, 238, size=canvas.h1 + 10, color=palette.ink, bold=True, font="display", valign="middle", element_id="title")
     canvas.text(slide.content.get("subtitle"), 76, 448, 710, 108, size=canvas.body + 3, color=palette.muted, element_id="subtitle")
@@ -298,9 +298,9 @@ def _end(canvas: _Canvas, slide: SlideSpec) -> None:
     palette = canvas.palette
     canvas.begin("end-layout")
     canvas.rect(0, 160, 1280, 400, palette.accent, element_id="end-band")
-    canvas.circle(1065, 360, 132, _mix(palette.accent2, palette.accent, 0.55), element_id="end-circle")
-    canvas.text(slide.title, 88, 210, 820, 150, size=canvas.h1 + 8, color=_contrast_text(palette.accent), bold=True, font="display", valign="middle", element_id="title")
-    canvas.text(slide.content.get("subtitle"), 92, 390, 740, 84, size=canvas.body + 3, color=_contrast_text(palette.accent), element_id="subtitle")
+    canvas.circle(1065, 360, 132, palette.accent2, element_id="end-circle")
+    canvas.text(slide.title, 88, 210, 820, 150, size=canvas.h1 + 8, color=_contrast_text(palette.accent, palette.bg, palette.ink), bold=True, font="display", valign="middle", element_id="title")
+    canvas.text(slide.content.get("subtitle"), 92, 390, 740, 84, size=canvas.body + 3, color=_contrast_text(palette.accent, palette.bg, palette.ink), element_id="subtitle")
     canvas.end()
 
 
@@ -309,7 +309,7 @@ def _section(canvas: _Canvas, slide: SlideSpec) -> None:
     canvas.begin("section-layout")
     canvas.rect(0, 164, 1280, 382, palette.accent, element_id="section-band")
     canvas.rect(72, 202, 16, 254, palette.accent2, radius=8, element_id="section-marker")
-    foreground = _contrast_text(palette.accent)
+    foreground = _contrast_text(palette.accent, palette.bg, palette.ink)
     canvas.text(slide.title, 124, 222, 980, 138, size=canvas.h1 + 2, color=foreground, bold=True, font="display", valign="middle", element_id="title")
     canvas.text(slide.content.get("subtitle"), 128, 388, 880, 80, size=canvas.body + 2, color=foreground, element_id="subtitle")
     canvas.end()
@@ -322,7 +322,7 @@ def _content_basic(canvas: _Canvas, slide: SlideSpec) -> None:
     canvas.header(slide)
     canvas.begin("content-layout")
     canvas.panel(68, 188, 742, 426, element_id="evidence-panel")
-    side_fill = _mix(palette.accent, palette.bg, 0.12)
+    side_fill = palette.surface
     canvas.panel(842, 188, 368, 426, fill=side_fill, element_id="takeaway-panel")
     if bullets:
         slot = 352 / max(1, len(bullets))
@@ -409,7 +409,7 @@ def _steps(canvas: _Canvas, slide: SlideSpec) -> None:
         canvas.begin(f"step-{index + 1}")
         canvas.panel(x, y, width, 324, element_id=f"step-{index + 1}-panel")
         canvas.circle(x + width / 2, y + 70, 34, step_color, element_id=f"step-{index + 1}-number-bg")
-        canvas.text(str(index + 1), x + width / 2 - 25, y + 44, 50, 52, size=canvas.h2, color=_contrast_text(step_color), bold=True, align="center", valign="middle", editable=False, element_id=f"step-{index + 1}-number")
+        canvas.text(str(index + 1), x + width / 2 - 25, y + 44, 50, 52, size=canvas.h2, color=_contrast_text(step_color, canvas.palette.bg, canvas.palette.ink), bold=True, align="center", valign="middle", editable=False, element_id=f"step-{index + 1}-number")
         canvas.text(item, x + 24, y + 142, width - 48, 130, size=canvas.body + 1, color=canvas.palette.ink, bold=True, align="center", valign="middle", element_id=f"step-{index + 1}-text")
         canvas.end()
 
@@ -426,7 +426,7 @@ def _comparison(canvas: _Canvas, slide: SlideSpec) -> None:
         canvas.panel(x, y, width, height, element_id=f"comparison-{key}-panel")
         canvas.rect(x, y, width, 72, accent, radius=canvas.radius, element_id=f"comparison-{key}-header")
         canvas.rect(x, y + 54, width, 18, accent, element_id=f"comparison-{key}-header-square")
-        canvas.text(title, x + 30, y + 15, width - 60, 45, size=canvas.h2 - 2, color=_contrast_text(accent), bold=True, element_id=f"comparison-{key}-title")
+        canvas.text(title, x + 30, y + 15, width - 60, 45, size=canvas.h2 - 2, color=_contrast_text(accent, canvas.palette.bg, canvas.palette.ink), bold=True, element_id=f"comparison-{key}-title")
         slot = 292 / max(1, len(items))
         for item_index, item in enumerate(items[:5]):
             item_y = y + 102 + item_index * slot
@@ -447,7 +447,7 @@ def _summary_grid(canvas: _Canvas, slide: SlideSpec) -> None:
         col, row = index % columns, index // columns
         x, y = 70 + col * (width + gap), 192 + row * (height + gap)
         canvas.begin(f"summary-{index + 1}")
-        canvas.panel(x, y, width, height, fill=_mix(canvas.palette.accent if index % 2 == 0 else canvas.palette.accent2, canvas.palette.bg, 0.08), element_id=f"summary-{index + 1}-panel")
+        canvas.panel(x, y, width, height, fill=canvas.palette.surface, element_id=f"summary-{index + 1}-panel")
         canvas.rect(x, y, 12, height, canvas.palette.accent if index % 2 == 0 else canvas.palette.accent2, radius=6, element_id=f"summary-{index + 1}-accent")
         canvas.text(f"{index + 1:02d}", x + 36, y + 28, 60, 42, size=canvas.h2 - 2, color=canvas.palette.accent, bold=True, editable=False, element_id=f"summary-{index + 1}-number")
         canvas.text(item, x + 112, y + 26, width - 146, height - 52, size=canvas.body + 1, color=canvas.palette.ink, bold=True, valign="middle", element_id=f"summary-{index + 1}-text")
@@ -461,7 +461,7 @@ def _chart_takeaway(canvas: _Canvas, slide: SlideSpec) -> None:
         return
     canvas.header(slide)
     canvas.panel(68, 188, 780, 426, element_id="chart-panel")
-    canvas.panel(874, 188, 336, 426, fill=_mix(canvas.palette.accent, canvas.palette.bg, 0.11), element_id="chart-takeaway-panel")
+    canvas.panel(874, 188, 336, 426, fill=canvas.palette.surface, element_id="chart-takeaway-panel")
     canvas.text("INSIGHT", 910, 230, 250, 28, size=canvas.caption, color=canvas.palette.accent, bold=True, editable=False, element_id="chart-takeaway-label")
     canvas.text(slide.content.get("takeaway"), 910, 284, 252, 244, size=canvas.body + 2, color=canvas.palette.ink, bold=True, valign="middle", element_id="chart-takeaway")
     if chart["type"] == "line":
@@ -493,9 +493,9 @@ def _bar_chart(canvas: _Canvas, chart: dict[str, Any], x: float, y: float, width
         canvas.rect(bar_x, bar_y, bar_width, bar_height, color, radius=7, element_id=f"bar-{index + 1}")
         label_inside = value < 0 and bar_height >= 34
         label_y = bar_y + bar_height - 29 if label_inside else max(y, bar_y - 29)
-        label_color = _contrast_text(color) if label_inside else canvas.palette.ink
-        canvas.text(_chart_value(item["value"], chart["unit"]), bar_x - 18, label_y, bar_width + 36, 26, size=canvas.caption, color=label_color, bold=True, align="center", element_id=f"bar-{index + 1}-value")
-        canvas.text(item["label"], x + index * slot + 4, plot_bottom + 14, slot - 8, 46, size=canvas.caption, color=canvas.palette.muted, align="center", element_id=f"bar-{index + 1}-label")
+        label_color = _contrast_text(color, canvas.palette.bg, canvas.palette.ink) if label_inside else canvas.palette.ink
+        canvas.text(_chart_value(item["value"], chart["unit"]), bar_x - 18, label_y, bar_width + 36, 28, size=canvas.body, color=label_color, bold=True, align="center", element_id=f"bar-{index + 1}-value")
+        canvas.text(item["label"], x + index * slot + 4, plot_bottom + 14, slot - 8, 46, size=canvas.body, color=canvas.palette.muted, align="center", element_id=f"bar-{index + 1}-label")
 
 
 def _line_chart(canvas: _Canvas, chart: dict[str, Any], x: float, y: float, width: float, height: float) -> None:
@@ -511,8 +511,8 @@ def _line_chart(canvas: _Canvas, chart: dict[str, Any], x: float, y: float, widt
         canvas.polyline(points, color=canvas.palette.accent, width=5, element_id="line-series")
     for index, ((px, py), item) in enumerate(zip(points, series, strict=False)):
         canvas.circle(px, py, 8, canvas.palette.accent2, stroke=canvas.palette.bg, stroke_width=3, element_id=f"line-point-{index + 1}")
-        canvas.text(_chart_value(item["value"], chart["unit"]), px - 46, max(y, py - 34), 92, 26, size=canvas.caption, color=canvas.palette.ink, bold=True, align="center", element_id=f"line-{index + 1}-value")
-        canvas.text(item["label"], px - 52, baseline + 14, 104, 46, size=canvas.caption, color=canvas.palette.muted, align="center", element_id=f"line-{index + 1}-label")
+        canvas.text(_chart_value(item["value"], chart["unit"]), px - 46, max(y, py - 34), 92, 28, size=canvas.body, color=canvas.palette.ink, bold=True, align="center", element_id=f"line-{index + 1}-value")
+        canvas.text(item["label"], px - 52, baseline + 14, 104, 46, size=canvas.body, color=canvas.palette.muted, align="center", element_id=f"line-{index + 1}-label")
 
 
 def _pie_chart(canvas: _Canvas, chart: dict[str, Any], x: float, y: float, width: float, height: float) -> None:
@@ -523,7 +523,7 @@ def _pie_chart(canvas: _Canvas, chart: dict[str, Any], x: float, y: float, width
         _bar_chart(canvas, chart, x, y, width, height)
         return
     cx, cy, radius = x + 185, y + height / 2, min(128.0, height * 0.39)
-    colors = [canvas.palette.accent, canvas.palette.accent2, _mix(canvas.palette.accent, "#FFFFFF", 0.55), _mix(canvas.palette.accent2, "#FFFFFF", 0.58), _mix(canvas.palette.ink, canvas.palette.accent, 0.38), canvas.palette.muted]
+    colors = [canvas.palette.accent, canvas.palette.accent2, canvas.palette.muted, canvas.palette.ink, canvas.palette.line, canvas.palette.surface]
     start = -math.pi / 2
     for index, (item, value) in enumerate(zip(series, values, strict=False)):
         end = start + (value / total) * math.tau
@@ -534,8 +534,8 @@ def _pie_chart(canvas: _Canvas, chart: dict[str, Any], x: float, y: float, width
         canvas.polygon(points, colors[index % len(colors)], stroke=canvas.palette.bg, element_id=f"pie-slice-{index + 1}")
         legend_y = y + 32 + index * 50
         canvas.rect(x + 390, legend_y, 18, 18, colors[index % len(colors)], radius=4, element_id=f"pie-legend-{index + 1}-marker")
-        canvas.text(item["label"], x + 422, legend_y - 3, 170, 28, size=canvas.caption + 1, color=canvas.palette.ink, element_id=f"pie-legend-{index + 1}-label")
-        canvas.text(_chart_value(item["value"], chart["unit"]), x + 592, legend_y - 3, 86, 28, size=canvas.caption + 1, color=canvas.palette.muted, bold=True, align="right", element_id=f"pie-legend-{index + 1}-value")
+        canvas.text(item["label"], x + 422, legend_y - 3, 170, 28, size=canvas.body, color=canvas.palette.ink, element_id=f"pie-legend-{index + 1}-label")
+        canvas.text(_chart_value(item["value"], chart["unit"]), x + 592, legend_y - 3, 86, 28, size=canvas.body, color=canvas.palette.muted, bold=True, align="right", element_id=f"pie-legend-{index + 1}-value")
         start = end
 
 
@@ -557,23 +557,23 @@ def _data_table(canvas: _Canvas, slide: SlideSpec) -> None:
     canvas.rect(x, y + row_height - canvas.radius, width, canvas.radius, canvas.palette.accent, element_id="table-header-square")
     for col, label in enumerate(columns):
         cell_x = x + col * col_width
-        canvas.text(label, cell_x + 16, y + 10, col_width - 32, row_height - 20, size=canvas.body, color=_contrast_text(canvas.palette.accent), bold=True, valign="middle", element_id=f"table-header-{col + 1}")
+        canvas.text(label, cell_x + 16, y + 10, col_width - 32, row_height - 20, size=canvas.body, color=_contrast_text(canvas.palette.accent, canvas.palette.bg, canvas.palette.ink), bold=True, valign="middle", element_id=f"table-header-{col + 1}")
         if col:
             canvas.line(cell_x, y, cell_x, y + height, color=canvas.palette.line, width=1, element_id=f"table-col-{col}")
     for row_index, row in enumerate(normalized_rows):
         row_y = y + (row_index + 1) * row_height
         if row_index % 2:
-            canvas.rect(x, row_y, width, row_height, _mix(canvas.palette.line, canvas.palette.bg, 0.18), element_id=f"table-row-{row_index + 1}-bg")
+            canvas.rect(x, row_y, width, row_height, canvas.palette.surface, element_id=f"table-row-{row_index + 1}-bg")
         canvas.line(x, row_y, x + width, row_y, color=canvas.palette.line, width=1, element_id=f"table-row-{row_index + 1}-rule")
         for col in range(column_count):
             value = row[col] if col < len(row) else ""
-            canvas.text(value, x + col * col_width + 16, row_y + 8, col_width - 32, row_height - 16, size=canvas.caption + 2, color=canvas.palette.ink, valign="middle", element_id=f"table-{row_index + 1}-{col + 1}")
+            canvas.text(value, x + col * col_width + 16, row_y + 8, col_width - 32, row_height - 16, size=canvas.body, color=canvas.palette.ink, valign="middle", element_id=f"table-{row_index + 1}-{col + 1}")
 
 
 def _quote(canvas: _Canvas, slide: SlideSpec) -> None:
     canvas.header(slide)
     canvas.begin("quote-layout")
-    canvas.panel(134, 198, 1010, 382, fill=_mix(canvas.palette.accent, canvas.palette.bg, 0.08), element_id="quote-panel")
+    canvas.panel(134, 198, 1010, 382, fill=canvas.palette.surface, element_id="quote-panel")
     canvas.rect(134, 198, 18, 382, canvas.palette.accent, radius=9, element_id="quote-accent")
     canvas.text("“", 192, 222, 100, 102, size=92, color=canvas.palette.accent2, bold=True, font="display", editable=False, element_id="quote-mark")
     canvas.text(slide.content.get("quote"), 286, 238, 744, 210, size=canvas.h2, color=canvas.palette.ink, bold=True, font="display", valign="middle", element_id="quote-text")
@@ -655,18 +655,24 @@ def _hex(value: Any, fallback: str) -> str:
     return text if re.fullmatch(r"#[0-9A-F]{6}", text) else fallback
 
 
-def _mix(foreground: str, background: str, ratio: float) -> str:
-    ratio = max(0.0, min(1.0, ratio))
-    fg = tuple(int(foreground[index : index + 2], 16) for index in (1, 3, 5))
-    bg = tuple(int(background[index : index + 2], 16) for index in (1, 3, 5))
-    values = [round(fg[index] * ratio + bg[index] * (1 - ratio)) for index in range(3)]
-    return "#" + "".join(f"{value:02X}" for value in values)
+def _contrast_text(background: str, first: str, second: str) -> str:
+    background_luminance = _luminance(background)
+    first_ratio = _contrast_ratio(background_luminance, _luminance(first))
+    second_ratio = _contrast_ratio(background_luminance, _luminance(second))
+    return first if first_ratio >= second_ratio else second
 
 
-def _contrast_text(background: str) -> str:
-    rgb = [int(background[index : index + 2], 16) / 255 for index in (1, 3, 5)]
-    luminance = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
-    return "#FFFFFF" if luminance < 0.58 else "#14213D"
+def _luminance(color: str) -> float:
+    channels = []
+    for index in (1, 3, 5):
+        value = int(color[index : index + 2], 16) / 255
+        channels.append(value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(first: float, second: float) -> float:
+    lighter, darker = max(first, second), min(first, second)
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 def _num(value: float) -> str:

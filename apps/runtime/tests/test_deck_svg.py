@@ -51,6 +51,16 @@ def test_restricted_svg_renderer_covers_core_components_without_quality_errors()
         assert validate_svg_page(svg, page=slide.index, theme=deck.theme) == []
 
 
+def test_svg_quality_gate_rejects_colors_outside_the_execution_palette():
+    slide = SlideSpec(1, "hook", "cover", "Locked color", {"subtitle": "Only approved colors may appear."})
+    deck = _deck([slide])
+    svg = SVGSlideRenderer().render(deck, slide).replace(deck.theme.palette["accent"], "#123456", 1)
+
+    issues = validate_svg_page(svg, page=1, theme=deck.theme)
+
+    assert any(issue.kind == "svg_color_drift" for issue in issues)
+
+
 def test_native_svg_export_produces_editable_powerpoint_shapes(tmp_path: Path):
     request_id = "44444444-4444-4444-8444-444444444444"
     slide_spec = SlideSpec(

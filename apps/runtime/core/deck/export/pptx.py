@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from pptx.util import Inches, Pt
 from core.deck.errors import ExportError
 from core.deck.export.svg_native import add_svg_as_native_shapes
 from core.deck.export.text_layer import MIN_TEXTBOX_SIZE_PX, TEXTBOX_HEIGHT_SLACK_PX, TEXTBOX_WIDTH_SLACK
+from core.deck.paths import DeckProjectPaths
 from core.deck.runtime_metrics import record_fallback
 from core.deck.rendering.browser import BrowserSession
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec
@@ -42,11 +45,12 @@ class DeckExporter:
         self._output_root = output_root
         self._browser_session = browser_session
 
+    def project_paths(self, request_id: str) -> DeckProjectPaths:
+        return DeckProjectPaths.for_request(self._output_root, request_id).ensure()
+
     def export(self, request_id: str, deck: DeckSpec) -> ExportResult:
-        request_dir = self._output_root / request_id
-        request_dir.mkdir(parents=True, exist_ok=True)
-        spec_path = request_dir / "spec.json"
-        spec_path.write_text(json.dumps(deck.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        project = self.project_paths(request_id)
+        project.deck_spec.write_text(json.dumps(deck.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
         prs = Presentation()
         prs.slide_width = PAGE_WIDTH
@@ -56,12 +60,12 @@ class DeckExporter:
         manifest_slides: list[dict[str, Any]] = []
         for slide_spec in deck.slides:
             slide = prs.slides.add_slide(prs.slide_layouts[6])
-            manifest_slide, slide_warnings = self._export_slide(request_dir, slide, slide_spec)
+            manifest_slide, slide_warnings = self._export_slide(project, slide, slide_spec)
             warnings.extend(slide_warnings)
             _add_speaker_notes(slide, slide_spec)
             manifest_slides.append(manifest_slide)
 
-        path = request_dir / "deck.pptx"
+        path = project.deck_pptx
         prs.save(path)
         structure = _validate_pptx(path, expected_slides=len(deck.slides), expected_text_counts=[item["editable_text_boxes"] for item in manifest_slides])
         degraded_pages = [item["index"] for item in manifest_slides if item["degraded"]]
@@ -74,11 +78,14 @@ class DeckExporter:
             "structure": structure,
             "warnings": warnings,
         }
-        (request_dir / "export-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        project.export_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        _backup_authoring_sources(project)
         return ExportResult(path=path.resolve(), warnings=warnings, manifest=manifest)
 
-    def _export_slide(self, request_dir: Path, slide: Any, slide_spec: SlideSpec) -> tuple[dict[str, Any], list[str]]:
-        svg_path = request_dir / "slides" / f"{slide_spec.index}.svg"
+    def _export_slide(self, project: DeckProjectPaths, slide: Any, slide_spec: SlideSpec) -> tuple[dict[str, Any], list[str]]:
+        svg_path = project.svg(slide_spec.index)
+        if not svg_path.exists():
+            svg_path = project.root / "slides" / f"{slide_spec.index}.svg"
         if svg_path.exists():
             try:
                 stats = add_svg_as_native_shapes(slide, svg_path)
@@ -90,8 +97,8 @@ class DeckExporter:
                         "export_mode": "native_svg",
                         "degraded": False,
                         "fonts": stats.fonts,
-                        "preview": f"slides/{slide_spec.index}.png",
-                        "svg": f"slides/{slide_spec.index}.svg",
+                        "preview": project.relative(project.preview_png(slide_spec.index)),
+                        "svg": project.relative(svg_path),
                     },
                     [],
                 )
@@ -103,13 +110,13 @@ class DeckExporter:
                 # failed native preflight. Its failure may be a forbidden local
                 # resource reference; the request-scoped preview is the safe
                 # degradation path.
-                manifest = self._export_preview_only_slide(request_dir, slide, slide_spec)
+                manifest = self._export_preview_only_slide(project, slide, slide_spec)
                 return manifest, [warning]
-        manifest, fallback_warnings = self._export_mixed_slide(request_dir, slide, slide_spec)
+        manifest, fallback_warnings = self._export_mixed_slide(project, slide, slide_spec)
         return manifest, fallback_warnings
 
-    def _export_mixed_slide(self, request_dir: Path, slide: Any, slide_spec: SlideSpec) -> tuple[dict[str, Any], list[str]]:
-        background_path, text_layer, warning = self._decorative_background_and_text(request_dir, slide_spec)
+    def _export_mixed_slide(self, project: DeckProjectPaths, slide: Any, slide_spec: SlideSpec) -> tuple[dict[str, Any], list[str]]:
+        background_path, text_layer, warning = self._decorative_background_and_text(project, slide_spec)
         warnings = [warning] if warning else []
         unavailable_fonts = sorted(
             {
@@ -131,14 +138,16 @@ class DeckExporter:
                 "export_mode": "mixed_raster",
                 "degraded": True,
                 "fonts": sorted({str(item.get("fontFamily") or PPT_FONT) for item in text_layer}),
-                "preview": f"slides/{slide_spec.index}.png",
+                "preview": project.relative(project.preview_png(slide_spec.index)),
                 "svg": "",
             },
             warnings,
         )
 
-    def _export_preview_only_slide(self, request_dir: Path, slide: Any, slide_spec: SlideSpec) -> dict[str, Any]:
-        preview_path = request_dir / "slides" / f"{slide_spec.index}.png"
+    def _export_preview_only_slide(self, project: DeckProjectPaths, slide: Any, slide_spec: SlideSpec) -> dict[str, Any]:
+        preview_path = project.preview_png(slide_spec.index)
+        if not preview_path.exists():
+            preview_path = project.root / "slides" / f"{slide_spec.index}.png"
         if not preview_path.exists():
             raise ExportError(f"Slide {slide_spec.index} has no safe preview fallback.", stage="export")
         _add_full_slide_image(slide, preview_path)
@@ -149,35 +158,39 @@ class DeckExporter:
             "export_mode": "preview_raster",
             "degraded": True,
             "fonts": [],
-            "preview": f"slides/{slide_spec.index}.png",
-            "svg": f"slides/{slide_spec.index}.svg",
+            "preview": project.relative(preview_path),
+            "svg": project.relative(project.svg(slide_spec.index)) if project.svg(slide_spec.index).exists() else f"slides/{slide_spec.index}.svg",
         }
 
     def _decorative_background_and_text(
         self,
-        request_dir: Path,
+        project: DeckProjectPaths,
         slide: SlideSpec,
     ) -> tuple[Path, list[dict[str, Any]], str]:
-        html_path = request_dir / "slides" / f"{slide.index}.html"
-        preview_path = request_dir / "slides" / f"{slide.index}.png"
+        html_path = project.preview_html(slide.index)
+        preview_path = project.preview_png(slide.index)
+        if not html_path.exists():
+            html_path = project.root / "slides" / f"{slide.index}.html"
+        if not preview_path.exists():
+            preview_path = project.root / "slides" / f"{slide.index}.png"
         if html_path.exists():
             try:
-                bg_path, text_layer = self._capture_hidden_text_background(html_path, request_dir, slide.index)
+                bg_path, text_layer = self._capture_hidden_text_background(html_path, project, slide.index)
                 return bg_path, text_layer, ""
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 record_fallback()
                 logger.info("mixed export capture failed for slide %s: %s", slide.index, exc)
 
         if not preview_path.exists():
-            preview_path = _blank_slide_image(request_dir, slide.index)
+            preview_path = _blank_slide_image(project, slide.index)
         return (
             preview_path,
             [],
             f"Slide {slide.index} exported as a full-slide image because text extraction was unavailable.",
         )
 
-    def _capture_hidden_text_background(self, html_path: Path, request_dir: Path, index: int) -> tuple[Path, list[dict[str, Any]]]:
-        bg_path = request_dir / "slides" / f"{index}_bg.png"
+    def _capture_hidden_text_background(self, html_path: Path, project: DeckProjectPaths, index: int) -> tuple[Path, list[dict[str, Any]]]:
+        bg_path = project.preview_background(index)
         if self._browser_session is not None:
             return bg_path, self._browser_session.extract_hidden_text_background(html_path, bg_path)
         session = BrowserSession()
@@ -302,12 +315,24 @@ def _add_speaker_notes(slide: Any, slide_spec: SlideSpec) -> None:
         return
 
 
-def _blank_slide_image(request_dir: Path, index: int) -> Path:
-    path = request_dir / "slides" / f"{index}_blank.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _blank_slide_image(project: DeckProjectPaths, index: int) -> Path:
+    path = project.previews / f"page-{index:03d}_blank.png"
     image = Image.new("RGB", (CANVAS_WIDTH * 2, CANVAS_HEIGHT * 2), (247, 243, 234))
     image.save(path)
     return path
+
+
+def _backup_authoring_sources(project: DeckProjectPaths) -> None:
+    """Freeze the exact author SVGs used for this export."""
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    destination = project.backup / timestamp / "svg_output"
+    counter = 2
+    while destination.exists():
+        destination = project.backup / f"{timestamp}-{counter}" / "svg_output"
+        counter += 1
+    if project.svg_output.exists():
+        shutil.copytree(project.svg_output, destination)
 
 
 def _alignment(value: str) -> PP_ALIGN:

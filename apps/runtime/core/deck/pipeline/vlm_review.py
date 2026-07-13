@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 import core.deck.events as events
 from core.deck.pipeline.llm import llm_for_node
+from core.deck.paths import DeckProjectPaths
 from core.deck.pipeline.repair import MAX_REPAIR_ROUNDS
 from core.deck.runtime_metrics import record_fallback, record_model_response
 from core.deck.pipeline.state import DeckGraphState
@@ -55,15 +56,21 @@ def review_vlm(state: DeckGraphState, llm_registry: dict[str, Any], output_dir: 
         }
         return {"validation_issues": dedupe_issue_dicts(list(state.get("validation_issues") or []) + [issue]), "vlm_reviewed": True}
 
-    request_dir = output_dir / request_id
-    slide_paths = [request_dir / "slides" / f"{slide.get('index')}.png" for slide in state.get("slides") or []]
+    project = DeckProjectPaths.for_request(output_dir, request_id).ensure()
+    slide_paths = []
+    for slide in state.get("slides") or []:
+        index = int(slide.get("index") or 0)
+        path = project.preview_png(index)
+        if not path.exists():
+            path = project.root / "slides" / f"{index}.png"
+        slide_paths.append(path)
     logger.info(
         "deck vlm review contact sheet start: request_id=%s existing_pngs=%s/%s",
         request_id,
         sum(1 for path in slide_paths if path.exists()),
         len(slide_paths),
     )
-    review_dir = request_dir / "review"
+    review_dir = project.reports / "visual-review"
     contact_sheet = build_contact_sheet(slide_paths, review_dir / "contact_sheet.png")
     sheets = [contact_sheet]
     if len(slide_paths) > 8:

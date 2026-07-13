@@ -33,15 +33,15 @@ def test_render_slide_writes_authoritative_and_history_files(tmp_path, monkeypat
         theme=default_theme(),
     )
 
-    slides_dir = tmp_path / request_id / "slides"
-    assert artifact.html_rel == "slides/1_v2.html"
-    assert artifact.png_rel == "slides/1_v2.png"
-    assert (slides_dir / "1.html").exists()
-    assert (slides_dir / "1.png").exists()
-    assert (slides_dir / "1_v2.html").exists()
-    assert (slides_dir / "1_v2.png").exists()
-    assert (slides_dir / "1.html").read_text(encoding="utf-8") == (slides_dir / "1_v2.html").read_text(encoding="utf-8")
-    assert (slides_dir / "1.png").read_bytes() == (slides_dir / "1_v2.png").read_bytes()
+    previews_dir = tmp_path / request_id / "previews"
+    assert artifact.html_rel == "previews/page-001_v2.html"
+    assert artifact.png_rel == "previews/page-001_v2.png"
+    assert (previews_dir / "page-001.html").exists()
+    assert (previews_dir / "page-001.png").exists()
+    assert (previews_dir / "page-001_v2.html").exists()
+    assert (previews_dir / "page-001_v2.png").exists()
+    assert (previews_dir / "page-001.html").read_text(encoding="utf-8") == (previews_dir / "page-001_v2.html").read_text(encoding="utf-8")
+    assert (previews_dir / "page-001.png").read_bytes() == (previews_dir / "page-001_v2.png").read_bytes()
 
 
 def test_browser_session_reuses_one_browser_and_closes_idempotently(tmp_path, monkeypatch):

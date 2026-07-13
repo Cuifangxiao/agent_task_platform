@@ -1,68 +1,259 @@
 <script setup lang="ts">
-import { Bot, Database, Presentation, Route } from '@lucide/vue'
+import {
+  ArrowRight,
+  Bot,
+  ChevronRight,
+  CircleCheck,
+  Clock3,
+  Database,
+  FileChartColumn,
+  FileText,
+  Layers3,
+  Plus,
+  Presentation,
+} from '@lucide/vue'
+import { computed } from 'vue'
 
+import ProviderIcon from '@/components/ProviderIcon.vue'
+import type { PptConversationSummary } from '@/features/presentations/types'
 import type { AgentConfig, AgentDefinition, ModelConfig } from '@/types'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   models: ModelConfig[]
   agents: AgentDefinition[]
   agentConfigs: AgentConfig[]
   pptConfigs: AgentConfig[]
-}>()
+  conversations: PptConversationSummary[]
+  apiHealth: 'unknown' | 'ok' | 'down'
+  preview?: boolean
+}>(), {
+  preview: false,
+})
 
-defineEmits<{
+const emit = defineEmits<{
   navigate: [page: string]
 }>()
+
+interface DashboardTask {
+  id: string | number
+  title: string
+  status: string
+  tone: 'green' | 'blue' | 'amber' | 'red' | 'gray'
+  updatedAt: string
+}
+
+const previewTasks: DashboardTask[] = [
+  { id: 'preview-1', title: '2026 年半年度产品复盘', status: '已完成', tone: 'green', updatedAt: '2026-07-13 08:42' },
+  { id: 'preview-2', title: 'AI Agent 平台方案', status: '生成中 (58%)', tone: 'blue', updatedAt: '2026-07-13 08:23' },
+  { id: 'preview-3', title: '零售行业趋势分析', status: '排队中', tone: 'gray', updatedAt: '2026-07-13 07:55' },
+]
+
+const previewProviders = [
+  { id: 'preview-openai', provider: 'openai', label: 'OpenAI (GPT-4o)' },
+  { id: 'preview-deepseek', provider: 'deepseek', label: 'DeepSeek (V3)' },
+  { id: 'preview-qwen', provider: 'qwen', label: 'Qwen (Qwen2.5)' },
+]
+
+const activeModels = computed(() => props.models.filter((item) => item.status === 'active'))
+const activeAgents = computed(() => props.agents.filter((item) => item.status === 'active'))
+const activeAgentConfigs = computed(() => props.agentConfigs.filter((item) => item.status === 'active'))
+const currentConfig = computed(() => props.pptConfigs.find((item) => item.is_default) ?? props.pptConfigs[0] ?? null)
+const modelCount = computed(() => props.preview ? 3 : activeModels.value.length)
+const agentCount = computed(() => props.preview ? 5 : activeAgents.value.length)
+const agentConfigCount = computed(() => props.preview ? 5 : activeAgentConfigs.value.length)
+const dashboardHealth = computed(() => props.preview ? 'ok' : props.apiHealth)
+const isReady = computed(() => dashboardHealth.value === 'ok' && modelCount.value > 0 && agentConfigCount.value > 0)
+
+const providerRows = computed(() => {
+  if (props.preview) return previewProviders
+  return activeModels.value.slice(0, 3).map((model) => ({
+    id: model.id,
+    provider: model.provider,
+    label: `${providerName(model.provider)} (${model.model_name})`,
+  }))
+})
+
+const recentTasks = computed<DashboardTask[]>(() => {
+  if (props.preview) return previewTasks
+  return props.conversations.slice(0, 3).map((conversation) => ({
+    id: conversation.id,
+    title: conversation.title,
+    ...conversationStatus(conversation.status),
+    updatedAt: formatDateTime(conversation.updated_at),
+  }))
+})
+
+const currentConfigName = computed(() => {
+  if (props.preview) return 'PPTAgent · 默认工作流'
+  if (!currentConfig.value) return '尚未配置工作流'
+  return currentConfig.value.is_default ? `${currentConfig.value.name} · 默认工作流` : currentConfig.value.name
+})
+
+function providerName(provider: string) {
+  const normalized = provider.toLowerCase()
+  if (normalized.includes('openai')) return 'OpenAI'
+  if (normalized.includes('deepseek')) return 'DeepSeek'
+  if (normalized.includes('qwen') || normalized.includes('dashscope')) return 'Qwen'
+  return provider
+}
+
+function conversationStatus(status: string): Pick<DashboardTask, 'status' | 'tone'> {
+  if (status === 'done' || status === 'success') return { status: '已完成', tone: 'green' }
+  if (status === 'running') return { status: '生成中', tone: 'blue' }
+  if (status === 'waiting') return { status: '等待确认', tone: 'amber' }
+  if (status === 'error' || status === 'failed') return { status: '失败', tone: 'red' }
+  return { status: '排队中', tone: 'gray' }
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const two = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
+}
 </script>
 
 <template>
-  <section class="page">
-    <div class="page-head">
-      <div>
-        <h1>工作台</h1>
-        <p>从模型资源到 Agent 节点绑定，再到 PPT 生成任务的当前状态。</p>
+  <section class="dashboard-page">
+    <div class="dashboard-primary">
+      <header class="dashboard-welcome">
+        <h2>早上好，Admin</h2>
+        <p v-if="isReady">系统运行正常，所有组件就绪，您可以立即开始创建 PPT 任务。</p>
+        <p v-else>完成模型与 Agent 配置后，即可开始创建 PPT 任务。</p>
+      </header>
+
+      <div class="dashboard-actions" aria-label="快捷操作">
+        <button class="dashboard-action primary" type="button" @click="emit('navigate', 'ppt')">
+          <Plus :size="24" />
+          新建 PPT 任务
+        </button>
+        <button class="dashboard-action" type="button" @click="emit('navigate', 'models')">
+          <Layers3 :size="22" />
+          配置模型
+        </button>
+        <button class="dashboard-action" type="button" @click="emit('navigate', 'agents')">
+          <Bot :size="22" />
+          管理 Agent
+        </button>
       </div>
+
+      <section class="readiness-panel" aria-labelledby="readiness-title">
+        <h3 id="readiness-title">准备状态</h3>
+        <div class="readiness-flow">
+          <div class="readiness-step">
+            <span class="readiness-icon"><Layers3 :size="26" /></span>
+            <div>
+              <strong>Model <CircleCheck v-if="modelCount > 0" :size="16" /></strong>
+              <span>{{ modelCount }}/{{ modelCount || 1 }} 已就绪</span>
+            </div>
+          </div>
+          <ChevronRight class="readiness-chevron" :size="24" />
+          <div class="readiness-step">
+            <span class="readiness-icon"><Bot :size="26" /></span>
+            <div>
+              <strong>Agent <CircleCheck v-if="agentConfigCount > 0" :size="16" /></strong>
+              <span>{{ agentConfigCount }}/{{ agentCount || agentConfigCount || 1 }} 已就绪</span>
+            </div>
+          </div>
+          <ChevronRight class="readiness-chevron" :size="24" />
+          <div class="readiness-step">
+            <span class="readiness-icon"><FileText :size="26" /></span>
+            <div>
+              <strong>PPT <CircleCheck v-if="isReady" :size="16" /></strong>
+              <span>{{ isReady ? '生成能力正常' : '等待配置' }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="ready-strip" :class="{ 'is-pending': !isReady }">
+          <CircleCheck v-if="isReady" :size="20" />
+          <Clock3 v-else :size="20" />
+          <span>{{ isReady ? '工作流已就绪，可随时创建 PPT 任务' : '工作流尚未完全就绪，请先完成必要配置' }}</span>
+        </div>
+      </section>
+
+      <section class="recent-panel" aria-labelledby="recent-title">
+        <div class="recent-head">
+          <h3 id="recent-title">最近任务</h3>
+        </div>
+
+        <div v-if="recentTasks.length" class="recent-table" role="table" aria-label="最近 PPT 任务">
+          <div class="recent-row recent-row-head" role="row">
+            <span role="columnheader">任务名称</span>
+            <span role="columnheader">状态</span>
+            <span role="columnheader">更新时间</span>
+            <span role="columnheader">操作</span>
+          </div>
+          <button
+            v-for="task in recentTasks"
+            :key="task.id"
+            class="recent-row recent-task-row"
+            type="button"
+            role="row"
+            @click="emit('navigate', 'ppt')"
+          >
+            <span class="task-name" role="cell">
+              <span class="task-icon"><FileChartColumn :size="18" /></span>
+              <strong>{{ task.title }}</strong>
+            </span>
+            <span class="task-status" :class="`tone-${task.tone}`" role="cell">
+              <i aria-hidden="true" />
+              {{ task.status }}
+            </span>
+            <time role="cell">{{ task.updatedAt }}</time>
+            <span class="task-view" role="cell">
+              查看
+            </span>
+          </button>
+        </div>
+
+        <div v-else class="recent-empty">
+          <Presentation :size="24" />
+          <div>
+            <strong>还没有 PPT 任务</strong>
+            <span>创建第一个任务后，最近进度会显示在这里。</span>
+          </div>
+          <button type="button" @click="emit('navigate', 'ppt')">创建任务</button>
+        </div>
+
+        <button class="recent-more" type="button" @click="emit('navigate', 'logs')">
+          查看全部运行记录
+          <ArrowRight :size="17" />
+        </button>
+      </section>
     </div>
 
-    <div class="metrics">
-      <button class="metric" type="button" @click="$emit('navigate', 'models')">
-        <Database :size="22" />
-        <span>Model Config</span>
-        <strong>{{ models.length }}</strong>
-      </button>
-      <button class="metric" type="button" @click="$emit('navigate', 'agents')">
-        <Bot :size="22" />
-        <span>Agent</span>
-        <strong>{{ agents.length }}</strong>
-      </button>
-      <button class="metric" type="button" @click="$emit('navigate', 'agents')">
-        <Route :size="22" />
-        <span>Agent Config</span>
-        <strong>{{ agentConfigs.length }}</strong>
-      </button>
-      <button class="metric" type="button" @click="$emit('navigate', 'ppt')">
-        <Presentation :size="22" />
-        <span>PPTAgent Config</span>
-        <strong>{{ pptConfigs.length }}</strong>
-      </button>
-    </div>
+    <aside class="current-config-panel" aria-labelledby="current-config-title">
+      <h3 id="current-config-title">当前配置</h3>
 
-    <div class="workflow">
-      <div>
-        <span>1</span>
-        <strong>创建 Model Config</strong>
-        <p>把 provider、模型名、凭证和默认参数保存成可复用资源。</p>
+      <div class="config-section">
+        <span class="config-label">工作流</span>
+        <button class="workflow-config" type="button" @click="emit('navigate', 'agents')">
+          <FileText :size="19" />
+          <strong>{{ currentConfigName }}</strong>
+          <ChevronRight :size="18" />
+        </button>
+        <span class="config-label description-label">说明</span>
+        <p>{{ currentConfig?.description || (preview ? '通用演示文稿生成工作流' : '为 PPT 生成任务提供模型与节点配置。') }}</p>
       </div>
-      <div>
-        <span>2</span>
-        <strong>配置 Agent 节点</strong>
-        <p>从后端 Agent schema 动态渲染节点，为每个需要模型的节点绑定配置。</p>
+
+      <div class="config-section provider-section">
+        <span class="config-label">模型绑定</span>
+        <div v-if="providerRows.length" class="provider-list">
+          <div v-for="model in providerRows" :key="model.id" class="provider-binding">
+            <ProviderIcon class="dashboard-provider-icon" :provider="model.provider" :size="42" />
+            <strong>{{ model.label }}</strong>
+            <span><i aria-hidden="true" /> 已就绪</span>
+          </div>
+        </div>
+        <div v-else class="provider-empty">
+          <Database :size="20" />
+          <span>尚未绑定模型</span>
+        </div>
+        <button class="manage-config" type="button" @click="emit('navigate', 'models')">
+          管理模型配置
+          <ArrowRight :size="16" />
+        </button>
       </div>
-      <div>
-        <span>3</span>
-        <strong>运行 PPTAgent</strong>
-        <p>选择 active PPTAgent Config，填写生成描述，也可以附加文件或文字资料。</p>
-      </div>
-    </div>
+    </aside>
   </section>
 </template>

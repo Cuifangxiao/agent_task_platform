@@ -84,10 +84,10 @@ def test_exporter_preserves_editable_text_structure_fonts_bullets_and_background
     assert "a:buChar" in text_shapes[1].text_frame.paragraphs[0]._p.xml
     assert result.warnings == []
     assert result.manifest["structure"]["editable_text_boxes"] == [2]
-    assert json.loads((request_dir / "export-manifest.json").read_text(encoding="utf-8"))["fonts"] == ["Arial"]
+    assert json.loads((request_dir / "reports" / "export-manifest.json").read_text(encoding="utf-8"))["fonts"] == ["Arial"]
     with zipfile.ZipFile(result.path) as archive:
         embedded = archive.read("ppt/media/image1.png")
-    assert embedded == (slides_dir / "1_bg.png").read_bytes()
+    assert embedded == (request_dir / "previews" / "page-001_bg.png").read_bytes()
 
 
 def test_source_provenance_is_written_into_speaker_notes():
@@ -125,7 +125,7 @@ def test_must_fix_and_degraded_export_are_reported_as_needs_review(tmp_path, mon
     assert result["export_degraded"] is True
     assert artifact["payload"]["needs_review"] is True
     assert artifact["payload"]["degraded"] is True
-    manifest_path = tmp_path / request_id / "generation-manifest.json"
+    manifest_path = tmp_path / request_id / "reports" / "generation-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema"] == "deck-generation-manifest"
     assert manifest["quality"]["status"] == "needs_review"

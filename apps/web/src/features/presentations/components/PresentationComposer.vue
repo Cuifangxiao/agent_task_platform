@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertCircle, Loader2, Paperclip, Square, X } from '@lucide/vue'
+import { AlertCircle, Loader2, Paperclip, Send, Square, X } from '@lucide/vue'
 
 import type { AgentConfig } from '@/types'
 
@@ -101,7 +101,8 @@ function onFilesSelected(event: Event) {
           </button>
           <button class="btn primary send-btn" type="submit" :disabled="!canSubmit">
             <Loader2 v-if="running" class="spin" :size="18" />
-            <span v-else>发送需求</span>
+            <Send v-else :size="17" />
+            <span v-if="!running">发送需求</span>
             <span v-if="running">生成中</span>
           </button>
         </div>

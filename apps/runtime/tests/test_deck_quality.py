@@ -105,9 +105,9 @@ def test_review_vlm_uses_global_and_batched_contact_sheets_for_large_decks(tmp_p
     )
     assert result["vlm_reviewed"] is True
     assert llm.calls == 3
-    assert (tmp_path / request_id / "review" / "contact_sheet.png").exists()
-    assert (tmp_path / request_id / "review" / "batch_1.png").exists()
-    assert (tmp_path / request_id / "review" / "batch_2.png").exists()
+    assert (tmp_path / request_id / "reports" / "visual-review" / "contact_sheet.png").exists()
+    assert (tmp_path / request_id / "reports" / "visual-review" / "batch_1.png").exists()
+    assert (tmp_path / request_id / "reports" / "visual-review" / "batch_2.png").exists()
 
 
 def test_normalize_brief_falls_back_when_model_omits_facts():
@@ -116,6 +116,27 @@ def test_normalize_brief_falls_back_when_model_omits_facts():
     assert brief["facts"] == [{"id": "fact#1", "statement": "Known fact"}]
     assert brief["audience"] == "Execs"
     assert brief["suggested_pages"] == 30
+
+
+def test_brief_keeps_markdown_bullets_as_separate_source_facts():
+    brief = build_brief(
+        "Q2 review",
+        "面向管理层复盘",
+        "",
+        source_chunks=[
+            {
+                "source_file": "metrics.md",
+                "page": 1,
+                "section": "summary",
+                "excerpt": "- 续费率达到 82%\n- 企业客户收入同比增长 35%\n- 交付周期缩短到 12 天",
+            }
+        ],
+    )
+
+    statements = [item["statement"] for item in brief["facts"]]
+    assert "续费率达到 82%" in statements
+    assert "企业客户收入同比增长 35%" in statements
+    assert "交付周期缩短到 12 天" in statements
 
 
 def test_vlm_model_without_image_support_is_explicit(monkeypatch, tmp_path):

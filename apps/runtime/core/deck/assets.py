@@ -17,7 +17,7 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_EDGE = 8192
 MAX_IMAGE_PIXELS = 40_000_000
 
-# SVG pages live in request/slides and uploaded images live in request/images.
+# SVG author pages live in request/svg_output and uploaded images live in request/images.
 # Asset basenames are deliberately opaque and contain no user-controlled path
 # segments, dots, whitespace, or URL syntax.
 SAFE_IMAGE_HREF_RE = re.compile(

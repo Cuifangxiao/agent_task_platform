@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -18,10 +19,44 @@ from core.deck.assets import (
     is_image_filename,
 )
 from core.deck.contract import DeckSourceFile, GenerateDeckInput
-from core.deck.paths import source_dir
+from core.deck.paths import DeckProjectPaths, source_dir
 from core.tools.document_parser import parse_uploaded_document
 
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
+
+
+def persist_normalized_source_bundle(
+    request_dir: Path,
+    *,
+    source_names: str,
+    normalized_text: str,
+    source_chunks: list[dict[str, Any]],
+) -> None:
+    """Persist the normalized content contract before strategy begins."""
+
+    project = DeckProjectPaths(Path(request_dir).resolve()).ensure()
+    if normalized_text.strip():
+        project.sources.joinpath("normalized-source.md").write_text(
+            normalized_text.rstrip() + "\n",
+            encoding="utf-8",
+        )
+    project.sources.joinpath("source-chunks.json").write_text(
+        json.dumps(source_chunks, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    project.sources.joinpath("source-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "deck-source-manifest",
+                "source_names": source_names,
+                "normalized_markdown": "normalized-source.md" if normalized_text.strip() else "",
+                "chunks": len(source_chunks),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def parse_uploaded_files(

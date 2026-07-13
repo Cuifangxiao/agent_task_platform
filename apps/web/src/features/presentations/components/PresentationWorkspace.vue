@@ -226,18 +226,18 @@ function confirmDeleteConversation(conversation: PptConversationSummary) {
 </script>
 
 <template>
-  <section class="page chat-page">
-    <div class="page-head chat-page-head">
-      <div class="chat-page-copy">
-        <span class="chat-page-kicker">PPT Workspace</span>
-        <h1>PPT Assistant</h1>
+  <section class="page chat-page management-page">
+    <header class="page-head management-head chat-page-head">
+      <div class="page-title-block chat-page-copy">
+        <span class="page-eyebrow">智能演示文稿</span>
+        <h2>PPT 生成助手</h2>
         <p>像聊天一样描述需求，上传资料后我会先给你大纲，确认后再生成完整 PPT。</p>
       </div>
       <div v-if="props.configs.length > 0" class="chat-page-meta">
         <div class="page-meta-card"><span>当前配置</span><strong>{{ conversations.selectedConfigHint.value }}</strong></div>
-        <div class="page-meta-card"><span>历史记录</span><strong>{{ conversations.conversationCountLabel.value }}</strong></div>
+        <div class="page-meta-card"><span>历史对话</span><strong>{{ conversations.conversationCountLabel.value }}</strong></div>
       </div>
-    </div>
+    </header>
 
     <EmptyState
       v-if="props.configs.length === 0"

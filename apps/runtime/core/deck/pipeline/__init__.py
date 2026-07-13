@@ -75,7 +75,7 @@ def build_deck_graph(
     graph.add_edge("write_slides", "validate")
     graph.add_conditional_edges("validate", _route_after_validate, {"repair": "repair", "review_vlm": "review_vlm", "coherence": "coherence", "export": "export"})
     graph.add_edge("repair", "validate")
-    graph.add_conditional_edges("review_vlm", _route_after_vlm, {"repair": "repair", "coherence": "coherence"})
+    graph.add_conditional_edges("review_vlm", _route_after_vlm, {"repair": "repair", "coherence": "coherence", "export": "export"})
     graph.add_edge("coherence", "validate")
     graph.add_edge("export", END)
     return graph.compile(checkpointer=checkpointer)
@@ -178,7 +178,9 @@ def _route_after_outline_review(state: DeckGraphState) -> str:
 
 
 def _route_after_vlm(state: DeckGraphState) -> str:
-    return "repair" if has_fixable_must_fix(state) else "coherence"
+    if has_fixable_must_fix(state):
+        return "repair"
+    return "coherence" if int(state.get("coherence_round") or 0) < 1 else "export"
 
 
 __all__ = ["build_deck_graph"]

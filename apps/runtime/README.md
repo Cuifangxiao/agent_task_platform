@@ -64,8 +64,10 @@ cp .env.example .env                 # 按需填密钥
 
 ## PPT 生成运行依赖
 
-Deck 生成链路使用 HTML 中间表示: 每页会存档到 `DECK_ARTIFACTS_DIR/{request_id}/slides/{n}.html`
-和 `{n}.png`, 最终导出 `{request_id}/deck.pptx`。未配置 `DECK_ARTIFACTS_DIR` 时默认写入
+Deck 生成链路以 SVG 为作者源：每页权威文件写入
+`DECK_ARTIFACTS_DIR/{request_id}/svg_output/page-{n}.svg`，浏览器产物写入 `previews/`，
+质量报告写入 `reports/`，最终原生 PPTX 写入 `exports/deck.pptx`。导出时会把本次
+`svg_output/` 冻结到 `backup/<timestamp>/svg_output/`。未配置 `DECK_ARTIFACTS_DIR` 时默认写入
 `apps/runtime/artifacts/decks`。
 
 部署时安装 Python 依赖后，还需要安装 Playwright Chromium:
@@ -79,9 +81,9 @@ Deck 生成链路使用 HTML 中间表示: 每页会存档到 `DECK_ARTIFACTS_DI
 
 Deck workflow 使用 `core/deck/checkpoint.py::PersistentSQLiteSaver` 持久化 LangGraph checkpoint，默认数据库位于 artifacts 目录下的 `deck-checkpoints.sqlite3`。Go 层负责持久化 Job/Event 并独立消费 gRPC；Python 流中断不会再被 HTTP 请求 context 直接取消。
 
-统一事件协议版本为 `event_version=1`，stage 包含 `brief`、`outline`、`outline_review`、`style`、`style_review`、`writer`、`designer`、`validate`、`review_vlm`、`repair`、`coherence`、`export`。Writer 有上限地并行生成结构化内容，浏览器渲染保持顺序执行；Designer 和 Coherence 都会调用各自绑定模型。VLM 模型必须声明图片输入能力，否则产生明确的 `vlm_image_unsupported` must-fix。
+统一事件协议版本为 `event_version=1`，stage 包含 `brief`、`outline`、`outline_review`、`style`、`style_review`、`writer`、`designer`、`validate`、`review_vlm`、`repair`、`coherence`、`export`。页面按顺序端到端生成；每页 Content Editor 与 SVG Artist 共用最新锁和前页视觉签名。Designer 和 Coherence 都会调用各自绑定模型。VLM 模型必须声明图片输入能力，否则产生明确的 `vlm_image_unsupported` must-fix。
 
-内容 normalization 不再裁切标题、正文、bullet 或表格。原始与最终 spec 分别保存为 `spec.raw.json`、`spec.final.json`；修复预算耗尽仍有 must-fix 时 artifact 标记 `needs_review`。整页图片降级会写入 warnings/degraded，前端会提示文字不可编辑。
+内容 normalization 不再裁切标题、正文、bullet 或表格。原始与最终 spec 分别保存为 `sources/spec.raw.json`、`sources/spec.final.json`；修复预算耗尽仍有 must-fix 时 artifact 标记 `needs_review`。整页图片降级会写入 warnings/degraded，前端会提示文字不可编辑。
 
 ## proto 代码生成
 

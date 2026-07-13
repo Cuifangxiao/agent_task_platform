@@ -151,7 +151,7 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
 
     artifact_events = [event for event in events if event.get("event_type") == "artifact"]
     assert artifact_events
-    artifact_path = tmp_path / "11111111-1111-1111-1111-111111111111" / "deck.pptx"
+    artifact_path = tmp_path / "11111111-1111-1111-1111-111111111111" / "exports" / "deck.pptx"
     assert artifact_path.exists()
     assert artifact_path.stat().st_size > 0
 

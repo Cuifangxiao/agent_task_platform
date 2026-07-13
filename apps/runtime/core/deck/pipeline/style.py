@@ -284,7 +284,11 @@ def _model_directions(state: DeckGraphState, style_llm: Any) -> list[dict[str, A
 def _normalize_direction(raw: dict[str, Any], state: DeckGraphState) -> dict[str, Any] | None:
     valid_ids = {pack.template_id for pack in list_template_packs()}
     requested = str(state.get("template_id") or "auto").strip()
-    template_id = requested if requested not in {"", "auto"} and requested in valid_ids else str(raw.get("template_id") or "").strip()
+    template_id = (
+        requested
+        if requested not in {"", "auto"} and requested in valid_ids
+        else "editorial_freeform"
+    )
     if template_id not in valid_ids:
         return None
     pack = get_template_pack(template_id)
@@ -371,11 +375,15 @@ def _candidate_packs(state: DeckGraphState) -> list[TemplatePack]:
         preferred = "academic_defense"
     elif any(token in haystack for token in ("发布", "路演", "产品", "launch", "pitch", "keynote")):
         preferred = "keynote_canvas"
+    free_design = get_template_pack("editorial_freeform")
     selected = get_template_pack(preferred)
-    remainder = [pack for pack in packs if pack.template_id != selected.template_id]
+    remainder = [pack for pack in packs if pack.template_id not in {free_design.template_id, selected.template_id}]
     diversity_order = ["editorial_freeform", "consulting_signal", "keynote_canvas", "technical_blueprint", "academic_defense"]
     remainder.sort(key=lambda pack: diversity_order.index(pack.template_id) if pack.template_id in diversity_order else 99)
-    return [selected, *remainder][:3]
+    ordered = [free_design]
+    if selected.template_id != free_design.template_id:
+        ordered.append(selected)
+    return [*ordered, *remainder][:3]
 
 
 def adjust_theme_from_feedback(theme: ThemeTokens, feedback: str, style_llm: Any) -> ThemeTokens:

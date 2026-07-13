@@ -17,6 +17,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from core.deck.export.text_layer import HIDE_TEXT_JS, TEXT_LAYER_JS
+from core.deck.paths import DeckProjectPaths
 from core.deck.quality.svg import validate_svg_page
 from core.deck.rendering.svg import svg_preview_html
 from core.deck.runtime_metrics import record_fallback
@@ -189,16 +190,14 @@ class BrowserRenderer:
         theme: ThemeTokens | None = None,
         svg: str = "",
     ) -> SlideArtifact:
-        request_dir = self._request_dir(request_id)
-        slides_dir = request_dir / "slides"
-        slides_dir.mkdir(parents=True, exist_ok=True)
-
-        html_path = slides_dir / f"{slide.index}.html"
-        png_path = slides_dir / f"{slide.index}.png"
-        svg_path = slides_dir / f"{slide.index}.svg" if svg.strip() else None
-        history_html_path = slides_dir / f"{slide.index}_v{version}.html" if version > 1 else None
-        history_png_path = slides_dir / f"{slide.index}_v{version}.png" if version > 1 else None
-        history_svg_path = slides_dir / f"{slide.index}_v{version}.svg" if version > 1 and svg_path is not None else None
+        project = self._project(request_id)
+        request_dir = project.root
+        html_path = project.preview_html(slide.index)
+        png_path = project.preview_png(slide.index)
+        svg_path = project.svg(slide.index) if svg.strip() else None
+        history_html_path = project.preview_html(slide.index, version=version) if version > 1 else None
+        history_png_path = project.preview_png(slide.index, version=version) if version > 1 else None
+        history_svg_path = project.svg(slide.index, version=version) if version > 1 and svg_path is not None else None
         effective_html = svg_preview_html(svg) if svg_path is not None else html
         html_path.write_text(effective_html, encoding="utf-8")
         if svg_path is not None:
@@ -257,9 +256,9 @@ class BrowserRenderer:
         )
 
     def render_style_sample(self, request_id: str, style_id: str, html: str, *, theme: ThemeTokens) -> dict[str, Any]:
-        request_dir = self._request_dir(request_id)
-        styles_dir = request_dir / "styles"
-        styles_dir.mkdir(parents=True, exist_ok=True)
+        project = self._project(request_id)
+        request_dir = project.root
+        styles_dir = project.styles
         html_path = styles_dir / f"{style_id}.html"
         png_path = styles_dir / f"{style_id}.png"
         html_path.write_text(html, encoding="utf-8")
@@ -279,9 +278,10 @@ class BrowserRenderer:
         }
 
     def _request_dir(self, request_id: str) -> Path:
-        path = self._output_root / request_id
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self._project(request_id).root
+
+    def _project(self, request_id: str) -> DeckProjectPaths:
+        return DeckProjectPaths.for_request(self._output_root, request_id).ensure()
 
     def _capture_with_playwright(self, html: str | Path, png_path: Path) -> None:
         if self._browser_session is not None:

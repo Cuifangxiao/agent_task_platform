@@ -1,6 +1,7 @@
 import { computed, reactive, ref } from 'vue'
 
 import { createApiClient, toSession } from '@/api/client'
+import type { PptConversationSummary } from '@/features/presentations/types'
 import type {
   AgentConfig,
   AgentDefinition,
@@ -21,6 +22,7 @@ export function useWorkspaceStore() {
   const modelConfigs = ref<ModelConfig[]>([])
   const agents = ref<AgentDefinition[]>([])
   const agentConfigs = ref<AgentConfig[]>([])
+  const pptConversations = ref<PptConversationSummary[]>([])
   const logs = ref<RequestLogEntry[]>([])
   const banner = ref<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null)
   const loading = reactive({
@@ -62,6 +64,7 @@ export function useWorkspaceStore() {
       modelConfigs.value = []
       agents.value = []
       agentConfigs.value = []
+      pptConversations.value = []
     }
   }
 
@@ -138,12 +141,13 @@ export function useWorkspaceStore() {
   async function reload() {
     loading.data = true
     try {
-      const [userResult, providerResult, modelResult, agentResult, configResult] = await Promise.allSettled([
+      const [userResult, providerResult, modelResult, agentResult, configResult, conversationResult] = await Promise.allSettled([
         api.me(),
         api.providers(),
         api.modelConfigs(),
         api.agents(),
         api.agentConfigs(),
+        api.presentations.listConversations(),
       ])
 
       // Stop here if auth became invalid during the reload flow.
@@ -165,6 +169,9 @@ export function useWorkspaceStore() {
       }
       if (configResult.status === 'fulfilled') {
         agentConfigs.value = configResult.value
+      }
+      if (conversationResult.status === 'fulfilled') {
+        pptConversations.value = conversationResult.value
       }
     } finally {
       loading.data = false
@@ -189,6 +196,7 @@ export function useWorkspaceStore() {
     notify,
     pptAgent,
     pptAgentConfigs,
+    pptConversations,
     providers,
     removeAgentConfig,
     removeModelConfig,

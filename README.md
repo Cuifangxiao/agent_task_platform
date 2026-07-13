@@ -84,6 +84,8 @@ flowchart LR
 
 ## PPT 质量优先流程
 
+完整的阶段职责、目录所有权、质量门和模型建议见 [PPT 生成流程](docs/PPT_GENERATION_PIPELINE.md)。
+
 ```text
 素材/图片解析 → brief → 叙事大纲（节奏、版式意图、可视化、证据）→ 用户编辑/确认
 → Strategist 生成三套完整美术方向（八项确认 + 模板策略）→ 用户选择
@@ -93,12 +95,13 @@ flowchart LR
 → 跨页连贯性与重复构图检查 → SVG 转原生 PowerPoint 形状 → PPTX 结构校验
 ```
 
-- `slides/{n}.svg` 是页面的权威矢量源；PNG 只用于预览和视觉复核。
-- 正常路径由 Designer 模型直接生成完整 SVG；旧固定组件渲染器只在 Designer 未配置或多轮回修仍不合格时兜底。
+- `svg_output/page-{n}.svg` 是唯一权威页面源；`previews/` 的 HTML/PNG 只用于浏览器预览和视觉复核。
+- 正常路径由 Designer 模型直接生成完整 SVG；固定组件渲染器只做显式失败兜底，并以 must-fix 标记为 `needs_review`，不会伪装成高质量成功。
 - 模板不是导出时叠加的背景：每页蓝图会携带实际 `template_svg_source`、`layout_id` 和来源信息，并作为 SVG Artist 的直接输入。
 - `design-spec.json` 是权威设计规格，`spec-lock.json` 是机器执行锁；可读版本写入 `design-spec.md` 与 `spec-lock.md`。
 - SVG 仅允许可安全映射到 DrawingML 的 `rect/circle/ellipse/line/polyline/polygon/text/g/image` 子集，禁止脚本、网络外链、`foreignObject`、filter 和任务目录之外的本地文件引用。
 - 相邻页面会传递视觉签名，避免连续复用相同卡片网格、分栏和几何构图；模板一致性与页面节奏变化同时受控。
+- 页数与逐页蓝图在 `spec-lock.json` 后冻结；每页按“写内容 → 读锁 → 画 SVG → 静态门禁 → 预览”完整执行后才进入下一页，锁定后不再自动拆页。
 - 导出优先生成可编辑的 PowerPoint 形状和文本框；旧任务或单页转换失败时仍保留原 HTML/PNG 混合导出作为兼容降级。
 - SVG 结构错误、内容/数字丢失、字体漂移、越界、模板漂移和重复构图属于硬门禁；VLM 继续检查层级、构图、留白、对比度、素材质量和整体美术完成度。
 - `designer` 节点需要输出完整 SVG，建议绑定代码/长文本能力较好的模型并将 `max_tokens` 配到至少 8K；`review` 节点必须绑定声明支持图片输入的多模态模型。
@@ -115,14 +118,19 @@ asset-manifest.json
 template-manifest.json
 templates/page-{n}.svg
 images/*
-slides/{n}.svg
-slides/{n}.html
-slides/{n}.png
-spec.raw.json
-spec.final.json
-generation-manifest.json
-export-manifest.json
-deck.pptx
+sources/spec.raw.json
+sources/spec.final.json
+sources/source-chunks.json
+sources/fact-ledger.json
+svg_output/page-{n}.svg
+previews/page-{n}.html
+previews/page-{n}.png
+notes/total.md
+reports/quality-report.json
+reports/generation-manifest.json
+reports/export-manifest.json
+exports/deck.pptx
+backup/<timestamp>/svg_output/*
 ```
 
 ## 依赖方向

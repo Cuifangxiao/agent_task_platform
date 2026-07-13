@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 import json
+import pytest
 
 import core.deck.pipeline.slides as slides_pipeline
 from core.deck.pipeline.style import _style_sample_html
 from core.deck.design import template_svg_source
 from core.deck.rendering.html import HTMLSlideRenderer
-from core.deck.rendering.artist import build_svg_artist_prompt, render_svg_artwork, resolve_page_blueprint
+from core.deck.errors import ModelOutputError
+from core.deck.rendering.artist import build_svg_artist_prompt, render_svg_artwork, resolve_page_blueprint, validate_artist_svg
 from core.deck.spec import DeckSpec, SlideSpec, default_theme
 
 
@@ -180,6 +182,54 @@ def test_prompt_falls_back_to_catalog_svg_when_blueprint_has_no_inline_source():
     assert "ACTUAL TEMPLATE SVG STRUCTURE SOURCE" in prompt
     assert 'data-template-id="technical_blueprint"' in prompt
     assert 'id="zone-layers"' in prompt
+    assert "Dominant message / evidence" not in prompt
+
+
+def test_artist_rereads_persisted_lock_and_sends_only_current_page(tmp_path):
+    deck, slide = _deck_and_slide()
+    lock = {
+        "schema": "ppt-spec-lock",
+        "spec_hash": "locked-hash",
+        "immutable_visual_tokens": {"palette": {"accent": "#2A9D8F"}},
+        "page_locks": [
+            {"index": 1, "layout_id": "consulting_evidence"},
+            {"index": 2, "layout_id": "consulting_compare"},
+        ],
+    }
+    (tmp_path / "spec-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+    state = _state() | {
+        "project_dir": str(tmp_path),
+        "execution_lock": {"stale": True},
+        "design_spec": {"art_direction": {"visual_style": "restrained"}, "large": "x" * 30000},
+    }
+
+    prompt = build_svg_artist_prompt(
+        state=state,
+        deck=deck,
+        slide=slide,
+        outline={},
+        blueprint=resolve_page_blueprint(state, slide, {}),
+        previous_visual_signatures=[],
+    )
+
+    assert '"stale"' not in prompt
+    assert '"layout_id": "consulting_evidence"' in prompt
+    assert '"layout_id": "consulting_compare"' not in prompt
+    assert "x" * 200 not in prompt
+
+
+def test_artist_gate_rejects_pages_that_ignore_locked_geometry():
+    deck, slide = _deck_and_slide()
+    normalized = render_svg_artwork(llm=SequenceTextLLM([_valid_svg()]), state=_state(), deck=deck, slide=slide, outline={}).svg
+
+    issues = validate_artist_svg(
+        normalized,
+        slide=slide,
+        theme=deck.theme,
+        blueprint={"geometry": {"required_focus": [1190, 300, 40, 40]}},
+    )
+
+    assert any(issue.kind == "svg_blueprint_geometry" for issue in issues)
 
 
 def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch):
@@ -234,6 +284,36 @@ def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch)
     assert result["artifacts"][0]["svg_renderer"] == "llm_svg"
     assert result["artifacts"][0]["template_id"] == "consulting_signal"
     assert "Market growth" in browser.svg
+
+
+def test_slide_pipeline_stops_when_first_designer_page_never_passes_the_gate(monkeypatch):
+    monkeypatch.setattr(slides_pipeline, "get_stream_writer", lambda: lambda _event: None)
+    writer_llm = StaticJSONLLM(
+        {
+            "index": 1,
+            "role": "evidence",
+            "component": "content-basic",
+            "title": "Market growth",
+            "content": {"body": "Enterprise renewals lead.", "bullets": ["Retention", "Expansion"]},
+        }
+    )
+    designer_llm = SequenceTextLLM(["not svg", "still not svg", "invalid again"])
+    state = {
+        **_state(),
+        "request_id": "first-page-gate",
+        "deck_title": "Growth review",
+        "theme": default_theme().to_dict(),
+        "brief": {"audience": "Leadership", "goal": "Align investment", "language": "en"},
+        "plan": {"title": "Growth review", "narrative": "Explain", "slides": [{"index": 1, "title": "Market growth", "role": "evidence", "component": "content-basic"}]},
+    }
+
+    with pytest.raises(ModelOutputError, match="first SVG page"):
+        slides_pipeline.write_and_design_slides(
+            state,
+            {"writer": writer_llm, "designer": designer_llm},
+            HTMLSlideRenderer(),
+            CapturingBrowser(),
+        )
 
 
 def test_style_checkpoint_can_show_a_real_designer_svg_sample():

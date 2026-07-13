@@ -12,6 +12,7 @@ from langgraph.config import get_stream_writer
 
 import core.deck.events as events
 from core.deck.pipeline.llm import invoke_json_with_retries, llm_for_node, load_node_prompt
+from core.deck.paths import DeckProjectPaths
 from core.deck.runtime_metrics import record_fallback
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import dedupe_issue_dicts, issues_to_dicts
@@ -29,9 +30,10 @@ def review_coherence(
 ) -> dict[str, Any]:
     writer = get_stream_writer()
     writer(events.stage_started("coherence", "Checking and repairing cross-slide coherence"))
+    round_index = int(state.get("coherence_round") or 0) + 1
     deck = DeckSpec.from_dict(state.get("deck_spec") or {})
     if not deck.slides:
-        return {"coherence_reviewed": True}
+        return {"coherence_reviewed": True, "coherence_round": round_index}
 
     original = copy.deepcopy(deck)
     model_failed = False
@@ -237,6 +239,7 @@ def review_coherence(
         "validation_issues": issues,
         "vlm_reviewed": False if changed_pages else bool(state.get("vlm_reviewed")),
         "coherence_reviewed": True,
+        "coherence_round": round_index,
     }
 
 
@@ -244,7 +247,7 @@ def _existing_svg(request_id: str, page_index: int, browser: BrowserRenderer) ->
     root = getattr(browser, "_output_root", None)  # pylint: disable=protected-access
     if root is None:
         return ""
-    path = root / request_id / "slides" / f"{page_index}.svg"
+    path = DeckProjectPaths.for_request(root, request_id).svg(page_index)
     try:
         return path.read_text(encoding="utf-8") if path.is_file() else ""
     except OSError:

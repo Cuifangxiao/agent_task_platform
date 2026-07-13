@@ -49,7 +49,16 @@ def validate_svg_page(svg: str, *, page: int, theme: ThemeTokens, expected_spec_
         _font_name(theme.fonts.get("display")),
         _font_name(theme.fonts.get("body")),
     }
+    allowed_colors = {
+        str(value).strip().casefold()
+        for value in theme.palette.values()
+        if PAINT_RE.fullmatch(str(value).strip())
+    }
+    min_body_font = max(16.0, float(theme.type_scale.get("body") or 18))
+    min_annotation_font = max(12.0, float(theme.type_scale.get("caption") or 12))
     is_reference = bool(str(root.get("data-reference-kind") or "").strip())
+    if is_reference:
+        min_body_font = min_annotation_font = 1.0
     ids: set[str] = set()
     editable_text = 0
     shape_count = 0
@@ -76,11 +85,11 @@ def validate_svg_page(svg: str, *, page: int, theme: ThemeTokens, expected_spec_
                 or (not is_reference and attr_name in FINAL_ONLY_FORBIDDEN_ATTRIBUTES)
             ):
                 issues.append(_issue(page, "forbidden_attribute", f"<{tag}> uses forbidden attribute '{_local_name(raw_name)}'.", "Remove external, scripted, and transform-based SVG features."))
-        issues.extend(_validate_paint(element, page, tag))
+        issues.extend(_validate_paint(element, page, tag, allowed_colors))
         if tag == "text":
             if element.get("data-text") == "true":
                 editable_text += 1
-            issues.extend(_validate_text(element, page, allowed_fonts))
+            issues.extend(_validate_text(element, page, allowed_fonts, min_body_font, min_annotation_font))
         elif tag == "image":
             issues.extend(_validate_image(element, page))
 
@@ -113,7 +122,12 @@ def _validate_canvas(root: ET.Element, page: int) -> list[ValidationIssue]:
     return issues
 
 
-def _validate_paint(element: ET.Element, page: int, tag: str) -> list[ValidationIssue]:
+def _validate_paint(
+    element: ET.Element,
+    page: int,
+    tag: str,
+    allowed_colors: set[str],
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     for name in ("fill", "stroke"):
         value = str(element.get(name) or "").strip()
@@ -121,10 +135,18 @@ def _validate_paint(element: ET.Element, page: int, tag: str) -> list[Validation
             continue
         if not PAINT_RE.fullmatch(value):
             issues.append(_issue(page, "paint_syntax", f"<{tag}> {name} must be a six-digit hex color, got '{value}'.", "Resolve colors before writing SVG."))
+        elif value.casefold() not in allowed_colors:
+            issues.append(_issue(page, "color_drift", f"<{tag}> {name} uses unlocked color '{value}'.", "Use only colors from the active execution lock."))
     return issues
 
 
-def _validate_text(element: ET.Element, page: int, allowed_fonts: set[str]) -> list[ValidationIssue]:
+def _validate_text(
+    element: ET.Element,
+    page: int,
+    allowed_fonts: set[str],
+    min_body_font: float,
+    min_annotation_font: float,
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     family = _font_name(element.get("data-font-family") or element.get("font-family"))
     if family and family not in allowed_fonts:
@@ -133,8 +155,14 @@ def _validate_text(element: ET.Element, page: int, allowed_fonts: set[str]) -> l
         font_size = float(element.get("data-font-size") or element.get("font-size") or 0)
     except ValueError:
         font_size = 0
-    if element.get("data-text") == "true" and font_size < 12:
-        issues.append(_issue(page, "font_size", f"Editable text is only {font_size:g}px.", "Increase font size or split the content."))
+    role = str(element.get("id") or "").casefold()
+    is_annotation = any(
+        token in role
+        for token in ("footer", "page-number", "source", "caption", "meta", "eyebrow", "label", "legend", "axis", "tag")
+    )
+    minimum = min_annotation_font if is_annotation else min_body_font
+    if element.get("data-text") == "true" and font_size < minimum:
+        issues.append(_issue(page, "font_size", f"Editable text is only {font_size:g}px; this role requires at least {minimum:g}px.", "Increase font size or simplify the page content."))
     raw_box = str(element.get("data-box") or "")
     if element.get("data-text") == "true" and not str(element.get("data-value") or "").strip():
         issues.append(_issue(page, "empty_text", "Editable SVG text has no source value.", "Remove the empty slot or provide visible text."))

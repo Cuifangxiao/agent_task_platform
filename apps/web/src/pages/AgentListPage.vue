@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Bot, Plus, Save, Trash2, X } from '@lucide/vue'
+import { ArrowRight, Bot, Network, Plus, Save, Trash2, X } from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
 import ModelTypeBadge from '@/components/ModelTypeBadge.vue'
@@ -63,6 +63,9 @@ const selectedAgent = computed(() => props.agents.find((item) => item.id === Num
 const requiredNodes = computed(() => selectedAgent.value?.nodes.filter((node) => node.requires_model) ?? [])
 const requiredNodesByKey = computed(() => new Map(requiredNodes.value.map((node) => [node.key, node])))
 const modelsByID = computed(() => new Map(props.models.map((model) => [model.id, model])))
+const activeAgents = computed(() => props.agents.filter((item) => item.status === 'active'))
+const activeConfigs = computed(() => props.agentConfigs.filter((item) => item.status === 'active'))
+const bindingCount = computed(() => props.agentConfigs.reduce((total, item) => total + item.node_bindings.length, 0))
 
 watch(
   () => props.agents,
@@ -196,37 +199,69 @@ function submit() {
 </script>
 
 <template>
-  <section class="page">
-    <div class="page-head">
-      <div>
-        <h1>Agent 管理</h1>
-        <p>Agent 和节点定义来自后端，前端根据 nodes 动态生成配置表单。</p>
+  <section class="page management-page agent-management-page">
+    <header class="page-head management-head">
+      <div class="page-title-block">
+        <span class="page-eyebrow">工作流与节点</span>
+        <h2>编排 Agent 工作流</h2>
+        <p>查看后端登记的 Agent 工作流，并为每个需要推理的节点绑定合适的模型配置。</p>
       </div>
+      <button class="btn primary" type="button" :disabled="agents.length === 0" @click="reset()">
+        <Plus :size="18" />
+        新建 Agent 配置
+      </button>
+    </header>
+
+    <div class="page-summary" aria-label="Agent 配置概览">
+      <div><span>可用 Agent</span><strong>{{ activeAgents.length }}</strong></div>
+      <div><span>启用配置</span><strong>{{ activeConfigs.length }}</strong></div>
+      <div class="summary-wide"><span>模型绑定</span><strong>{{ bindingCount }} 个节点</strong></div>
     </div>
 
-    <div class="agent-grid">
+    <section class="content-panel" aria-labelledby="agent-definition-title">
+      <div class="content-panel-head">
+        <div>
+          <h3 id="agent-definition-title">Agent 定义</h3>
+          <p>定义和节点由后端维护；选择一个 Agent 可快速创建配置。</p>
+        </div>
+        <span class="panel-count">{{ agents.length }} 个工作流</span>
+      </div>
+
       <EmptyState
         v-if="agents.length === 0"
         :icon="Bot"
         title="后端暂无 Agent"
         text="确认后端已登记 ppt_agent，并重新刷新工作台。"
       />
-      <button v-for="agent in agents" :key="agent.id" class="agent-card" type="button" @click="reset(agent.id)">
-        <div class="card-title">
-          <strong>{{ agent.name }}</strong>
-          <StatusBadge :tone="agent.status === 'active' ? 'green' : 'gray'" :label="agent.status" />
-        </div>
-        <span class="mono">{{ agent.agent_key }}</span>
-        <p>{{ agent.description }}</p>
-        <div class="node-pills">
-          <span v-for="node in agent.nodes" :key="node.key">{{ node.display_name }}</span>
-        </div>
-      </button>
-    </div>
 
-    <div>
-      <div class="section-title-row">
-        <h2>Agent Config</h2>
+      <div v-else class="agent-grid">
+        <button v-for="agent in agents" :key="agent.id" class="agent-card" type="button" @click="reset(agent.id)">
+          <span class="agent-card-icon"><Network :size="24" /></span>
+          <span class="agent-card-main">
+            <span class="card-title">
+              <strong>{{ agent.name }}</strong>
+              <StatusBadge :tone="agent.status === 'active' ? 'green' : 'gray'" :label="agent.status === 'active' ? '可用' : '停用'" />
+            </span>
+            <span class="mono agent-key">{{ agent.agent_key }}</span>
+            <p>{{ agent.description }}</p>
+          </span>
+          <span class="agent-card-nodes">
+            <small>{{ agent.nodes.filter((node) => node.requires_model).length }} 个推理节点</small>
+            <span class="node-pills">
+              <span v-for="node in agent.nodes" :key="node.key">{{ node.display_name }}</span>
+            </span>
+          </span>
+          <span class="agent-card-action">创建配置 <ArrowRight :size="16" /></span>
+        </button>
+      </div>
+    </section>
+
+    <section class="content-panel" aria-labelledby="agent-config-title">
+      <div class="content-panel-head">
+        <div>
+          <h3 id="agent-config-title">Agent 配置</h3>
+          <p>配置决定每个节点实际使用的模型，并可在 PPTAgent 中直接选择。</p>
+        </div>
         <button class="btn" type="button" :disabled="agents.length === 0" @click="reset()">
           <Plus :size="18" />
           新建配置
@@ -240,28 +275,32 @@ function submit() {
         text="为 PPTAgent 每个 requires_model 节点绑定 active Model Config。"
       />
 
-      <div v-else class="list-stack">
-        <button v-for="config in agentConfigs" :key="config.id" class="list-item tall agent-config-list-item" type="button" @click="edit(config)">
-          <div class="agent-config-content">
-            <strong>{{ config.name }}</strong>
-            <span>{{ config.agent_name }} / {{ config.description || '无描述' }}</span>
+      <div v-else class="config-list agent-config-list">
+        <button v-for="config in agentConfigs" :key="config.id" class="config-row agent-config-list-item" type="button" @click="edit(config)">
+          <span class="config-row-icon agent-config-icon"><Bot :size="22" /></span>
+          <span class="agent-config-content">
+            <span class="config-row-title">
+              <strong>{{ config.name }}</strong>
+              <StatusBadge v-if="config.is_default" tone="blue" label="默认" />
+            </span>
+            <span>{{ config.agent_name }} · {{ config.description || '无描述' }}</span>
             <NodeBindingList :config="config" :agents="agents" :models="models" />
-          </div>
-          <div class="row-actions agent-config-status">
-            <StatusBadge v-if="config.is_default" tone="blue" label="默认" />
-            <StatusBadge :tone="config.status === 'active' ? 'green' : 'gray'" :label="config.status" />
-          </div>
+          </span>
+          <span class="agent-config-status">
+            <StatusBadge :tone="config.status === 'active' ? 'green' : 'gray'" :label="config.status === 'active' ? '已启用' : '已停用'" />
+            <ArrowRight :size="17" />
+          </span>
         </button>
       </div>
-    </div>
+    </section>
 
     <Teleport to="body">
       <div v-if="isEditorOpen" class="modal-backdrop" @click.self="closeEditor">
         <form class="modal-panel config-modal" role="dialog" aria-modal="true" @submit.prevent="submit">
           <div class="modal-head">
             <div>
-              <h2>{{ draft.id ? '编辑 Agent Config' : '新建 Agent Config' }}</h2>
-              <p>只允许绑定 active Model Config。</p>
+              <h2>{{ draft.id ? '编辑 Agent 配置' : '新建 Agent 配置' }}</h2>
+              <p>仅可绑定已启用的模型配置。</p>
               <p v-if="formError" class="form-error modal-feedback" role="alert">{{ formError }}</p>
             </div>
             <div class="modal-head-actions">
@@ -359,7 +398,7 @@ function submit() {
             <button class="btn ghost" type="button" @click="emit('goPpt')">去 PPTAgent</button>
             <button class="btn primary" type="submit" :disabled="saving || activeModels.length === 0">
               <Save :size="18" />
-              保存 Agent Config
+              保存 Agent 配置
             </button>
           </div>
         </form>

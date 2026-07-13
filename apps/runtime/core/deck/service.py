@@ -15,11 +15,16 @@ from core.deck.checkpoint import PersistentSQLiteSaver
 from core.deck.contract import GenerateDeckInput, GenerateDeckOutput, ResumeDeckInput
 from core.deck.errors import DeckError
 from core.deck.model_config import build_deck_llms, describe_model_assignment
-from core.deck.paths import artifact_dir
+from core.deck.paths import DeckProjectPaths, artifact_dir
 from core.deck.pipeline import build_deck_graph
 from core.deck.pipeline.regenerate import regenerate_slide_from_artifacts
 from core.deck.rendering.browser import BrowserSession
-from core.deck.sources import derive_deck_title, materialize_source_images, parse_uploaded_files_with_provenance
+from core.deck.sources import (
+    derive_deck_title,
+    materialize_source_images,
+    parse_uploaded_files_with_provenance,
+    persist_normalized_source_bundle,
+)
 
 logger = logging.getLogger(__name__)
 PAYLOAD_JSON_MAX_BYTES = 64_000
@@ -41,10 +46,17 @@ class DeckService:
             llms = build_deck_llms(inp)
             browser_session = BrowserSession()
             artifacts_root = artifact_dir()
+            project = DeckProjectPaths.for_request(artifacts_root, request_id).ensure()
             graph = build_deck_graph(llms, artifacts_root, self._checkpointer, browser_session)
             parse_started_at = time.perf_counter()
-            source_images = materialize_source_images(inp, artifacts_root / request_id)
+            source_images = materialize_source_images(inp, project.root)
             uploaded_file_names, uploaded_file_text, source_chunks = parse_uploaded_files_with_provenance(inp)
+            persist_normalized_source_bundle(
+                project.root,
+                source_names=uploaded_file_names,
+                normalized_text=uploaded_file_text,
+                source_chunks=source_chunks,
+            )
             parse_duration_ms = round((time.perf_counter() - parse_started_at) * 1000)
             deck_title = derive_deck_title(
                 description,
@@ -54,6 +66,7 @@ class DeckService:
 
             initial_state = {
                 "request_id": request_id,
+                "project_dir": str(project.root),
                 "deck_title": deck_title,
                 "uploaded_file_name": uploaded_file_names,
                 "uploaded_file_text": uploaded_file_text,

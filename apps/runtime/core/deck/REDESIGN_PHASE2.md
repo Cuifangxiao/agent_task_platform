@@ -1,5 +1,7 @@
 # Deck 生成 Phase 2：修硬伤、闭环、健壮性与目录重组
 
+> 历史方案：本文中的 HTML-first 路径已经被仓库 README 记录的 SVG 项目工作区流程取代，仅保留作演进记录。
+
 > 2026-07-10 实施更新：当前 workflow 已接入 Go 持久化 Deck Job/追加式事件和 Python SQLite checkpoint；normalization 不再压缩语义内容，Designer、VLM、Repair、Coherence、Export 使用统一 v1 stage。最终生命周期/API 以仓库根目录 `PPT_AGENT_REFACTOR_IMPLEMENTATION.md` 为准。
 
 > 日期：2026-07-09

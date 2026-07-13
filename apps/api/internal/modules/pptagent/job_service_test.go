@@ -128,10 +128,11 @@ func TestArtifactPathRequiresOwningUser(t *testing.T) {
 	repo := newMemoryJobRepo()
 	dir := t.TempDir()
 	requestDir := filepath.Join(dir, testDeckRequestID)
-	if err := os.MkdirAll(requestDir, 0o755); err != nil {
+	exportsDir := filepath.Join(requestDir, "exports")
+	if err := os.MkdirAll(exportsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(requestDir, "deck.pptx"), []byte("pptx"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(exportsDir, "deck.pptx"), []byte("pptx"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := repo.CreateJob(context.Background(), DeckJob{
@@ -146,7 +147,7 @@ func TestArtifactPathRequiresOwningUser(t *testing.T) {
 		t.Fatalf("cross-user artifact error = %v", err)
 	}
 	path, err := service.ArtifactAssetPathForUser(context.Background(), 7, testDeckRequestID, "")
-	if err != nil || filepath.Base(path) != "deck.pptx" {
+	if err != nil || filepath.Base(path) != "deck.pptx" || filepath.Base(filepath.Dir(path)) != "exports" {
 		t.Fatalf("owner artifact path=%q err=%v", path, err)
 	}
 	if err := os.WriteFile(filepath.Join(requestDir, "unsafe.html"), []byte(`<script>alert(1)</script>`), 0o600); err != nil {

@@ -11,6 +11,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 
 import core.deck.events as events
+from core.deck.errors import ModelOutputError
 from core.deck.pipeline.design_lock import page_contract
 from core.deck.pipeline.helpers import clamp_slide_count, component_from_layout, fallback_slide_title
 from core.deck.pipeline.llm import compose_context_prompt, invoke_json_with_retries, llm_for_node, llm_log_context, load_node_prompt
@@ -59,35 +60,31 @@ def write_and_design_slides(
     raw_slides: list[dict[str, Any]] = []
     artifacts: list[dict[str, Any]] = []
     all_issues: list[dict[str, Any]] = []
+    # Execute each page end-to-end before starting the next one.  This keeps the
+    # semantic and visual context aligned and mirrors the immutable page roster.
+    previous_slides: list[SlideSpec] = []
+    previous_visual_signatures: list[dict[str, Any]] = []
     for index, outline in enumerate(plan_slides, start=1):
         title = str(outline.get("title") or fallback_slide_title(index, state)).strip()
-        legacy_payload = legacy_slide_payload(
-            {
-                "index": index,
-                "title": title,
-                "key_message": str(outline.get("key_message") or "").strip(),
-                "component": str(outline.get("component") or ""),
-                "role": str(outline.get("role") or ""),
-            },
-            status="running",
+        writer(
+            events.slide_started(
+                f"Generating slide {index}/{total}: {title}",
+                legacy_slide_payload(
+                    {
+                        "index": index,
+                        "title": title,
+                        "key_message": str(outline.get("key_message") or "").strip(),
+                        "component": str(outline.get("component") or ""),
+                        "role": str(outline.get("role") or ""),
+                    },
+                    status="running",
+                ),
+            )
         )
-        writer(events.slide_started(f"Generating slide {index}/{total}: {title}", legacy_payload))
-
-    # Quality-first generation is intentionally sequential: each page receives
-    # the last two completed page specs, preventing repetition and narrative drift.
-    generated: list[tuple[dict[str, Any], SlideSpec, str]] = []
-    previous_slides: list[SlideSpec] = []
-    for index, outline in enumerate(plan_slides, start=1):
-        result = _generate_slide_spec(
+        raw_slide, slide, recovery_warning = _generate_slide_spec(
             state, index, outline, plan_slides, total, deck, slide_llm, request_id, previous_slides,
         )
-        generated.append(result)
-        previous_slides.append(result[1])
-
-    previous_visual_signatures: list[dict[str, Any]] = []
-    for raw_slide, slide, recovery_warning in generated:
         raw_slides.append(raw_slide)
-        source_outline = plan_slides[min(max(slide.index - 1, 0), len(plan_slides) - 1)] if plan_slides else {}
         slide = apply_design_contract(slide, state)
         if recovery_warning:
             writer(
@@ -97,108 +94,104 @@ def write_and_design_slides(
                     {"index": slide.index, "status": "warning", "warning": recovery_warning},
                 )
             )
-        slide.layout_variant = "split" if any(issue.kind == "density" for issue in validate_slide_spec(slide)) else slide.layout_variant
-        parts = [slide]
-        if any(issue.kind == "density" for issue in validate_slide_spec(slide)):
-            parts = split_slide_preserving_content(slide) or [slide]
-            if len(parts) > 1:
-                writer(events.stage_progress("designer", f"Slide {slide.index} was split into {len(parts)} pages to preserve all content.", {"status": "warning", "reason": "density_split"}))
-
-        for part in parts:
-            part.index = len(slides) + 1
-            spec_issues = validate_slide_spec(part)
-            all_issues.extend(issues_to_dicts(spec_issues))
-            slides.append(part)
-            deck.slides = slides
-            writer(
-                events.slide_spec_ready(
-                    f"Slide {part.index} spec ready: {part.title}",
-                    {"index": part.index, "title": part.title, "component": part.component, "role": part.role},
-                )
+        spec_issues = validate_slide_spec(slide)
+        all_issues.extend(issues_to_dicts(spec_issues))
+        slides.append(slide)
+        previous_slides.append(slide)
+        deck.slides = slides
+        writer(
+            events.slide_spec_ready(
+                f"Slide {slide.index} spec ready: {slide.title}",
+                {"index": slide.index, "title": slide.title, "component": slide.component, "role": slide.role},
             )
+        )
 
-            designer_started_at = time.perf_counter()
-            designer_metrics, designer_token = begin_node_metrics()
-            try:
-                with llm_log_context(
-                    request_id=request_id,
-                    stage="designer",
-                    slide_index=part.index,
-                    operation="svg_artist",
-                ):
-                    artwork = render_svg_artwork(
-                        llm=designer_llm,
-                        state=state,
-                        deck=deck,
-                        slide=part,
-                        outline=source_outline,
-                        previous_visual_signatures=previous_visual_signatures,
-                    )
-            finally:
-                end_node_metrics(designer_token)
-            previous_visual_signatures.append(artwork.visual_signature)
-            if artwork.issues:
-                all_issues.extend(issues_to_dicts(artwork.issues))
-            metadata = llm_registry.get("__metadata__") if isinstance(llm_registry.get("__metadata__"), dict) else {}
-            designer_model = metadata.get("designer") or {}
-            writer(
-                events.stage_progress(
-                    "designer",
-                    f"SVG Artist completed slide {part.index} with {artwork.render_mode}",
-                    {
-                        "index": part.index,
-                        "render_mode": artwork.render_mode,
-                        "template_id": artwork.template_id,
-                        "layout_id": artwork.layout_id,
-                        "page_rhythm": artwork.page_rhythm,
-                        "artist_repair_count": artwork.repair_count,
-                        "artist_rejected_issue_count": len(artwork.rejected_issues),
-                        "metrics": {
-                            "duration_ms": round((time.perf_counter() - designer_started_at) * 1000),
-                            "provider": designer_model.get("provider", ""),
-                            "model": designer_model.get("model", ""),
-                            **designer_metrics.snapshot(),
-                            "repair_count": artwork.repair_count,
-                            "vlm_issue_count": 0,
-                            "export_degraded": artwork.render_mode != "llm_svg",
-                        },
+        designer_started_at = time.perf_counter()
+        designer_metrics, designer_token = begin_node_metrics()
+        try:
+            with llm_log_context(
+                request_id=request_id,
+                stage="designer",
+                slide_index=slide.index,
+                operation="svg_artist",
+            ):
+                artwork = render_svg_artwork(
+                    llm=designer_llm,
+                    state=state,
+                    deck=deck,
+                    slide=slide,
+                    outline=outline,
+                    previous_visual_signatures=previous_visual_signatures,
+                )
+        finally:
+            end_node_metrics(designer_token)
+        previous_visual_signatures.append(artwork.visual_signature)
+        if artwork.issues:
+            all_issues.extend(issues_to_dicts(artwork.issues))
+        if slide.index == 1 and designer_llm is not None and artwork.render_mode != "llm_svg":
+            raise ModelOutputError(
+                "The first SVG page did not pass the design gate after bounded repair; generation stopped before repeating the defect across the deck.",
+                stage="designer",
+            )
+        metadata = llm_registry.get("__metadata__") if isinstance(llm_registry.get("__metadata__"), dict) else {}
+        designer_model = metadata.get("designer") or {}
+        writer(
+            events.stage_progress(
+                "designer",
+                f"SVG Artist completed slide {slide.index} with {artwork.render_mode}",
+                {
+                    "index": slide.index,
+                    "render_mode": artwork.render_mode,
+                    "template_id": artwork.template_id,
+                    "layout_id": artwork.layout_id,
+                    "page_rhythm": artwork.page_rhythm,
+                    "artist_repair_count": artwork.repair_count,
+                    "artist_rejected_issue_count": len(artwork.rejected_issues),
+                    "metrics": {
+                        "duration_ms": round((time.perf_counter() - designer_started_at) * 1000),
+                        "provider": designer_model.get("provider", ""),
+                        "model": designer_model.get("model", ""),
+                        **designer_metrics.snapshot(),
+                        "repair_count": artwork.repair_count,
+                        "vlm_issue_count": 0,
+                        "export_degraded": artwork.render_mode != "llm_svg",
                     },
-                )
+                },
             )
-            html = html_renderer.render(deck, part)
-            svg = artwork.svg
-            render_started_at = time.perf_counter()
-            logger.info("deck slide render start: request_id=%s index=%s", request_id, part.index)
-            artifact = browser.render_slide(request_id, part, html, theme=theme, svg=svg)
-            logger.info(
-                "deck slide render done: request_id=%s index=%s renderer=%s issues=%s elapsed=%.2fs",
-                request_id,
-                part.index,
-                artifact.renderer,
-                len(artifact.issues),
-                time.perf_counter() - render_started_at,
-            )
-            artifact_payload = {
-                "index": part.index,
-                "png": artifact.png_rel,
-                "html": artifact.html_rel,
-                "svg": artifact.svg_rel,
-                "version": artifact.version,
-                "status": "ready" if not (artifact.issues or spec_issues or artwork.issues) else "warning",
-                "renderer": artifact.renderer,
-                "svg_renderer": artwork.render_mode,
-                "template_id": artwork.template_id,
-                "layout_id": artwork.layout_id,
-                "page_rhythm": artwork.page_rhythm,
-                "artist_repair_count": artwork.repair_count,
-                "visual_signature": artwork.visual_signature,
-                "artist_rejected_issues": artwork.rejected_issues,
-            }
-            artifacts.append(artifact_payload)
-            writer(events.slide_preview(f"Slide {part.index} preview ready", artifact_payload))
-            writer(events.slide_ready(f"Slide {part.index} ready: {part.title}", legacy_slide_payload(part.to_dict(), status=artifact_payload["status"])))
-            if artifact.issues:
-                all_issues.extend(issues_to_dicts(artifact.issues))
+        )
+        html = html_renderer.render(deck, slide)
+        render_started_at = time.perf_counter()
+        logger.info("deck slide render start: request_id=%s index=%s", request_id, slide.index)
+        artifact = browser.render_slide(request_id, slide, html, theme=theme, svg=artwork.svg)
+        logger.info(
+            "deck slide render done: request_id=%s index=%s renderer=%s issues=%s elapsed=%.2fs",
+            request_id,
+            slide.index,
+            artifact.renderer,
+            len(artifact.issues),
+            time.perf_counter() - render_started_at,
+        )
+        artifact_payload = {
+            "index": slide.index,
+            "png": artifact.png_rel,
+            "html": artifact.html_rel,
+            "svg": artifact.svg_rel,
+            "version": artifact.version,
+            "status": "ready" if not (artifact.issues or spec_issues or artwork.issues) else "warning",
+            "renderer": artifact.renderer,
+            "svg_renderer": artwork.render_mode,
+            "template_id": artwork.template_id,
+            "layout_id": artwork.layout_id,
+            "page_rhythm": artwork.page_rhythm,
+            "artist_repair_count": artwork.repair_count,
+            "visual_signature": artwork.visual_signature,
+            "artist_rejected_issues": artwork.rejected_issues,
+        }
+        artifacts.append(artifact_payload)
+        writer(events.slide_preview(f"Slide {slide.index} preview ready", artifact_payload))
+        writer(events.slide_ready(f"Slide {slide.index} ready: {slide.title}", legacy_slide_payload(slide.to_dict(), status=artifact_payload["status"])))
+        if artifact.issues:
+            all_issues.extend(issues_to_dicts(artifact.issues))
 
     deck.slides = slides
     logger.info("deck slides done: request_id=%s total=%s validation_issues=%s", request_id, len(slides), len(all_issues))

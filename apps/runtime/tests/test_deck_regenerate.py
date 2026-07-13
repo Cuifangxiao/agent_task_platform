@@ -68,7 +68,7 @@ def test_regenerate_slide_uses_writer_output_without_copying_feedback(tmp_path, 
     monkeypatch.setattr(
         DeckExporter,
         "_capture_hidden_text_background",
-        staticmethod(lambda html_path, req_dir, index: (req_dir / "slides" / f"{index}.png", [])),
+        staticmethod(lambda html_path, project, index: (project.preview_png(index), [])),
     )
 
     outputs = list(
@@ -84,14 +84,14 @@ def test_regenerate_slide_uses_writer_output_without_copying_feedback(tmp_path, 
         )
     )
 
-    html = (request_dir / "slides" / "1.html").read_text(encoding="utf-8")
+    html = (request_dir / "previews" / "page-001.html").read_text(encoding="utf-8")
     spec = json.loads((request_dir / "spec.json").read_text(encoding="utf-8"))
     assert "文字太多" in fake_writer.messages[0][1][1]
     assert "文字太多" not in html
     assert spec["slides"][0]["title"] == "新版页面更聚焦"
-    assert (request_dir / "slides" / "1_v2.html").exists()
+    assert (request_dir / "previews" / "page-001_v2.html").exists()
     assert outputs[-1].event_type == "done"
-    assert (request_dir / "deck.pptx").exists()
+    assert (request_dir / "exports" / "deck.pptx").exists()
 
 
 def test_regenerate_slide_without_writer_model_returns_error(tmp_path, monkeypatch):

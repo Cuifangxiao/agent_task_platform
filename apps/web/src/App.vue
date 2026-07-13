@@ -2,6 +2,16 @@
 import { computed, onMounted, ref } from 'vue'
 
 import AppShell from '@/components/AppShell.vue'
+import {
+  previewAgentConfigs,
+  previewAgents,
+  previewConversationDetails,
+  previewConversations,
+  previewLogs,
+  previewModels,
+  previewProviders,
+} from '@/dev/previewData'
+import type { PresentationApi } from '@/features/presentations/api'
 import AgentListPage from '@/pages/AgentListPage.vue'
 import DashboardPage from '@/pages/DashboardPage.vue'
 import LoginPage from '@/pages/LoginPage.vue'
@@ -12,18 +22,45 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import type { AgentConfigPayload, ModelConfigPayload } from '@/types'
 
 const store = useWorkspaceStore()
-const activePage = ref('dashboard')
+const previewParam = new URLSearchParams(window.location.search).get('preview')
+const previewPages = new Set(['dashboard', 'models', 'agents', 'ppt', 'logs'])
+const previewPage = import.meta.env.DEV && previewParam && previewPages.has(previewParam) ? previewParam : null
+const isDesignPreview = previewPage !== null
+const activePage = ref(previewPage ?? 'dashboard')
 const saving = ref(false)
+const designPreviewPresentationApi: PresentationApi = {
+  listConversations: async () => previewConversations,
+  getConversation: async (id) => {
+    const conversation = previewConversationDetails[id]
+    if (!conversation) throw new Error('没有找到这条预览对话。')
+    return conversation
+  },
+  deleteConversation: async () => { throw new Error('设计预览中不能删除对话。') },
+  createJob: async () => { throw new Error('设计预览中不能创建真实任务。') },
+  getJob: async () => { throw new Error('设计预览中没有真实任务。') },
+  subscribeToJob: async () => {},
+  submitJobAction: async () => { throw new Error('设计预览中不能提交任务操作。') },
+  cancelJob: async () => { throw new Error('设计预览中不能取消任务。') },
+  downloadArtifact: async () => { throw new Error('设计预览中没有可下载的产物。') },
+  downloadAsset: async () => { throw new Error('设计预览中没有可下载的资源。') },
+}
 
 interface FormActionCallbacks {
   onError: (message: string) => void
   onSuccess?: (message?: string) => void
 }
 
-const userLabel = computed(() => store.me.value?.username ? `当前用户：${store.me.value.username}` : '未获取用户信息')
+const userLabel = computed(() => store.me.value?.username || (isDesignPreview ? 'Admin' : '当前用户'))
+const pageProviders = computed(() => isDesignPreview ? previewProviders : store.providers.value)
+const pageModels = computed(() => isDesignPreview ? previewModels : store.modelConfigs.value)
+const pageAgents = computed(() => isDesignPreview ? previewAgents : store.agents.value)
+const pageAgentConfigs = computed(() => isDesignPreview ? previewAgentConfigs : store.agentConfigs.value)
+const pagePptConfigs = computed(() => pageAgentConfigs.value.filter((item) => item.agent_key === 'ppt_agent' && item.status === 'active'))
+const pageConversations = computed(() => isDesignPreview ? previewConversations : store.pptConversations.value)
+const pageLogs = computed(() => isDesignPreview ? previewLogs : store.logs.value)
 
 onMounted(() => {
-  void store.boot()
+  if (!isDesignPreview) void store.boot()
 })
 
 async function login(username: string, password: string) {
@@ -143,7 +180,7 @@ function normalizeError(error: unknown) {
 
 <template>
   <LoginPage
-    v-if="!store.isAuthenticated.value"
+    v-if="!store.isAuthenticated.value && !isDesignPreview"
     :busy="store.loading.auth"
     @login="login"
     @register="register"
@@ -153,7 +190,7 @@ function normalizeError(error: unknown) {
     v-else
     :active-page="activePage"
     :user-label="userLabel"
-    :api-health="store.health.value"
+    :api-health="isDesignPreview ? 'ok' : store.health.value"
     :loading="store.loading.data"
     @navigate="activePage = $event"
     @reload="store.reload"
@@ -166,10 +203,13 @@ function normalizeError(error: unknown) {
     <KeepAlive>
       <DashboardPage
         v-if="activePage === 'dashboard'"
-        :models="store.modelConfigs.value"
-        :agents="store.agents.value"
-        :agent-configs="store.agentConfigs.value"
-        :ppt-configs="store.pptAgentConfigs.value"
+        :models="pageModels"
+        :agents="pageAgents"
+        :agent-configs="pageAgentConfigs"
+        :ppt-configs="pagePptConfigs"
+        :conversations="pageConversations"
+        :api-health="isDesignPreview ? 'ok' : store.health.value"
+        :preview="isDesignPreview"
         @navigate="activePage = $event"
       />
     </KeepAlive>
@@ -177,8 +217,8 @@ function normalizeError(error: unknown) {
     <KeepAlive>
       <ModelConfigPage
         v-if="activePage === 'models'"
-        :providers="store.providers.value"
-        :models="store.modelConfigs.value"
+        :providers="pageProviders"
+        :models="pageModels"
         :saving="saving"
         @save="saveModelConfig"
         @delete="deleteModelConfig"
@@ -189,9 +229,9 @@ function normalizeError(error: unknown) {
     <KeepAlive>
       <AgentListPage
         v-if="activePage === 'agents'"
-        :agents="store.agents.value"
-        :models="store.modelConfigs.value"
-        :agent-configs="store.agentConfigs.value"
+        :agents="pageAgents"
+        :models="pageModels"
+        :agent-configs="pageAgentConfigs"
         :saving="saving"
         @save="saveAgentConfig"
         @delete="deleteAgentConfig"
@@ -202,13 +242,13 @@ function normalizeError(error: unknown) {
     <KeepAlive>
     <PptAgentPage
       v-if="activePage === 'ppt'"
-      :configs="store.pptAgentConfigs.value"
-      :api="store.api.presentations"
+      :configs="pagePptConfigs"
+      :api="isDesignPreview ? designPreviewPresentationApi : store.api.presentations"
     />
     </KeepAlive>
 
     <KeepAlive>
-      <RequestLogsPage v-if="activePage === 'logs'" :logs="store.logs.value" />
+      <RequestLogsPage v-if="activePage === 'logs'" :logs="pageLogs" />
     </KeepAlive>
   </AppShell>
 </template>

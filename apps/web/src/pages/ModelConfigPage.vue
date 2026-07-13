@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Database, Image as ImageIcon, KeyRound, MessageSquareText, Plus, Save, ScanEye, Trash2, X } from '@lucide/vue'
+import { Database, Image as ImageIcon, KeyRound, MessageSquareText, Plus, Save, ScanEye, Search, Trash2, X } from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
 import ModelTypeBadge from '@/components/ModelTypeBadge.vue'
@@ -46,6 +46,7 @@ const formError = ref('')
 const formNotice = ref('')
 const isEditorOpen = ref(false)
 const selectedTypeFilter = ref<'all' | ModelType>('all')
+const searchQuery = ref('')
 
 const selectedProvider = computed(() => props.providers.find((item) => item.name === draft.provider) ?? null)
 const selectedModel = computed(
@@ -54,11 +55,16 @@ const selectedModel = computed(
 const dynamicParameters = computed(() =>
   (selectedModel.value?.parameters ?? []).filter((item) => !['temperature', 'max_tokens'].includes(item.name)),
 )
-const visibleModels = computed(() => (
-  selectedTypeFilter.value === 'all'
-    ? props.models
-    : props.models.filter((model) => normalizeModelType(model.model_type) === selectedTypeFilter.value)
-))
+const activeModels = computed(() => props.models.filter((item) => item.status === 'active'))
+const defaultModel = computed(() => props.models.find((item) => item.is_default) ?? null)
+const visibleModels = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  return props.models.filter((model) => {
+    const matchesType = selectedTypeFilter.value === 'all' || normalizeModelType(model.model_type) === selectedTypeFilter.value
+    const matchesQuery = !query || [model.name, model.provider, model.model_name].some((value) => value.toLowerCase().includes(query))
+    return matchesType && matchesQuery
+  })
+})
 const typeFilters = computed(() => [
   { value: 'all' as const, label: '全部', count: props.models.length },
   ...MODEL_TYPE_OPTIONS.map((option) => ({
@@ -231,16 +237,23 @@ function modelTypeIcon(modelType: ModelType) {
 </script>
 
 <template>
-  <section class="page">
-    <div class="page-head">
-      <div>
-        <h1>Model Config</h1>
-        <p>把模型凭证和调用参数保存成用户可理解的名称。</p>
+  <section class="page management-page model-config-page">
+    <header class="page-head management-head">
+      <div class="page-title-block">
+        <span class="page-eyebrow">模型与凭证</span>
+        <h2>管理模型与凭证</h2>
+        <p>集中管理 Provider、模型能力与默认调用参数，为 Agent 节点提供稳定的模型来源。</p>
       </div>
-      <button class="btn" type="button" @click="reset">
+      <button class="btn primary" type="button" @click="reset">
         <Plus :size="18" />
-        新建
+        新建模型配置
       </button>
+    </header>
+
+    <div class="page-summary" aria-label="模型配置概览">
+      <div><span>配置总数</span><strong>{{ models.length }}</strong></div>
+      <div><span>已启用</span><strong>{{ activeModels.length }}</strong></div>
+      <div class="summary-wide"><span>默认模型</span><strong>{{ defaultModel?.name || '尚未设置' }}</strong></div>
     </div>
 
     <EmptyState
@@ -248,43 +261,63 @@ function modelTypeIcon(modelType: ModelType) {
       :icon="Database"
       title="还没有模型配置"
       text="先创建一个 active Model Config，之后才能给 Agent 节点绑定模型。"
+      action="新建模型配置"
+      @action="reset"
     />
 
-    <div v-else class="model-catalog">
-      <div class="model-type-filters" role="group" aria-label="按模型类型筛选">
-        <button
-          v-for="filter in typeFilters"
-          :key="filter.value"
-          class="model-type-filter"
-          :class="{ active: selectedTypeFilter === filter.value }"
-          type="button"
-          :aria-pressed="selectedTypeFilter === filter.value"
-          @click="selectedTypeFilter = filter.value"
-        >
-          {{ filter.label }}
-          <span>{{ filter.count }}</span>
-        </button>
+    <section v-else class="content-panel catalog-panel" aria-labelledby="model-list-title">
+      <div class="content-panel-head catalog-toolbar">
+        <div>
+          <h3 id="model-list-title">全部模型</h3>
+          <p>选择一项查看凭证状态、能力类型和调用参数。</p>
+        </div>
+        <label class="search-field">
+          <Search :size="17" />
+          <input v-model="searchQuery" type="search" placeholder="搜索名称、Provider 或模型" />
+        </label>
       </div>
 
-      <div v-if="visibleModels.length" class="list-stack">
-        <button v-for="model in visibleModels" :key="model.id" class="list-item model-list-item" type="button" @click="edit(model)">
-          <div class="model-list-identity">
-            <ProviderIcon :provider="model.provider" :size="38" />
-            <div class="model-list-copy">
+      <div class="catalog-filter-row">
+        <div class="model-type-filters" role="group" aria-label="按模型类型筛选">
+          <button
+            v-for="filter in typeFilters"
+            :key="filter.value"
+            class="model-type-filter"
+            :class="{ active: selectedTypeFilter === filter.value }"
+            type="button"
+            :aria-pressed="selectedTypeFilter === filter.value"
+            @click="selectedTypeFilter = filter.value"
+          >
+            {{ filter.label }}
+            <span>{{ filter.count }}</span>
+          </button>
+        </div>
+        <span class="result-count">显示 {{ visibleModels.length }} 项</span>
+      </div>
+
+      <div v-if="visibleModels.length" class="config-list">
+        <button v-for="model in visibleModels" :key="model.id" class="config-row model-config-row" type="button" @click="edit(model)">
+          <span class="config-row-icon"><ProviderIcon :provider="model.provider" :size="42" /></span>
+          <span class="config-row-main">
+            <span class="config-row-title">
               <strong>{{ model.name }}</strong>
-              <span>{{ model.provider }} / {{ model.model_name }}</span>
-            </div>
-          </div>
-          <div class="row-actions">
+              <StatusBadge v-if="model.is_default" tone="blue" label="默认" />
+            </span>
+            <span>{{ model.provider }} · {{ model.model_name }}</span>
+          </span>
+          <span class="config-row-detail">
+            <small>调用参数</small>
+            <strong>T {{ model.temperature }} · {{ model.max_tokens.toLocaleString() }} tokens</strong>
+          </span>
+          <span class="config-row-badges">
             <ModelTypeBadge :model-type="model.model_type" />
-            <StatusBadge v-if="model.is_default" tone="blue" label="默认" />
-            <StatusBadge :tone="model.status === 'active' ? 'green' : 'gray'" :label="model.status" />
-          </div>
+            <StatusBadge :tone="model.status === 'active' ? 'green' : 'gray'" :label="model.status === 'active' ? '已启用' : '已停用'" />
+          </span>
         </button>
       </div>
 
-      <div v-else class="model-filter-empty">该分类下暂无模型配置。</div>
-    </div>
+      <div v-else class="model-filter-empty">没有匹配当前筛选条件的模型配置。</div>
+    </section>
 
     <Teleport to="body">
       <div v-if="isEditorOpen" class="modal-backdrop" @click.self="closeEditor">
@@ -421,7 +454,7 @@ function modelTypeIcon(modelType: ModelType) {
             </button>
             <button class="btn primary" type="submit" :disabled="saving">
               <Save :size="18" />
-              保存 Model Config
+              保存模型配置
             </button>
           </div>
         </form>

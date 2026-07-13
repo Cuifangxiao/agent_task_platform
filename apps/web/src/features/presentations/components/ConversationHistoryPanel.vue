@@ -25,9 +25,9 @@ defineEmits<{
   <aside class="history-panel">
     <div class="history-panel-head">
       <div class="history-panel-copy">
-        <span class="history-panel-kicker">History</span>
-        <strong>历史记录</strong>
-        <p>后端已保存你的 PPT 聊天记录。</p>
+        <span class="history-panel-kicker">任务记录</span>
+        <strong>历史对话</strong>
+        <p>继续之前的任务，或创建一条新需求。</p>
       </div>
       <button class="btn primary soft" type="button" :disabled="disabled" @click="$emit('newConversation')">
         <MessageSquarePlus :size="16" />

@@ -11,7 +11,7 @@ from typing import Any
 from core.deck.contract import GenerateDeckOutput, ResumeDeckInput
 from core.deck.export import DeckExporter
 from core.deck.model_config import build_deck_llms
-from core.deck.paths import artifact_dir
+from core.deck.paths import DeckProjectPaths, artifact_dir
 from core.deck.pipeline.llm import invoke_json_with_retries, llm_for_node, load_node_prompt, normalize_llm_registry
 from core.deck.pipeline.review import validate_fact_sources
 from core.deck.pipeline.slides import apply_design_contract
@@ -50,8 +50,9 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
         return
 
     output_root = artifact_dir()
-    request_dir = output_root / request_id
-    spec_path = request_dir / "spec.json"
+    project = DeckProjectPaths.for_request(output_root, request_id).ensure()
+    request_dir = project.root
+    spec_path = project.deck_spec
     if not spec_path.exists():
         raise ValueError("deck spec artifact is missing; regenerate_slide requires an exported deck")
     deck = DeckSpec.from_dict(json.loads(spec_path.read_text(encoding="utf-8")))
@@ -59,6 +60,7 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
     if slide is None:
         raise ValueError(f"slide {index} not found in deck spec")
     design_state = _load_design_state(request_dir)
+    design_state["project_dir"] = str(project.root)
 
     browser_session = BrowserSession()
     try:
@@ -103,15 +105,19 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
         deck.slides = [rewritten if item.index == index else item for item in deck.slides]
         slide = rewritten
         spec_issues = validate_slide_spec(slide)
-        fact_ledger_path = request_dir / "fact-ledger.json"
+        fact_ledger_path = project.sources / "fact-ledger.json"
+        if not fact_ledger_path.exists():
+            fact_ledger_path = request_dir / "fact-ledger.json"
         if fact_ledger_path.exists():
             try:
                 facts = json.loads(fact_ledger_path.read_text(encoding="utf-8"))
                 spec_issues.extend(validate_fact_sources(DeckSpec(title=deck.title, narrative=deck.narrative, audience=deck.audience, goal=deck.goal, language=deck.language, theme=deck.theme, slides=[slide]), {"facts": facts}))
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
-        previous_signatures = _previous_visual_signatures(request_dir, index)
-        existing_svg_path = request_dir / "slides" / f"{index}.svg"
+        previous_signatures = _previous_visual_signatures(project, index)
+        existing_svg_path = project.svg(index)
+        if not existing_svg_path.exists():
+            existing_svg_path = request_dir / "slides" / f"{index}.svg"
         existing_svg = existing_svg_path.read_text(encoding="utf-8") if existing_svg_path.is_file() else ""
         artwork = render_svg_artwork(
             llm=llm_registry.get("designer"),
@@ -135,11 +141,11 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
             request_id,
             slide,
             html_renderer.render(deck, slide),
-            version=next_slide_version(request_dir, index),
+            version=next_slide_version(project, index),
             theme=deck.theme,
             svg=artwork.svg,
         )
-        (request_dir / f"spec.raw.slide-{index}.v{artifact.version}.json").write_text(
+        (project.sources / f"spec.raw.slide-{index}.v{artifact.version}.json").write_text(
             json.dumps(raw_slide, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -169,12 +175,12 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
             sequence=2,
         )
         result = exporter.export(request_id, deck)
-        (request_dir / "spec.final.json").write_text(json.dumps(deck.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        (project.sources / "spec.final.json").write_text(json.dumps(deck.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         issue_dicts = issues_to_dicts(spec_issues + artifact.issues)
         must_fix = any(issue.get("severity") == "must_fix" for issue in issue_dicts)
         quality_status = "needs_review" if must_fix else ("success_with_warnings" if result.warnings or issue_dicts else "success")
         _update_regeneration_manifest(
-            request_dir,
+            project,
             slide=slide,
             artwork=artwork,
             artifact=artifact,
@@ -193,13 +199,13 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
                     "request_id": request_id,
                     "filename": result.path.name,
                     "path": str(result.path),
-                    "relative_path": "deck.pptx",
+                    "relative_path": project.relative(result.path),
                     "warnings": result.warnings,
                     "issues": issue_dicts,
                     "needs_review": must_fix,
                     "quality_status": quality_status,
                     "degraded": bool(result.manifest.get("degraded")),
-                    "export_manifest": "export-manifest.json",
+                    "export_manifest": project.relative(project.export_manifest),
                 },
                 ensure_ascii=False,
             ),
@@ -217,10 +223,9 @@ def regenerate_slide_from_artifacts(request_id: str, inp: ResumeDeckInput) -> It
         browser_session.close()
 
 
-def next_slide_version(request_dir: Path, index: int) -> int:
-    slides_dir = request_dir / "slides"
+def next_slide_version(project: DeckProjectPaths, index: int) -> int:
     version = 1
-    for path in slides_dir.glob(f"{index}_v*.html"):
+    for path in project.previews.glob(f"page-{index:03d}_v*.html"):
         match = re.search(r"_v(\d+)\.html$", path.name)
         if match:
             version = max(version, int(match.group(1)) + 1)
@@ -332,10 +337,10 @@ def _page_blueprint(state: dict[str, Any], index: int) -> dict[str, Any]:
     return {}
 
 
-def _previous_visual_signatures(request_dir: Path, index: int) -> list[dict[str, Any]]:
+def _previous_visual_signatures(project: DeckProjectPaths, index: int) -> list[dict[str, Any]]:
     signatures: list[dict[str, Any]] = []
     for page in range(max(1, index - 2), index):
-        path = request_dir / "slides" / f"{page}.svg"
+        path = project.svg(page)
         try:
             svg = path.read_text(encoding="utf-8")
         except OSError:
@@ -345,7 +350,7 @@ def _previous_visual_signatures(request_dir: Path, index: int) -> list[dict[str,
 
 
 def _update_regeneration_manifest(
-    request_dir: Path,
+    project: DeckProjectPaths,
     *,
     slide: SlideSpec,
     artwork: Any,
@@ -354,7 +359,7 @@ def _update_regeneration_manifest(
     issues: list[dict[str, Any]],
     quality_status: str,
 ) -> None:
-    path = request_dir / "generation-manifest.json"
+    path = project.generation_manifest
     try:
         manifest = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     except (OSError, json.JSONDecodeError):

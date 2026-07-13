@@ -126,16 +126,21 @@ def normalize_brief(raw: dict[str, Any], *, fallback: dict[str, Any]) -> dict[st
 
 
 def _extract_fact_sentences(text: str) -> list[str]:
-    cleaned = re.sub(r"\s+", " ", text or "").strip()
-    if not cleaned:
+    normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
         return []
-    parts = re.split(r"(?<=[。！？!?；;])\s*|\n+", cleaned)
+    parts: list[str] = []
+    for line in normalized.splitlines():
+        cleaned_line = re.sub(r"^\s*(?:[-*+]\s+|#{1,6}\s+|\d+[.)、]\s+)", "", line).strip()
+        if not cleaned_line:
+            continue
+        parts.extend(re.split(r"(?<=[。！？!?；;])\s*", cleaned_line))
     facts: list[str] = []
     for part in parts:
-        item = part.strip(" -#\t")
+        item = re.sub(r"\s+", " ", part).strip(" -#\t")
         if len(item) < 8:
             continue
-        if any(char.isdigit() for char in item) or len(item) <= 120:
+        if item not in facts and (any(char.isdigit() for char in item) or len(item) <= 120):
             facts.append(item)
     return facts
 

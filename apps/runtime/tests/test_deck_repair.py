@@ -66,7 +66,7 @@ def test_repair_loop_validates_repairs_and_terminates(monkeypatch):
 
     assert state["repair_round"] == 1
     assert [issue["kind"] for issue in state["validation_issues"]] == ["svg_artist_fallback"]
-    assert state["validation_issues"][0]["severity"] == "nice_to_have"
+    assert state["validation_issues"][0]["severity"] == "must_fix"
     assert fake_browser.rendered_slide is not None
     final_slide = DeckSpec.from_dict(state["deck_spec"]).slides[0]
     assert final_slide.content["body"] == body

@@ -7,6 +7,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
@@ -118,6 +119,7 @@ def render_svg_artwork(
                         normalized,
                         slide=slide,
                         theme=deck.theme,
+                        blueprint=blueprint,
                         previous_visual_signatures=signatures,
                     )
                     if not candidate_issues:
@@ -230,7 +232,9 @@ def build_svg_artist_prompt(
     template_id = resolve_template_id(state, blueprint)
     pack = get_template_pack(template_id)
     layout_id = str(blueprint.get("layout_id") or blueprint.get("layout") or "").strip()
-    structure = _blueprint_template_svg(blueprint) or template_svg_source(pack.template_id, layout_id)
+    structure = _structure_only_svg(
+        _blueprint_template_svg(blueprint) or template_svg_source(pack.template_id, layout_id)
+    )
     visualization = blueprint.get("visualization")
     visualization_id = str(visualization.get("type") or "") if isinstance(visualization, dict) else ""
     visualization_intent = (
@@ -258,6 +262,8 @@ def build_svg_artist_prompt(
     )
     execution_lock = _execution_lock(state, deck.theme)
     design_spec = state.get("design_spec") or state.get("design_contract") or {}
+    art_direction = design_spec.get("art_direction") if isinstance(design_spec, dict) else {}
+    page_lock = _page_execution_lock(execution_lock, slide.index)
     asset_manifest = state.get("asset_manifest") or []
     context = {
         "task": "Author exactly one complete, editable, PowerPoint-safe SVG page.",
@@ -269,9 +275,18 @@ def build_svg_artist_prompt(
             "goal": deck.goal,
             "language": deck.language,
         },
-        "execution_lock": execution_lock,
-        "design_spec": _bounded_context(design_spec),
-        "selected_template_pack": pack.to_dict(),
+        "execution_lock": page_lock,
+        "design_summary": {
+            "communication_mode": art_direction.get("communication_mode") if isinstance(art_direction, dict) else "",
+            "visual_style": art_direction.get("visual_style") if isinstance(art_direction, dict) else "",
+            "design_narrative": art_direction.get("design_narrative") if isinstance(art_direction, dict) else {},
+        },
+        "selected_template": {
+            "template_id": pack.template_id,
+            "template_mode": pack.template_mode,
+            "summary": pack.summary,
+            "layout_principles": pack.layout_principles,
+        },
         "page_blueprint": blueprint,
         "semantic_slide_spec": slide.to_dict(),
         "outline_context": outline,
@@ -394,6 +409,7 @@ def validate_artist_svg(
     *,
     slide: SlideSpec,
     theme: ThemeTokens,
+    blueprint: dict[str, Any] | None = None,
     previous_visual_signatures: list[dict[str, Any]] | None = None,
 ) -> list[ValidationIssue]:
     """Apply the native SVG gate plus content and art-direction invariants."""
@@ -415,6 +431,7 @@ def validate_artist_svg(
             )
         )
     issues.extend(_content_preservation_issues(root, slide))
+    issues.extend(_blueprint_geometry_issues(root, slide.index, blueprint or {}))
     signature = visual_signature(svg, component=slide.component)
     previous = [item for item in list(previous_visual_signatures or [])[-2:] if isinstance(item, dict)]
     if previous and signature.get("geometry_fingerprint") and signature.get("geometry_fingerprint") == previous[-1].get("geometry_fingerprint"):
@@ -481,7 +498,7 @@ def _fallback_artwork(
     fallback_issues.append(
         ValidationIssue(
             page=slide.index,
-            severity="nice_to_have",
+            severity="must_fix",
             kind="svg_artist_fallback",
             description=reason,
             suggestion="Configure a capable Designer model or inspect the rejected SVG quality issues.",
@@ -661,16 +678,68 @@ def _content_preservation_issues(root: ET.Element, slide: SlideSpec) -> list[Val
     return issues
 
 
+def _blueprint_geometry_issues(root: ET.Element, page: int, blueprint: dict[str, Any]) -> list[ValidationIssue]:
+    """Require the authored page to use most of the locked layout zones."""
+
+    geometry = blueprint.get("geometry") if isinstance(blueprint.get("geometry"), dict) else {}
+    zones = {
+        str(name): box
+        for name, raw in geometry.items()
+        if (box := _numeric_box(raw)) is not None
+    }
+    if not zones:
+        return []
+    authored = [
+        box
+        for element in root.iter()
+        if _local_name(element.tag) not in {"svg", "g", "tspan"}
+        and (box := _element_box(element)) is not None
+        and not (box[2] >= CANVAS_WIDTH * 0.9 and box[3] >= CANVAS_HEIGHT * 0.9)
+    ]
+    covered = [name for name, zone in zones.items() if any(_boxes_touch(zone, box) for box in authored)]
+    required = max(1, (len(zones) + 1) // 2)
+    if len(covered) >= required:
+        return []
+    missing = [name for name in zones if name not in covered]
+    return [
+        ValidationIssue(
+            page=page,
+            severity="must_fix",
+            kind="svg_blueprint_geometry",
+            description=f"The page uses only {len(covered)}/{len(zones)} locked layout zones; missing: {', '.join(missing[:4])}.",
+            suggestion="Recompose the page around the named geometry in the active page blueprint.",
+        )
+    ]
+
+
 def _execution_lock(state: dict[str, Any], theme: ThemeTokens) -> dict[str, Any]:
+    project_dir = str(state.get("project_dir") or "").strip()
+    if project_dir:
+        path = Path(project_dir) / "spec-lock.json"
+        try:
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            persisted = None
+        if isinstance(persisted, dict):
+            return persisted
     source = state.get("execution_lock") or state.get("design_contract") or {}
     if isinstance(source, dict) and source:
-        return _bounded_context(source)
+        return source
     return {
         "canvas": {"width": CANVAS_WIDTH, "height": CANVAS_HEIGHT},
         "theme": theme.to_dict(),
         "svg_profile": "native editable shapes",
         "min_body_font_px": max(16, int(theme.type_scale.get("body") or 18)),
     }
+
+
+def _page_execution_lock(lock: dict[str, Any], page: int) -> dict[str, Any]:
+    """Keep immutable deck tokens plus exactly one page lock in the page prompt."""
+
+    result = {key: value for key, value in lock.items() if key not in {"page_locks", "pages"}}
+    page_lock = _page_from_collection(lock.get("page_locks") or lock.get("pages"), page)
+    result["page_lock"] = page_lock or {"index": page}
+    return result
 
 
 def _approved_assets(value: Any, *, allowed_ids: Any = None) -> list[dict[str, Any]]:
@@ -692,6 +761,68 @@ def _blueprint_template_svg(blueprint: dict[str, Any]) -> str:
         if "<svg" in value and "</svg>" in value:
             return _extract_svg(value)
     return ""
+
+
+def _structure_only_svg(svg: str) -> str:
+    """Remove guide copy so the model sees geometry without placeholder text."""
+
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return svg
+    for parent in root.iter():
+        for child in list(parent):
+            if _local_name(child.tag) == "text":
+                parent.remove(child)
+    return ET.tostring(root, encoding="unicode", short_empty_elements=True)
+
+
+def _numeric_box(raw: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        x, y, width, height = (float(value) for value in raw)
+    except (TypeError, ValueError):
+        return None
+    return (x, y, width, height) if width >= 0 and height >= 0 else None
+
+
+def _element_box(element: ET.Element) -> tuple[float, float, float, float] | None:
+    tag = _local_name(element.tag)
+    if tag in {"rect", "image"}:
+        return _numeric_box([element.get("x"), element.get("y"), element.get("width"), element.get("height")])
+    if tag == "text":
+        return _numeric_box(str(element.get("data-box") or "").split(","))
+    try:
+        if tag == "circle":
+            cx, cy, radius = (float(element.get(name) or 0) for name in ("cx", "cy", "r"))
+            return cx - radius, cy - radius, radius * 2, radius * 2
+        if tag == "ellipse":
+            cx, cy, rx, ry = (float(element.get(name) or 0) for name in ("cx", "cy", "rx", "ry"))
+            return cx - rx, cy - ry, rx * 2, ry * 2
+        if tag == "line":
+            x1, y1, x2, y2 = (float(element.get(name) or 0) for name in ("x1", "y1", "x2", "y2"))
+            return min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)
+        if tag in {"polygon", "polyline"}:
+            numbers = [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", str(element.get("points") or ""))]
+            xs, ys = numbers[0::2], numbers[1::2]
+            if xs and ys:
+                return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _boxes_touch(zone: tuple[float, float, float, float], box: tuple[float, float, float, float]) -> bool:
+    zx, zy, zw, zh = zone
+    bx, by, bw, bh = box
+    pad = 18.0
+    return not (
+        bx + bw < zx - pad
+        or zx + zw < bx - pad
+        or by + bh < zy - pad
+        or zy + zh < by - pad
+    )
 
 
 def _page_from_collection(collection: Any, page_index: int) -> dict[str, Any]:
@@ -773,16 +904,6 @@ def _geometry_token(element: ET.Element, tag: str) -> str:
             except ValueError:
                 values.append("")
     return f"{tag}:{','.join(values)}"
-
-
-def _bounded_context(value: Any, *, max_chars: int = 24_000) -> Any:
-    try:
-        encoded = json.dumps(value, ensure_ascii=False)
-    except (TypeError, ValueError):
-        return str(value)[:max_chars]
-    if len(encoded) <= max_chars:
-        return value
-    return encoded[:max_chars] + "…"
 
 
 def _generation_issue(page: int, description: str) -> ValidationIssue:

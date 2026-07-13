@@ -7,6 +7,7 @@ from typing import Any, TypedDict
 
 class DeckGraphState(TypedDict, total=False):
     request_id: str
+    project_dir: str
     deck_title: str
     user_description: str
     uploaded_file_name: str
@@ -38,6 +39,7 @@ class DeckGraphState(TypedDict, total=False):
     repair_round: int
     vlm_reviewed: bool
     coherence_reviewed: bool
+    coherence_round: int
     artifact_path: str
     generation_manifest: dict[str, Any]
     quality_status: str

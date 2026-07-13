@@ -15,7 +15,7 @@ defineEmits<{ close: [] }>()
           <span>{{ preview.subtitle }}</span>
           <strong>{{ preview.title }}</strong>
         </div>
-        <button class="icon-button" type="button" aria-label="Close preview" @click="$emit('close')">
+        <button class="icon-button" type="button" aria-label="关闭预览" @click="$emit('close')">
           <X :size="18" />
         </button>
       </div>

@@ -52,9 +52,12 @@ func (s *Service) ArtifactAssetPath(requestID string, relativePath string) (stri
 	var path string
 	relativePath = strings.TrimPrefix(strings.TrimSpace(relativePath), "/")
 	if relativePath == "" {
-		path = filepath.Join(cleanDir, requestID, "deck.pptx")
+		path = filepath.Join(cleanDir, requestID, "exports", "deck.pptx")
 		if _, err := os.Stat(path); err != nil && os.IsNotExist(err) {
-			path = filepath.Join(cleanDir, requestID+".pptx")
+			path = filepath.Join(cleanDir, requestID, "deck.pptx")
+			if _, legacyErr := os.Stat(path); legacyErr != nil && os.IsNotExist(legacyErr) {
+				path = filepath.Join(cleanDir, requestID+".pptx")
+			}
 		}
 	} else {
 		relClean := filepath.Clean(relativePath)
