@@ -18,6 +18,23 @@ const selectModelConfigColumns = `
 	FROM model_configs
 `
 
+const updateModelConfigQuery = `
+	UPDATE model_configs
+	SET
+		name = ?,
+		provider = ?,
+		model_name = ?,
+		model_type = ?,
+		base_url = ?,
+		api_key = ?,
+		provider_options = ?,
+		temperature = ?,
+		max_tokens = ?,
+		is_default = ?,
+		status = ?
+	WHERE user_id = ? AND id = ?
+`
+
 type Repository interface {
 	Create(ctx context.Context, config ModelConfig) (*ModelConfig, error)
 	ListByUserID(ctx context.Context, userID int64) ([]*ModelConfig, error)
@@ -164,24 +181,9 @@ func (r *MySQLRepository) Update(ctx context.Context, config ModelConfig) (*Mode
 		}
 	}
 
-	result, err := tx.ExecContext(
+	_, err = tx.ExecContext(
 		ctx,
-		`
-			UPDATE model_configs
-			SET
-				name = ?,
-				provider = ?,
-				model_name = ?,
-				model_type = ?,
-				base_url = ?,
-				api_key = ?,
-				provider_options = ?,
-				temperature = ?,
-				max_tokens = ?,
-				is_default = ?,
-				status = ?
-			WHERE user_id = ? AND id = ?
-		`,
+		updateModelConfigQuery,
 		config.Name,
 		config.Provider,
 		config.ModelName,
@@ -200,14 +202,9 @@ func (r *MySQLRepository) Update(ctx context.Context, config ModelConfig) (*Mode
 		return nil, mapWriteError("update model config", err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return nil, fmt.Errorf("read updated rows: %w", err)
-	}
-	if rowsAffected == 0 {
-		return nil, ErrNotFound
-	}
-
+	// MySQL reports zero affected rows when an UPDATE matches an existing row
+	// but does not change any values. Re-read the row to distinguish that valid
+	// no-op update from a genuinely missing model config.
 	updated, err := getByIDTx(ctx, tx, config.UserID, config.ID)
 	if err != nil {
 		return nil, err
