@@ -94,16 +94,19 @@ test('strategist style directions retain template status and all execution confi
       template_id: 'consulting_signal',
       template_mode: 'layout_pack',
       template_summary: '高密度决策型版式模板',
+      template_source: { kind: 'ppt-master', commit: 'db274e' },
       rationale: '突出结论、证据与行动项。',
       confirmations,
       layout_principles: ['一页一结论', '数据优先', '避免重复卡片'],
       image_strategy: '优先使用图表和结构图，不虚构照片。',
       tokens_summary: '#F8FAFC / #0F766E / Aptos',
+      preview_note: '模板封面示意；确认后再适配内容。',
     },
   ])
 
   assert.equal(option?.templateId, 'consulting_signal')
   assert.equal(option?.templateMode, 'layout_pack')
+  assert.equal(option?.templateSource, 'ppt-master')
   assert.equal(option?.communicationMode, '咨询汇报')
   assert.equal(option?.visualStyle, '信息可视化')
   assert.equal(option?.rationale, '突出结论、证据与行动项。')
@@ -111,6 +114,7 @@ test('strategist style directions retain template status and all execution confi
   assert.equal(Object.keys(option?.confirmations ?? {}).length, 8)
   assert.deepEqual(option?.layoutPrinciples, ['一页一结论', '数据优先', '避免重复卡片'])
   assert.equal(option?.imageStrategy, '优先使用图表和结构图，不虚构照片。')
+  assert.equal(option?.previewNote, '模板封面示意；确认后再适配内容。')
 })
 
 test('style checkpoint extraction supports the public snake-case event contract', () => {

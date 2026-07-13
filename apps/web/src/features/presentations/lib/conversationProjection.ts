@@ -185,6 +185,9 @@ export function normalizeStyleOptions(value: unknown): StyleOption[] {
       if (!styleId) {
         return null
       }
+      const sourceRecord = record.template_source && typeof record.template_source === 'object' && !Array.isArray(record.template_source)
+        ? (record.template_source as Record<string, unknown>)
+        : null
       return {
         styleId,
         name: String(record.name ?? styleId),
@@ -193,6 +196,7 @@ export function normalizeStyleOptions(value: unknown): StyleOption[] {
         templateId: String(record.template_id ?? record.templateId ?? ''),
         templateMode: String(record.template_mode ?? record.templateMode ?? ''),
         templateSummary: String(record.template_summary ?? record.templateSummary ?? ''),
+        templateSource: String(sourceRecord?.kind ?? record.templateSource ?? ''),
         rationale: String(record.rationale ?? ''),
         confirmations: normalizeStringRecord(record.confirmations),
         layoutPrinciples: normalizeStringList(record.layout_principles ?? record.layoutPrinciples),
@@ -201,6 +205,7 @@ export function normalizeStyleOptions(value: unknown): StyleOption[] {
         coverHtml: String(record.cover_html ?? record.coverHtml ?? ''),
         thumbB64: String(record.thumb_b64 ?? record.thumbB64 ?? ''),
         tokensSummary: String(record.tokens_summary ?? record.tokensSummary ?? ''),
+        previewNote: String(record.preview_note ?? record.previewNote ?? ''),
       }
     })
     .filter((item): item is StyleOption => Boolean(item))

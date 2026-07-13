@@ -530,13 +530,12 @@ func (h *Handler) DownloadArtifact(c *gin.Context) {
 		h.respondError(c, err)
 		return
 	}
-	h.service.RecordArtifactDownload(context.Background(), claims.UserID, c.Param("request_id"))
-
-	if assetPath == "" || strings.HasSuffix(strings.ToLower(path), ".pptx") {
+	lowerPath := strings.ToLower(path)
+	if assetPath == "" || strings.HasSuffix(lowerPath, ".pptx") {
+		h.service.RecordArtifactDownload(context.Background(), claims.UserID, c.Param("request_id"))
 		c.FileAttachment(path, "deck-"+c.Param("request_id")+".pptx")
 		return
 	}
-	lowerPath := strings.ToLower(path)
 	if strings.HasSuffix(lowerPath, ".html") || strings.HasSuffix(lowerPath, ".svg") {
 		c.Header("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; sandbox")
 		c.Header("X-Content-Type-Options", "nosniff")

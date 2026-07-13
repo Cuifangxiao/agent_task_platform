@@ -404,6 +404,7 @@ def _build_template_manifest(pack: TemplatePack, *, selection_source: str) -> di
         "structural_pack_used": True,
         "selection_source": selection_source,
         "catalog_source": "design_system/template_packs.json",
+        "source": dict(pack.source),
         "summary": pack.summary,
         "available_layout_ids": [str(item.get("layout_id") or "") for item in pack.layouts],
     }
@@ -535,6 +536,7 @@ def _template_provenance(
         "layout_id": layout_id,
         "selection_source": selection_source,
         "catalog_source": "design_system/template_packs.json",
+        "source": dict(pack.source),
         "geometry_source": f"template_packs[{pack.template_id}].layouts[{layout_id}].geometry",
         "theme_source": "approved art-direction tokens" if theme_source == "approved_theme_tokens" else f"template_packs[{pack.template_id}].theme",
         "svg_generator": "core.deck.design.sources.render_template_reference_svg",

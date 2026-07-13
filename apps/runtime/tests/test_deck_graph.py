@@ -119,12 +119,14 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     assert style_interrupts
     style_payload = style_interrupts[0].value
     assert style_payload["stage"] == "style_review"
-    assert len(style_payload["style_options"]) == 3
+    assert len(style_payload["style_options"]) == 6
     assert all(option.get("template_id") for option in style_payload["style_options"])
     assert all(option.get("confirmations") for option in style_payload["style_options"])
+    assert all(option.get("sample_render_mode") == "static_template_cover" for option in style_payload["style_options"])
+    assert all(option.get("cover_png") and not option.get("cover_html") for option in style_payload["style_options"])
 
     for part in graph.stream(
-        Command(resume={"action": "choose_style", "style_id": "style_1"}),
+        Command(resume={"action": "choose_style", "style_id": style_payload["style_options"][0]["style_id"]}),
         config=config,
         stream_mode=["custom", "updates"],
     ):

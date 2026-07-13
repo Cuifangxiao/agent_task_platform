@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#F5F1E8"/>
+  <rect x="1192" width="88" height="720" fill="#0E7490"/>
+  <polygon points="1040,0 1192,0 1192,152" fill="#E85D3F"/>
+  <line x1="72" y1="130" x2="1040" y2="130" stroke="#D8D2C7" stroke-width="3"/>
+  <text x="74" y="86" fill="#0E7490" font-family="Arial" font-size="18" font-weight="700" letter-spacing="4">EDITORIAL SYSTEM</text>
+  <text x="72" y="270" fill="#172033" font-family="Arial" font-size="84" font-weight="700">Editorial</text>
+  <text x="72" y="360" fill="#172033" font-family="Arial" font-size="84" font-weight="700">Freeform</text>
+  <text x="76" y="425" fill="#667085" font-family="Arial" font-size="25">Asymmetric composition · generous whitespace</text>
+  <rect x="72" y="540" width="540" height="6" fill="#0E7490"/>
+  <rect x="632" y="540" width="110" height="6" fill="#E85D3F"/>
+  <text x="74" y="600" fill="#667085" font-family="Arial" font-size="18">TEMPLATE PREVIEW</text>
+</svg>
+

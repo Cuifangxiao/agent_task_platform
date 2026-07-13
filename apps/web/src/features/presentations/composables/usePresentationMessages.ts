@@ -397,7 +397,7 @@ export function usePresentationMessages(scrollToBottom: (smooth?: boolean) => Pr
       role: 'assistant',
       kind: 'style',
       title: '选择 PPT 风格',
-      text: '我准备了两套视觉方向，选择后继续生成页面。',
+      text: '我准备了候选模板封面，选择后继续生成页面。',
       requestId,
       options,
       awaitingConfirm,

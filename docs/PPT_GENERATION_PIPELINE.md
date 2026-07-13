@@ -10,6 +10,7 @@
 4. **SVG 是唯一作者源**：PowerPoint、PNG 和 HTML 都是派生物；修复与单页重做只更新 `svg_output/` 的当前版本。
 5. **质量问题不静默降级**：固定组件兜底会明确产生 must-fix/`needs_review`；配置了 Designer 时，第 1 页多轮失败会立即停止整套生成。
 6. **模板默认不锁死内容**：未显式指定模板时，默认使用自由设计结构；模板包作为用户可选方向，而不是通过关键词偷偷套用。
+7. **主题选择不做实时绘制**：目录阶段只读取预生成的静态封面；Designer 与 Chromium 都从模板确认后的逐页执行阶段才开始工作。
 
 ## 主流程
 
@@ -18,7 +19,7 @@
   → Source Intake：归一化文本、来源分块、图片入池、事实账本
   → Strategist：brief + 叙事大纲
   → 用户确认大纲
-  → Art Direction：视觉方向 + 八项确认
+  → Template Curator：从 11 套目录中筛选 6 套静态封面 + 八项确认
   → 用户选择方向
   → Design Lock：design-spec + spec-lock + page-blueprints + manifests
   → Page Executor（严格逐页）
@@ -39,9 +40,9 @@
 ├── sources/                 # 归一化内容、source chunks、fact ledger、raw/final spec
 ├── analysis/                # 预留的机器分析事实，不存设计决策
 ├── images/                  # 经清洗的运行时图片池
-├── templates/               # 锁定页面使用的结构 SVG
+├── templates/               # 锁定页面使用的结构 SVG，以及 request-local 静态目录封面
 ├── svg_output/              # 唯一作者源：page-001.svg、历史版本
-├── previews/                # HTML/PNG 派生预览与 style samples
+├── previews/                # 正式页面的 HTML/PNG 派生预览
 ├── notes/total.md           # 汇总讲稿；PPTX 同时内嵌逐页备注
 ├── reports/                 # quality / generation / export manifest、VLM contact sheet
 ├── exports/deck.pptx        # 默认下载的原生可编辑 PPTX
@@ -76,5 +77,7 @@
 ## 当前边界
 
 - 已实现自带图片入池和轮换分配，尚未自动接入网络搜图/AI 生图及许可署名工作流。
-- 模板包仍是有限的内置结构库，后续应扩展为经过人工 QA 的真实 layout/chart/icon SVG 资产。
+- 当前模板目录共 11 套，其中 7 套通用 Layout 来自 PPT Master 固定版本并保留 MIT 许可；品牌、企业 Logo 和专有字体模板未导入。
+- PPT Master 原始模板包含渐变、filter、path 等当前原生导出不允许的能力，因此静态封面保留原貌，正式执行则使用转换后的 theme、geometry 与受限 SVG motif，不能把原始 SVG 直接复制到 `svg_output/`。
+- 后续仍需扩展经过人工 QA 的 chart/icon/illustration 资产，并为模板目录增加完整浏览、分类和搜索界面。
 - 现有自动测试验证契约、路径、安全、原生可编辑结构和流程闭环；真实审美仍应使用固定 golden brief、真实模型录制响应和 Office/LibreOffice 渲染回归。

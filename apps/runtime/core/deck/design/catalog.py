@@ -11,7 +11,9 @@ from typing import Any
 from core.deck.spec import ThemeTokens, default_theme
 
 
-CATALOG_PATH = Path(__file__).resolve().parent.parent / "design_system" / "template_packs.json"
+DESIGN_SYSTEM_ROOT = Path(__file__).resolve().parent.parent / "design_system"
+CATALOG_PATH = DESIGN_SYSTEM_ROOT / "template_packs.json"
+TEMPLATE_PREVIEW_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,9 @@ class TemplatePack:
     template_mode: str
     summary: str
     visual_style: str
+    cover_preview: str
+    keywords: list[str]
+    source: dict[str, Any]
     theme: ThemeTokens
     layout_principles: list[str]
     layouts: list[dict[str, Any]]
@@ -36,6 +41,9 @@ class TemplatePack:
             "template_mode": self.template_mode,
             "summary": self.summary,
             "visual_style": self.visual_style,
+            "cover_preview": self.cover_preview,
+            "keywords": list(self.keywords),
+            "source": dict(self.source),
             "theme": self.theme.to_dict(),
             "layout_principles": list(self.layout_principles),
             "layouts": [dict(item) for item in self.layouts],
@@ -65,6 +73,9 @@ def list_template_packs() -> tuple[TemplatePack, ...]:
                 template_mode=str(item.get("template_mode") or "free_design").strip(),
                 summary=str(item.get("summary") or "").strip(),
                 visual_style=str(item.get("visual_style") or "").strip(),
+                cover_preview=str(item.get("cover_preview") or f"template_previews/{template_id}.png").strip(),
+                keywords=[str(value).strip() for value in item.get("keywords") or [] if str(value).strip()],
+                source=dict(item.get("source") or {"kind": "native"}),
                 theme=ThemeTokens.from_dict(item.get("theme") or {}),
                 layout_principles=[str(value).strip() for value in item.get("layout_principles") or [] if str(value).strip()],
                 layouts=[dict(value) for value in item.get("layouts") or [] if isinstance(value, dict)],
@@ -89,9 +100,28 @@ def public_template_catalog() -> list[dict[str, Any]]:
             "template_mode": pack.template_mode,
             "summary": pack.summary,
             "visual_style": pack.visual_style,
+            "keywords": list(pack.keywords),
+            "source": dict(pack.source),
         }
         for pack in list_template_packs()
     ]
+
+
+def template_preview_path(template: TemplatePack | str) -> Path:
+    """Resolve one committed catalog cover without allowing path traversal."""
+
+    pack = template if isinstance(template, TemplatePack) else get_template_pack(template)
+    relative = Path(pack.cover_preview)
+    if relative.is_absolute() or relative.suffix.casefold() not in TEMPLATE_PREVIEW_EXTENSIONS:
+        raise ValueError(f"template preview is not an approved raster asset: {pack.template_id}")
+    try:
+        resolved = (DESIGN_SYSTEM_ROOT / relative).resolve(strict=True)
+        resolved.relative_to(DESIGN_SYSTEM_ROOT.resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"template preview escapes the design system: {pack.template_id}") from exc
+    if not resolved.is_file():
+        raise ValueError(f"template preview is not a regular file: {pack.template_id}")
+    return resolved
 
 
 def compatible_layouts(pack: TemplatePack, *, component: str, rhythm: str) -> list[dict[str, Any]]:
@@ -123,6 +153,9 @@ def _fallback_pack() -> TemplatePack:
         template_mode="free_design",
         summary="Editorial free design with deliberate rhythm changes.",
         visual_style="editorial minimalism",
+        cover_preview="template_previews/editorial_freeform.png",
+        keywords=["general", "editorial"],
+        source={"kind": "native"},
         theme=default_theme(),
         layout_principles=["Conclusion-led titles", "Asymmetric composition", "Use whitespace as structure"],
         layouts=[
@@ -145,5 +178,6 @@ __all__ = [
     "get_template_pack",
     "list_template_packs",
     "public_template_catalog",
+    "template_preview_path",
     "template_svg_source",
 ]

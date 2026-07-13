@@ -88,7 +88,7 @@ flowchart LR
 
 ```text
 素材/图片解析 → brief → 叙事大纲（节奏、版式意图、可视化、证据）→ 用户编辑/确认
-→ Strategist 生成三套完整美术方向（八项确认 + 模板策略）→ 用户选择
+→ Template Curator 从 11 套目录中筛选 6 套静态封面（八项确认 + 模板策略）→ 用户选择
 → Art Director 编译 Design Spec、执行锁、逐页蓝图、实际模板 SVG 与资产清单
 → 逐页顺序执行：Content Editor 写语义内容 → SVG Artist 生成完整页面
 → SVG 静态门禁 ↔ 定向回修 → Chromium PNG → VLM 美术复核 ↔ 重做问题页
@@ -96,6 +96,7 @@ flowchart LR
 ```
 
 - `svg_output/page-{n}.svg` 是唯一权威页面源；`previews/` 的 HTML/PNG 只用于浏览器预览和视觉复核。
+- 主题选择只复制仓库内预生成的静态模板封面，不调用 Designer、不启动 Chromium；真正的 SVG 绘制从用户确认模板后开始。
 - 正常路径由 Designer 模型直接生成完整 SVG；固定组件渲染器只做显式失败兜底，并以 must-fix 标记为 `needs_review`，不会伪装成高质量成功。
 - 模板不是导出时叠加的背景：每页蓝图会携带实际 `template_svg_source`、`layout_id` 和来源信息，并作为 SVG Artist 的直接输入。
 - `design-spec.json` 是权威设计规格，`spec-lock.json` 是机器执行锁；可读版本写入 `design-spec.md` 与 `spec-lock.md`。
@@ -117,6 +118,7 @@ page-blueprints.json
 asset-manifest.json
 template-manifest.json
 templates/page-{n}.svg
+templates/catalog/{template_id}/direction_{n}.png
 images/*
 sources/spec.raw.json
 sources/spec.final.json

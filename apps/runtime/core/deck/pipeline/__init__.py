@@ -48,7 +48,7 @@ def build_deck_graph(
     graph.add_node("brief", _instrumented("brief", lambda state: prepare_brief(state, llm_registry), llm_registry))
     graph.add_node("outline", _instrumented("outline", lambda state: generate_outline(state, llm_registry), llm_registry))
     graph.add_node("outline_review", _instrumented("outline_review", review_outline, llm_registry))
-    graph.add_node("style", _instrumented("style", lambda state: prepare_style_options(state, html_renderer, browser, llm_registry), llm_registry))
+    graph.add_node("style", _instrumented("style", lambda state: prepare_style_options(state, output_dir), llm_registry))
     graph.add_node("style_review", _instrumented("style_review", lambda state: review_style(state, llm_registry), llm_registry))
     graph.add_node(
         "design_lock",

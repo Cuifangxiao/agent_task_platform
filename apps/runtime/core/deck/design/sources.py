@@ -51,6 +51,7 @@ def render_template_reference_svg(
     display_font = _font(resolved_theme.fonts.get("display"), "Arial")
     body_font = _font(resolved_theme.fonts.get("body"), "Arial")
     resolved_layout_id = str(layout.get("layout_id") or "freeform").strip() or "freeform"
+    background = _template_background(pack.template_id, resolved_layout_id, colors)
 
     parts = [
         (
@@ -60,8 +61,8 @@ def render_template_reference_svg(
             f'data-layout-id="{_xml(resolved_layout_id)}">'
         ),
         '<g id="template-canvas">',
-        f'<rect id="template-background" x="0" y="0" width="{CANVAS_WIDTH}" height="{CANVAS_HEIGHT}" fill="{colors["bg"]}"/>',
-        *_template_chrome(pack.template_id, colors),
+        f'<rect id="template-background" x="0" y="0" width="{CANVAS_WIDTH}" height="{CANVAS_HEIGHT}" fill="{background}"/>',
+        *_template_chrome(pack.template_id, resolved_layout_id, colors),
         f'<rect id="template-safe-frame" x="56" y="42" width="1168" height="636" fill="none" stroke="{colors["line"]}" stroke-width="1" stroke-dasharray="5 7"/>',
         "</g>",
         '<g id="template-metadata">',
@@ -167,7 +168,22 @@ def _zone(
     ]
 
 
-def _template_chrome(template_id: str, colors: dict[str, str]) -> list[str]:
+def _template_background(template_id: str, layout_id: str, colors: dict[str, str]) -> str:
+    anchor_layout = any(token in layout_id for token in ("cover", "section", "chapter", "end"))
+    if not anchor_layout:
+        return colors["bg"]
+    if template_id == "government_blue":
+        return colors["accent"]
+    if template_id == "government_red":
+        return colors["muted"]
+    if template_id == "medical_university" and "section" in layout_id:
+        return colors["accent"]
+    if template_id == "psychology_attachment":
+        return colors["accent"]
+    return colors["bg"]
+
+
+def _template_chrome(template_id: str, layout_id: str, colors: dict[str, str]) -> list[str]:
     accent, accent2, line = colors["accent"], colors["accent2"], colors["line"]
     if template_id == "consulting_signal":
         return [
@@ -194,6 +210,58 @@ def _template_chrome(template_id: str, colors: dict[str, str]) -> list[str]:
             f'<rect id="chrome-institutional-rule" x="56" y="42" width="1168" height="5" fill="{accent}"/>',
             f'<line id="chrome-caption-rule" x1="56" y1="646" x2="1224" y2="646" stroke="{line}" stroke-width="1"/>',
             f'<circle id="chrome-reference-dot" cx="1208" cy="64" r="6" fill="{accent2}"/>',
+        ]
+    if template_id == "ai_ops":
+        return [
+            f'<rect id="chrome-ops-top" x="0" y="0" width="1280" height="8" fill="{accent}"/>',
+            f'<rect id="chrome-ops-rail-primary" x="0" y="0" width="30" height="360" fill="{accent}"/>',
+            f'<rect id="chrome-ops-rail-secondary" x="0" y="360" width="30" height="360" fill="{accent2}"/>',
+            f'<rect id="chrome-ops-overview" x="56" y="106" width="1168" height="48" fill="{colors["surface"]}"/>',
+            f'<rect id="chrome-ops-footer" x="30" y="690" width="1250" height="30" fill="{accent2}"/>',
+        ]
+    if template_id == "government_blue":
+        is_anchor = any(token in layout_id for token in ("cover", "section", "end"))
+        return [
+            f'<rect id="chrome-civic-blue-top" x="0" y="0" width="1280" height="6" fill="{accent2}"/>',
+            f'<rect id="chrome-civic-blue-rail" x="20" y="90" width="12" height="540" fill="{accent2}"/>',
+            f'<circle id="chrome-civic-blue-orbit-1" cx="1120" cy="120" r="150" fill="none" stroke="{line}" stroke-width="2"/>',
+            f'<circle id="chrome-civic-blue-orbit-2" cx="1120" cy="120" r="105" fill="none" stroke="{accent2}" stroke-width="2"/>',
+            f'<rect id="chrome-civic-blue-footer" x="0" y="714" width="1280" height="6" fill="{accent2 if is_anchor else accent}"/>',
+        ]
+    if template_id == "government_red":
+        return [
+            f'<rect id="chrome-civic-red-top-left" x="0" y="0" width="760" height="6" fill="{accent}"/>',
+            f'<rect id="chrome-civic-red-top-right" x="760" y="0" width="520" height="6" fill="{accent2}"/>',
+            f'<rect id="chrome-civic-red-rail" x="58" y="165" width="10" height="390" fill="{accent}"/>',
+            f'<line id="chrome-civic-red-axis" x1="92" y1="610" x2="1188" y2="610" stroke="{accent2}" stroke-width="2"/>',
+            f'<rect id="chrome-civic-red-footer" x="0" y="714" width="1280" height="6" fill="{accent}"/>',
+        ]
+    if template_id == "medical_university":
+        return [
+            f'<rect id="chrome-medical-header" x="0" y="0" width="1280" height="70" fill="{accent}"/>',
+            f'<rect id="chrome-medical-signal" x="0" y="0" width="7" height="720" fill="{accent2}"/>',
+            f'<polyline id="chrome-medical-pulse" points="42,36 92,36 108,18 126,55 143,29 162,43 205,43" fill="none" stroke="{colors["bg"]}" stroke-width="3"/>',
+            f'<rect id="chrome-medical-message-band" x="40" y="88" width="1200" height="46" fill="{colors["surface"]}"/>',
+            f'<line id="chrome-medical-footer" x1="40" y1="660" x2="1240" y2="660" stroke="{line}" stroke-width="2"/>',
+        ]
+    if template_id == "pixel_retro":
+        return [
+            f'<rect id="chrome-pixel-top-main" x="24" y="18" width="1232" height="5" fill="{accent}"/>',
+            f'<rect id="chrome-pixel-top-shadow" x="24" y="27" width="1232" height="2" fill="{line}"/>',
+            f'<rect id="chrome-pixel-corner-a" x="24" y="44" width="18" height="18" fill="{accent}"/>',
+            f'<rect id="chrome-pixel-corner-b" x="48" y="44" width="12" height="12" fill="{accent}"/>',
+            f'<rect id="chrome-pixel-corner-c" x="1220" y="44" width="18" height="18" fill="{accent2}"/>',
+            f'<rect id="chrome-pixel-bottom" x="24" y="684" width="1232" height="5" fill="{accent}"/>',
+            f'<rect id="chrome-pixel-status" x="1100" y="670" width="138" height="8" fill="{accent2}"/>',
+        ]
+    if template_id == "psychology_attachment":
+        return [
+            f'<rect id="chrome-psychology-rail" x="0" y="0" width="9" height="720" fill="{accent}"/>',
+            f'<line id="chrome-psychology-divider" x1="48" y1="128" x2="1230" y2="128" stroke="{line}" stroke-width="2"/>',
+            f'<circle id="chrome-psychology-orbit-1" cx="1110" cy="130" r="150" fill="none" stroke="{accent2}" stroke-width="2"/>',
+            f'<circle id="chrome-psychology-orbit-2" cx="1110" cy="130" r="102" fill="none" stroke="{line}" stroke-width="2"/>',
+            f'<circle id="chrome-psychology-orbit-3" cx="1110" cy="130" r="56" fill="none" stroke="{accent2}" stroke-width="2"/>',
+            f'<rect id="chrome-psychology-footer" x="48" y="654" width="1182" height="2" fill="{line}"/>',
         ]
     return [
         f'<rect id="chrome-editorial-rail" x="1192" y="42" width="32" height="636" fill="{accent}"/>',

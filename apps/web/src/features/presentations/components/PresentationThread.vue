@@ -355,6 +355,7 @@ defineExpose({ scrollToBottom })
                     <div v-if="option.communicationMode || option.visualStyle" class="style-axis-badges">
                       <span v-if="option.communicationMode">{{ option.communicationMode }}</span>
                       <span v-if="option.visualStyle">{{ option.visualStyle }}</span>
+                      <span v-if="option.templateSource">{{ option.templateSource === 'ppt-master' ? 'PPT Master' : '内置模板' }}</span>
                     </div>
                   </div>
                   <span
@@ -365,6 +366,7 @@ defineExpose({ scrollToBottom })
                   </span>
                 </div>
 
+                <p v-if="option.previewNote" class="style-preview-note">{{ option.previewNote }}</p>
                 <p v-if="option.rationale" class="style-rationale">{{ option.rationale }}</p>
 
                 <div

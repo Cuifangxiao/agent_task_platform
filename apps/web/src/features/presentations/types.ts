@@ -126,6 +126,7 @@ export interface StyleOption {
   templateId: string
   templateMode: string
   templateSummary: string
+  templateSource: string
   rationale: string
   confirmations: Record<string, string>
   layoutPrinciples: string[]
@@ -134,6 +135,7 @@ export interface StyleOption {
   coverHtml: string
   thumbB64: string
   tokensSummary: string
+  previewNote: string
 }
 
 export interface UserMessage {

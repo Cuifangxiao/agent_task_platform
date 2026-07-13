@@ -2630,6 +2630,15 @@ label {
   color: var(--text) !important;
 }
 
+.style-preview-note {
+  margin: 0;
+  border-left: 3px solid var(--accent);
+  padding: 7px 9px;
+  background: var(--panel);
+  color: var(--muted) !important;
+  font-size: 12px !important;
+}
+
 .template-status-panel {
   display: flex;
   align-items: flex-start;

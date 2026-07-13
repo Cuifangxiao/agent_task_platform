@@ -3,8 +3,8 @@ import json
 import pytest
 
 import core.deck.pipeline.slides as slides_pipeline
-from core.deck.pipeline.style import _style_sample_html
-from core.deck.design import template_svg_source
+from core.deck.pipeline.style import build_style_options
+from core.deck.design import get_template_pack, template_preview_path, template_svg_source
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.errors import ModelOutputError
 from core.deck.rendering.artist import build_svg_artist_prompt, render_svg_artwork, resolve_page_blueprint, validate_artist_svg
@@ -75,15 +75,6 @@ def _valid_svg(body="Enterprise renewals lead."):
 <g id="header"><text id="headline" x="72" y="110" font-size="44" font-family="Noto Sans SC" fill="#14213D">Market growth</text><line id="headline-rule" x1="72" y1="142" x2="540" y2="142" stroke="#2A9D8F" stroke-width="4"/></g>
 <g id="evidence"><rect id="evidence-field" x="72" y="190" width="760" height="390" fill="#FFFFFF" stroke="#D8D3C8" stroke-width="2"/><text id="body" x="110" y="250" font-size="24" font-family="Noto Sans SC" fill="#14213D">{body}</text><circle id="retention-dot" cx="118" cy="340" r="9" fill="#E76F51"/><text id="retention" x="145" y="348" font-size="20" font-family="Noto Sans SC" fill="#14213D">Retention</text><circle id="expansion-dot" cx="118" cy="425" r="9" fill="#E76F51"/><text id="expansion" x="145" y="433" font-size="20" font-family="Noto Sans SC" fill="#14213D">Expansion</text></g>
 <g id="footer"><line id="footer-rule" x1="72" y1="650" x2="1200" y2="650" stroke="#D8D3C8" stroke-width="1"/><text id="page-number" x="1180" y="680" font-size="13" font-family="Noto Sans SC" fill="#58677A">1</text></g>
-</svg>"""
-
-
-def _valid_cover_svg():
-    return """<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-<g id="background"><rect id="background-field" x="0" y="0" width="1280" height="720" fill="#F7F3EA"/></g>
-<g id="eyebrow"><text id="eyebrow-text" x="84" y="126" font-size="18" font-family="Noto Sans SC" fill="#2A9D8F">ART DIRECTION</text><line id="eyebrow-rule" x1="84" y1="148" x2="330" y2="148" stroke="#2A9D8F" stroke-width="3"/></g>
-<g id="hero"><text id="hero-title" x="84" y="286" font-size="58" font-family="Noto Sans SC" fill="#14213D">Market growth</text><rect id="hero-field" x="920" y="80" width="290" height="520" fill="#2A9D8F"/></g>
-<g id="support"><text id="hero-subtitle" x="88" y="390" font-size="24" font-family="Noto Sans SC" fill="#14213D">Enterprise renewals lead.</text><circle id="focus-dot" cx="1065" cy="334" r="58" fill="#E76F51"/></g>
 </svg>"""
 
 
@@ -316,24 +307,26 @@ def test_slide_pipeline_stops_when_first_designer_page_never_passes_the_gate(mon
         )
 
 
-def test_style_checkpoint_can_show_a_real_designer_svg_sample():
-    designer = SequenceTextLLM([_valid_cover_svg()])
-    theme = default_theme()
-
-    html, render_mode = _style_sample_html(
-        title="Market growth",
-        narrative="Enterprise renewals lead.",
-        theme=theme,
-        direction={
-            "template_id": "consulting_signal",
-            "template_mode": "layout_pack",
-            "communication_mode": "top_consulting",
-            "visual_style": "restrained clarity",
+def test_style_checkpoint_uses_static_catalog_covers_without_designer_rendering(tmp_path):
+    options = build_style_options(
+        {
+            "request_id": "static-style-covers",
+            "deck_title": "Clinical review",
+            "user_description": "医院病例与临床研究汇报",
+            "brief": {"audience": "医生", "goal": "说明临床证据"},
+            "plan": {"title": "Clinical review", "slides": [{"index": 1}]},
         },
-        designer_llm=designer,
-        html_renderer=HTMLSlideRenderer(),
+        tmp_path,
     )
 
-    assert render_mode == "llm_svg"
-    assert 'data-template-id="consulting_signal"' in html
-    assert "Market growth" in html
+    assert len(options) == 6
+    assert options[0]["template_id"] == "medical_university"
+    assert options[0]["template_source"]["kind"] == "ppt-master"
+    assert all(option["sample_render_mode"] == "static_template_cover" for option in options)
+    assert all(option["cover_html"] == "" and option["thumb_b64"] == "" for option in options)
+    for option in options:
+        cover = tmp_path / "static-style-covers" / option["cover_png"]
+        source = template_preview_path(get_template_pack(option["template_id"]))
+        assert cover.is_file()
+        assert cover.suffix == ".png"
+        assert cover.read_bytes() == source.read_bytes()

@@ -812,12 +812,12 @@ brief -> outline -> outline_review -> style -> style_review -> writer
 | `export_progress` | 导出进度 |
 | `artifact` | PPTX/质量信息就绪，并增加 `artifact_url` |
 
-`style_options` 的每个候选方向除预览图外，还包含 `communication_mode`、`visual_style`、`template_id`、`template_mode`、`template_summary`、`rationale`、`confirmations`（八项执行确认）、`layout_principles` 与 `image_strategy`。`template_mode=free_design` 表示自由设计；其他模式会在逐页蓝图中实际注入模板 SVG 结构，而不是只记录模板名称。
+`style_options` 的每个候选方向除静态模板封面外，还包含 `communication_mode`、`visual_style`、`template_id`、`template_mode`、`template_summary`、`template_source`、`rationale`、`confirmations`（八项执行确认）、`layout_principles`、`image_strategy`、`sample_render_mode=static_template_cover` 与 `preview_note`。模板选择阶段不会调用 Designer 或 Chromium；`cover_html` 保留为空以兼容旧客户端。`template_mode=free_design` 表示自由设计；其他模式会在逐页蓝图中实际注入转换后的受限 SVG 结构，而不是只记录模板名称。
 | `interrupt` | 等待大纲确认或风格选择；`done: true` |
 | `action_accepted` | API 已接受幂等 Action |
 | `subscription_disconnected` | 订阅断开但 Job 继续，用于指标 |
 | `subscription_resumed` | 带游标恢复订阅，用于指标 |
-| `artifact_downloaded` | 成功提供过一次产物下载，用于指标 |
+| `artifact_downloaded` | 成功提供过一次 PPTX 成品下载，用于指标；模板封面和页面预览不计入 |
 | `done` | 当前运行成功结束；`done: true` |
 | `error` | Job 或订阅错误；`done: true` |
 | `cancelled` | Job 被取消；`done: true` |

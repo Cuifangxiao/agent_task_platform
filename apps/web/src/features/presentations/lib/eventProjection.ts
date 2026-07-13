@@ -202,7 +202,7 @@ export function describeChunk(data: PptStreamChunk) {
     if (data.stage === 'style_review') {
       return {
         title: '等待选择风格',
-        text: '两套视觉方向已经准备好，选择后继续生成页面。',
+        text: '静态模板封面已经准备好，选择后再进入正式页面设计。',
         state: 'waiting' as const,
       }
     }
@@ -242,8 +242,8 @@ export function describeChunk(data: PptStreamChunk) {
       }
     case 'style':
       return {
-        title: '正在生成风格样张',
-        text: '我在准备两套视觉方向。',
+        title: '正在读取模板目录',
+        text: '我在按内容筛选静态模板封面，不会在这里调用 Designer 实时绘制。',
         state: 'running' as const,
       }
     case 'style_review':

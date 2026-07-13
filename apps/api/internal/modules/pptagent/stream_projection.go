@@ -28,7 +28,7 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 		if chunk.Stage == "style_review" {
 			return &persistedChunkSnapshot{
 				Title: "等待选择风格",
-				Text:  "两套视觉方向已经准备好，选择后继续生成页面。",
+				Text:  "候选模板封面已经准备好，选择后继续生成页面。",
 				State: string(ConversationStatusWaiting),
 			}
 		}
@@ -67,8 +67,8 @@ func describePersistedChunk(chunk *DeckStreamChunk) *persistedChunkSnapshot {
 		}
 	case "style":
 		return &persistedChunkSnapshot{
-			Title: "正在生成风格样张",
-			Text:  "我在准备两套视觉方向。",
+			Title: "正在筛选模板",
+			Text:  "我在从静态模板目录中筛选合适的封面与视觉方向。",
 			State: string(ConversationStatusRunning),
 		}
 	case "style_review":

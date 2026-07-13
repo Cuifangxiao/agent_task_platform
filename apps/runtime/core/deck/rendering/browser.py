@@ -255,28 +255,6 @@ class BrowserRenderer:
             renderer=renderer,
         )
 
-    def render_style_sample(self, request_id: str, style_id: str, html: str, *, theme: ThemeTokens) -> dict[str, Any]:
-        project = self._project(request_id)
-        request_dir = project.root
-        styles_dir = project.styles
-        html_path = styles_dir / f"{style_id}.html"
-        png_path = styles_dir / f"{style_id}.png"
-        html_path.write_text(html, encoding="utf-8")
-        try:
-            self._capture_with_playwright(html_path, png_path)
-            renderer = "playwright"
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            record_fallback()
-            logger.info("style screenshot fell back to pillow: style=%s err=%s", style_id, exc)
-            renderer = "pillow-fallback"
-            _fallback_style_png(png_path, theme)
-        return {
-            "html": _relative_to_request(html_path, request_dir),
-            "png": _relative_to_request(png_path, request_dir),
-            "thumb_b64": _thumbnail_b64(png_path),
-            "renderer": renderer,
-        }
-
     def _request_dir(self, request_id: str) -> Path:
         return self._project(request_id).root
 
@@ -345,17 +323,6 @@ def _fallback_preview_png(path: Path, slide: SlideSpec, theme: ThemeTokens | Non
         _draw_wrapped(draw, slide.component, (936, 230), 210, _font(22), muted, scale)
     draw.text((1188 * scale, 638 * scale), str(slide.index), fill=muted, font=_font(18))
     image.save(path)
-
-
-def _fallback_style_png(path: Path, theme: ThemeTokens) -> None:
-    slide = SlideSpec(
-        index=1,
-        role="hook",
-        component="cover",
-        title=theme.name,
-        content={"subtitle": theme.motif, "eyebrow": "Style Option"},
-    )
-    _fallback_preview_png(path, slide, theme)
 
 
 def _fallback_items(slide: SlideSpec) -> list[str]:
