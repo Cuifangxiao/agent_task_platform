@@ -6,7 +6,7 @@ import {
   inferModelTypeFromName,
   normalizeModelType,
   resolveProviderBrand,
-} from '../src/features/models/modelPresentation.ts'
+} from '../../apps/web/src/features/models/modelPresentation.ts'
 
 test('normalizes missing and unknown persisted model types as text', () => {
   assert.equal(normalizeModelType(undefined), 'text')

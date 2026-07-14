@@ -66,13 +66,29 @@ class FakeLLM:
         )
 
 
-def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
-    graph = build_deck_graph(FakeLLM(), tmp_path, InMemorySaver())
+def _collect_graph_stream(graph, stream_input, config):
     events = []
     interrupts = []
+    for part in graph.stream(
+        stream_input,
+        config=config,
+        stream_mode=["custom", "values"],
+        version="v2",
+        output_keys=[],
+    ):
+        if part["type"] == "custom":
+            events.append(part["data"])
+        elif part["type"] == "values":
+            interrupts.extend(part["interrupts"])
+    return events, interrupts
+
+
+def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
+    graph = build_deck_graph(FakeLLM(), tmp_path, InMemorySaver())
     config = {"configurable": {"thread_id": "11111111-1111-1111-1111-111111111111"}}
 
-    for part in graph.stream(
+    events, interrupts = _collect_graph_stream(
+        graph,
         {
             "request_id": "11111111-1111-1111-1111-111111111111",
             "deck_title": "PPTAgent MVP",
@@ -80,14 +96,8 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
             "uploaded_file_name": "",
             "uploaded_file_text": "",
         },
-        config=config,
-        stream_mode=["custom", "updates"],
-    ):
-        mode, data = part
-        if mode == "custom":
-            events.append(data)
-        if mode == "updates" and "__interrupt__" in data:
-            interrupts.extend(data["__interrupt__"])
+        config,
+    )
 
     text_delta_events = [event for event in events if event.get("event_type") == "text_delta"]
     assert text_delta_events
@@ -102,20 +112,15 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     interrupt_payload = interrupts[0].value
     assert interrupt_payload["outline_markdown"] == OUTLINE_MARKDOWN.strip()
 
-    style_interrupts = []
-    for part in graph.stream(
+    style_events, style_interrupts = _collect_graph_stream(
+        graph,
         Command(resume={"action": "approve_outline", "outline_markdown": outline_events[0]["outline_markdown"]}),
-        config=config,
-        stream_mode=["custom", "updates"],
-    ):
-        mode, data = part
-        if mode == "custom":
-            events.append(data)
-        if mode == "updates" and "__interrupt__" in data:
-            style_interrupts.extend(data["__interrupt__"])
+        config,
+    )
+    events.extend(style_events)
 
-    style_events = [event for event in events if event.get("event_type") == "style_options"]
-    assert style_events
+    style_option_events = [event for event in events if event.get("event_type") == "style_options"]
+    assert style_option_events
     assert style_interrupts
     style_payload = style_interrupts[0].value
     assert style_payload["stage"] == "style_review"
@@ -125,14 +130,12 @@ def test_deck_graph_streams_markdown_outline_and_renders_pptx(tmp_path):
     assert all(option.get("sample_render_mode") == "static_template_cover" for option in style_payload["style_options"])
     assert all(option.get("cover_png") and not option.get("cover_html") for option in style_payload["style_options"])
 
-    for part in graph.stream(
+    slide_events, _ = _collect_graph_stream(
+        graph,
         Command(resume={"action": "choose_style", "style_id": style_payload["style_options"][0]["style_id"]}),
-        config=config,
-        stream_mode=["custom", "updates"],
-    ):
-        mode, data = part
-        if mode == "custom":
-            events.append(data)
+        config,
+    )
+    events.extend(slide_events)
 
     slide_started_events = [event for event in events if event.get("event_type") == "slide_started"]
     assert [event["payload"]["index"] for event in slide_started_events] == [1, 2]
@@ -185,24 +188,18 @@ def test_outline_prompt_adds_uploaded_file_section_only_when_present():
 def test_outline_can_regenerate_within_the_same_checkpoint(tmp_path):
     graph = build_deck_graph(FakeLLM(), tmp_path, InMemorySaver())
     config = {"configurable": {"thread_id": "outline-regenerate"}}
-    first_interrupts = []
-    for mode, data in graph.stream(
+    _, first_interrupts = _collect_graph_stream(
+        graph,
         {"request_id": "outline-regenerate", "deck_title": "Deck", "user_description": "Two slides"},
-        config=config,
-        stream_mode=["custom", "updates"],
-    ):
-        if mode == "updates" and "__interrupt__" in data:
-            first_interrupts.extend(data["__interrupt__"])
+        config,
+    )
     assert first_interrupts
 
-    regenerated_interrupts = []
-    for mode, data in graph.stream(
+    _, regenerated_interrupts = _collect_graph_stream(
+        graph,
         Command(resume={"action": "regenerate_outline"}),
-        config=config,
-        stream_mode=["custom", "updates"],
-    ):
-        if mode == "updates" and "__interrupt__" in data:
-            regenerated_interrupts.extend(data["__interrupt__"])
+        config,
+    )
     assert regenerated_interrupts
     assert regenerated_interrupts[0].value["stage"] == "outline_review"
 

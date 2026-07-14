@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { assetCacheKey, eventSequenceDecision, interactionPhase, modelNameSupportsImageInput } from '../src/features/presentations/lib/workflow.ts'
+import { assetCacheKey, eventSequenceDecision, interactionPhase, modelNameSupportsImageInput } from '../../apps/web/src/features/presentations/lib/workflow.ts'
 import {
   currentProgressLabel,
   currentProgressStageLabel,
   normalizeProgressStage,
   pipelineStages,
-} from '../src/features/presentations/lib/progressView.ts'
-import type { StatusMessage } from '../src/features/presentations/types.ts'
-import { validateSourceFiles } from '../src/features/presentations/lib/presentationUtils.ts'
+} from '../../apps/web/src/features/presentations/lib/progressView.ts'
+import type { StatusMessage } from '../../apps/web/src/features/presentations/types.ts'
+import { validateSourceFiles } from '../../apps/web/src/features/presentations/lib/presentationUtils.ts'
 
 test('job states expose the correct key interaction phase', () => {
   assert.equal(interactionPhase('queued'), 'initial')

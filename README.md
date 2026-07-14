@@ -51,16 +51,19 @@ flowchart LR
 │  ├─ web/                       # Vue 3 + TypeScript + Vite
 │  │  ├─ src/features/           # 按业务能力组织的前端模块
 │  │  ├─ src/shared/             # HTTP/SSE 等跨功能基础设施
-│  │  ├─ src/pages/              # 页面组合
-│  │  └─ tests/                  # Node 测试
+│  │  └─ src/pages/              # 页面组合
 │  └─ runtime/                   # Python Agent Runtime
 │     ├─ app/                    # 启停和依赖装配
 │     ├─ server/                 # gRPC 接入与错误边界
 │     ├─ handler/                # proto 与 core contract 转换
 │     ├─ core/                   # Provider/PPT 领域逻辑
 │     ├─ providers/catalog/      # Provider 与模型目录
-│     ├─ api/                    # 生成的 Python protobuf 代码
-│     └─ tests/                  # pytest 测试
+│     └─ api/                    # 生成的 Python protobuf 代码
+├─ tests/                        # 全项目测试统一入口
+│  ├─ api/                       # Go 测试（目录结构与 apps/api 对应）
+│  ├─ runtime/                   # pytest 测试
+│  ├─ web/                       # Node 测试
+│  └─ go-overlay.json            # 将集中存放的 Go 测试挂载到对应包
 ├─ contracts/
 │  ├─ proto/                     # 跨语言协议唯一真源
 │  └─ gen/go/                    # 生成的 Go protobuf/gRPC 代码
@@ -303,10 +306,10 @@ make run-web
 分别执行：
 
 ```bash
-go test ./...
+make test-go
 
 cd apps/runtime
-.venv/bin/python -m pytest tests -q
+.venv/bin/python -m pytest ../../tests/runtime -q
 
 cd ../web
 npm test
@@ -317,7 +320,7 @@ Windows PowerShell 的 Runtime 测试等价命令：
 
 ```powershell
 Push-Location apps/runtime
-& ./.venv/Scripts/python.exe -m pytest tests -q
+& ./.venv/Scripts/python.exe -m pytest ../../tests/runtime -q
 Pop-Location
 ```
 

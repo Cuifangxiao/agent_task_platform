@@ -1,6 +1,9 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+from langgraph.errors import GraphInterrupt
+
 import core.deck.pipeline as pipeline
 from core.deck.pipeline.llm import invoke_json_with_retries
 from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
@@ -51,9 +54,47 @@ def test_instrumented_node_emits_real_model_and_usage_metrics(monkeypatch):
         {"__metadata__": {"writer": {"provider": "openai", "model": "gpt-test"}}},
     )
     wrapped({})
-    metrics = emitted[-1]["payload"]["metrics"]
+    event = emitted[-1]
+    metrics = event["payload"]["metrics"]
+    assert event["message"] == "writer completed"
+    assert event["stage_status"] == "done"
+    assert event["payload"]["status"] == "done"
     assert metrics["provider"] == "openai"
     assert metrics["model"] == "gpt-test"
     assert metrics["token_usage"] == 17
     assert metrics["model_call_count"] == 1
     assert metrics["retry_count"] == 0
+
+
+def test_instrumented_node_emits_failed_stage_before_reraising(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(pipeline, "get_stream_writer", lambda: emitted.append)
+
+    def failing_node(_state):
+        raise RuntimeError("node failed")
+
+    wrapped = pipeline._instrumented("writer", failing_node, {})
+
+    with pytest.raises(RuntimeError, match="node failed"):
+        wrapped({})
+
+    event = emitted[-1]
+    assert event["message"] == "writer failed"
+    assert event["stage_status"] == "error"
+    assert event["payload"]["status"] == "error"
+    assert event["payload"]["metrics"]["failed"] is True
+
+
+def test_instrumented_node_does_not_report_interrupt_as_failure(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(pipeline, "get_stream_writer", lambda: emitted.append)
+
+    def interrupting_node(_state):
+        raise GraphInterrupt()
+
+    wrapped = pipeline._instrumented("outline_review", interrupting_node, {})
+
+    with pytest.raises(GraphInterrupt):
+        wrapped({})
+
+    assert emitted == []

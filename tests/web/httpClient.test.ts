@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { ApiError, createHttpClient, toApiUrl } from '../src/shared/api/httpClient.ts'
+import { ApiError, createHttpClient, toApiUrl } from '../../apps/web/src/shared/api/httpClient.ts'
 
 function client() {
   return createHttpClient({

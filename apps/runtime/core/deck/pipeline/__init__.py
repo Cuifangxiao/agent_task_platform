@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 from typing import Any
 
-from langgraph.graph import END, START, StateGraph
 from langgraph.config import get_stream_writer
+from langgraph.errors import GraphBubbleUp
+from langgraph.graph import END, START, StateGraph
 
 import core.deck.events as events
 
@@ -18,7 +22,6 @@ from core.deck.pipeline.coherence import review_coherence
 from core.deck.pipeline.design_lock import freeze_design_contract
 from core.deck.pipeline.export import export_deck
 from core.deck.pipeline.llm import llm_log_context, normalize_llm_registry
-from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics
 from core.deck.pipeline.outline import generate_outline, review_outline
 from core.deck.pipeline.repair import has_fixable_must_fix, repair_deck
 from core.deck.pipeline.review import validate_deck
@@ -28,9 +31,30 @@ from core.deck.pipeline.style import prepare_style_options, review_style
 from core.deck.pipeline.vlm_review import review_vlm
 from core.deck.rendering.browser import BrowserRenderer, BrowserSession
 from core.deck.rendering.html import HTMLSlideRenderer
+from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics
 
 
 logger = logging.getLogger(__name__)
+
+DeckNode = Callable[[DeckGraphState], dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class _DeckNodes:
+    """Executable graph nodes with runtime dependencies already bound."""
+
+    brief: DeckNode
+    outline: DeckNode
+    outline_review: DeckNode
+    style: DeckNode
+    style_review: DeckNode
+    design_lock: DeckNode
+    write_slides: DeckNode
+    validate: DeckNode
+    repair: DeckNode
+    review_vlm: DeckNode
+    coherence: DeckNode
+    export: DeckNode
 
 
 def build_deck_graph(
@@ -43,46 +67,115 @@ def build_deck_graph(
     html_renderer = HTMLSlideRenderer()
     browser = BrowserRenderer(output_dir, browser_session)
     exporter = DeckExporter(output_dir, browser_session)
+    nodes = _build_nodes(llm_registry, output_dir, html_renderer, browser, exporter)
 
     graph = StateGraph(DeckGraphState)
-    graph.add_node("brief", _instrumented("brief", lambda state: prepare_brief(state, llm_registry), llm_registry))
-    graph.add_node("outline", _instrumented("outline", lambda state: generate_outline(state, llm_registry), llm_registry))
-    graph.add_node("outline_review", _instrumented("outline_review", review_outline, llm_registry))
-    graph.add_node("style", _instrumented("style", lambda state: prepare_style_options(state, output_dir), llm_registry))
-    graph.add_node("style_review", _instrumented("style_review", lambda state: review_style(state, llm_registry), llm_registry))
-    graph.add_node(
-        "design_lock",
-        _instrumented(
-            "design_lock",
-            lambda state: freeze_design_contract(state, output_dir, llm_registry),
-            llm_registry,
-        ),
-    )
-    graph.add_node("write_slides", _instrumented("writer", lambda state: write_and_design_slides(state, llm_registry, html_renderer, browser), llm_registry))
-    graph.add_node("validate", _instrumented("validate", validate_deck, llm_registry))
-    graph.add_node("repair", _instrumented("repair", lambda state: repair_deck(state, llm_registry, html_renderer, browser), llm_registry))
-    graph.add_node("review_vlm", _instrumented("review_vlm", lambda state: review_vlm(state, llm_registry, output_dir), llm_registry))
-    graph.add_node("coherence", _instrumented("coherence", lambda state: review_coherence(state, llm_registry, html_renderer, browser), llm_registry))
-    graph.add_node("export", _instrumented("export", lambda state: export_deck(state, exporter), llm_registry))
+    graph.add_node("brief", nodes.brief)
+    graph.add_node("outline", nodes.outline)
+    graph.add_node("outline_review", nodes.outline_review)
+    graph.add_node("style", nodes.style)
+    graph.add_node("style_review", nodes.style_review)
+    graph.add_node("design_lock", nodes.design_lock)
+    graph.add_node("write_slides", nodes.write_slides)
+    graph.add_node("validate", nodes.validate)
+    graph.add_node("repair", nodes.repair)
+    graph.add_node("review_vlm", nodes.review_vlm)
+    graph.add_node("coherence", nodes.coherence)
+    graph.add_node("export", nodes.export)
 
     graph.add_edge(START, "brief")
     graph.add_edge("brief", "outline")
     graph.add_edge("outline", "outline_review")
-    graph.add_conditional_edges("outline_review", _route_after_outline_review, {"outline": "outline", "style": "style"})
+    graph.add_conditional_edges(
+        "outline_review",
+        _route_after_outline_review,
+        {"outline": "outline", "style": "style"},
+    )
     graph.add_edge("style", "style_review")
     graph.add_edge("style_review", "design_lock")
     graph.add_edge("design_lock", "write_slides")
     graph.add_edge("write_slides", "validate")
-    graph.add_conditional_edges("validate", _route_after_validate, {"repair": "repair", "review_vlm": "review_vlm", "coherence": "coherence", "export": "export"})
+    graph.add_conditional_edges(
+        "validate",
+        _route_after_validate,
+        {
+            "repair": "repair",
+            "review_vlm": "review_vlm",
+            "coherence": "coherence",
+            "export": "export",
+        },
+    )
     graph.add_edge("repair", "validate")
-    graph.add_conditional_edges("review_vlm", _route_after_vlm, {"repair": "repair", "coherence": "coherence", "export": "export"})
+    graph.add_conditional_edges(
+        "review_vlm",
+        _route_after_vlm,
+        {"repair": "repair", "coherence": "coherence", "export": "export"},
+    )
     graph.add_edge("coherence", "validate")
     graph.add_edge("export", END)
     return graph.compile(checkpointer=checkpointer)
 
 
-def _instrumented(stage: str, node: Any, llm_registry: dict[str, Any]):
-    def run(state: DeckGraphState):
+def _build_nodes(
+    llm_registry: dict[str, Any],
+    output_dir: Path,
+    html_renderer: HTMLSlideRenderer,
+    browser: BrowserRenderer,
+    exporter: DeckExporter,
+) -> _DeckNodes:
+    instrument = partial(_instrumented, llm_registry=llm_registry)
+    return _DeckNodes(
+        brief=instrument("brief", partial(prepare_brief, llm_registry=llm_registry)),
+        outline=instrument("outline", partial(generate_outline, llm_registry=llm_registry)),
+        outline_review=instrument("outline_review", review_outline),
+        style=instrument("style", partial(prepare_style_options, output_root=output_dir)),
+        style_review=instrument("style_review", partial(review_style, llm_registry=llm_registry)),
+        design_lock=instrument(
+            "design_lock",
+            partial(
+                freeze_design_contract,
+                output_dir=output_dir,
+                llm_registry=llm_registry,
+            ),
+        ),
+        write_slides=instrument(
+            "writer",
+            partial(
+                write_and_design_slides,
+                llm_registry=llm_registry,
+                html_renderer=html_renderer,
+                browser=browser,
+            ),
+        ),
+        validate=instrument("validate", validate_deck),
+        repair=instrument(
+            "repair",
+            partial(
+                repair_deck,
+                llm_registry=llm_registry,
+                html_renderer=html_renderer,
+                browser=browser,
+            ),
+        ),
+        review_vlm=instrument(
+            "review_vlm",
+            partial(review_vlm, llm_registry=llm_registry, output_dir=output_dir),
+        ),
+        coherence=instrument(
+            "coherence",
+            partial(
+                review_coherence,
+                llm_registry=llm_registry,
+                html_renderer=html_renderer,
+                browser=browser,
+            ),
+        ),
+        export=instrument("export", partial(export_deck, exporter=exporter)),
+    )
+
+
+def _instrumented(stage: str, node: DeckNode, llm_registry: dict[str, Any]) -> DeckNode:
+    def run(state: DeckGraphState) -> dict[str, Any]:
         started_at = time.perf_counter()
         collector, token = begin_node_metrics()
         result: dict[str, Any] = {}
@@ -100,6 +193,9 @@ def _instrumented(stage: str, node: Any, llm_registry: dict[str, Any]):
         try:
             with llm_log_context(request_id=request_id, stage=stage):
                 result = node(state) or {}
+        except GraphBubbleUp:
+            # LangGraph control-flow signals (including interrupts) are not failures.
+            raise
         except Exception as exc:  # pylint: disable=broad-exception-caught
             caught = exc
         finally:
@@ -138,11 +234,14 @@ def _instrumented(stage: str, node: Any, llm_registry: dict[str, Any]):
                 type(caught).__name__,
                 " ".join(str(caught).split())[:500],
             )
+        stage_status = "done" if caught is None else "error"
+        stage_message = f"{stage} completed" if caught is None else f"{stage} failed"
         get_stream_writer()(
             events.stage_progress(
                 stage,
-                f"{stage} completed",
+                stage_message,
                 {
+                    "status": stage_status,
                     "metrics": {
                         "duration_ms": duration_ms,
                         "provider": model_meta.get("provider", ""),
@@ -183,4 +282,4 @@ def _route_after_vlm(state: DeckGraphState) -> str:
     return "coherence" if int(state.get("coherence_round") or 0) < 1 else "export"
 
 
-__all__ = ["build_deck_graph"]
+__all__ = ["_instrumented", "build_deck_graph"]

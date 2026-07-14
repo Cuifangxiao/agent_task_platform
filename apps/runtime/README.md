@@ -28,10 +28,11 @@ apps/runtime/
 │   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
 │   ├── llm/                 #   模型接入层: 各 provider 客户端(统一 BaseLLMClient 接口)
 │   ├── rag/  memory/  tools/
-├── utils/
-│   └── logger.py            # dictConfig 日志初始化
-└── tests/
+└── utils/
+    └── logger.py            # dictConfig 日志初始化
 ```
+
+测试统一放在仓库根目录的 `tests/runtime/`。
 
 ## 分层约定
 
@@ -59,7 +60,7 @@ cp .env.example .env                 # 按需填密钥
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest tests/    # 或仓库根目录 make test-runtime
+.venv/bin/python -m pytest ../../tests/runtime/    # 或仓库根目录 make test-runtime
 ```
 
 ## PPT 生成运行依赖

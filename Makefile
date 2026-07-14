@@ -8,6 +8,7 @@ GO_OUT     := contracts/gen/go/v1/provider
 PY_OUT     := apps/runtime/api
 RUNTIME_DIR := apps/runtime
 WEB_DIR     := apps/web
+TEST_DIR    := tests
 
 # Override on Unix: make RUNTIME_PY=.venv/bin/python <target>
 RUNTIME_PY ?= .venv/Scripts/python.exe
@@ -47,10 +48,10 @@ run-web:
 test: test-go test-runtime test-web
 
 test-go:
-	go test ./...
+	go test -overlay=$(TEST_DIR)/go-overlay.json ./...
 
 test-runtime:
-	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m pytest tests -q
+	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m pytest ../../$(TEST_DIR)/runtime -q
 
 test-web:
 	npm --prefix $(WEB_DIR) test

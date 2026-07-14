@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { usePresentationMessages } from '../src/features/presentations/composables/usePresentationMessages.ts'
-import { normalizeStoredMessage, normalizeStyleOptions } from '../src/features/presentations/lib/conversationProjection.ts'
-import { extractStyleOptions, projectStreamEvent } from '../src/features/presentations/lib/eventProjection.ts'
+import { usePresentationMessages } from '../../apps/web/src/features/presentations/composables/usePresentationMessages.ts'
+import { normalizeStoredMessage, normalizeStyleOptions } from '../../apps/web/src/features/presentations/lib/conversationProjection.ts'
+import { extractStyleOptions, projectStreamEvent } from '../../apps/web/src/features/presentations/lib/eventProjection.ts'
 
 test('stored conversation messages are normalized into typed presentation messages', () => {
   const message = normalizeStoredMessage(
