@@ -49,16 +49,6 @@ class ProviderRuntimeServiceStub(object):
                 request_serializer=provider__pb2.StreamTextRequest.SerializeToString,
                 response_deserializer=provider__pb2.StreamTextResponse.FromString,
                 _registered_method=True)
-        self.GenerateDeck = channel.unary_stream(
-                '/provider.v1.ProviderRuntimeService/GenerateDeck',
-                request_serializer=provider__pb2.GenerateDeckRequest.SerializeToString,
-                response_deserializer=provider__pb2.GenerateDeckResponse.FromString,
-                _registered_method=True)
-        self.ResumeDeck = channel.unary_stream(
-                '/provider.v1.ProviderRuntimeService/ResumeDeck',
-                request_serializer=provider__pb2.ResumeDeckRequest.SerializeToString,
-                response_deserializer=provider__pb2.GenerateDeckResponse.FromString,
-                _registered_method=True)
 
 
 class ProviderRuntimeServiceServicer(object):
@@ -82,18 +72,6 @@ class ProviderRuntimeServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GenerateDeck(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ResumeDeck(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_ProviderRuntimeServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -111,16 +89,6 @@ def add_ProviderRuntimeServiceServicer_to_server(servicer, server):
                     servicer.StreamText,
                     request_deserializer=provider__pb2.StreamTextRequest.FromString,
                     response_serializer=provider__pb2.StreamTextResponse.SerializeToString,
-            ),
-            'GenerateDeck': grpc.unary_stream_rpc_method_handler(
-                    servicer.GenerateDeck,
-                    request_deserializer=provider__pb2.GenerateDeckRequest.FromString,
-                    response_serializer=provider__pb2.GenerateDeckResponse.SerializeToString,
-            ),
-            'ResumeDeck': grpc.unary_stream_rpc_method_handler(
-                    servicer.ResumeDeck,
-                    request_deserializer=provider__pb2.ResumeDeckRequest.FromString,
-                    response_serializer=provider__pb2.GenerateDeckResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -204,60 +172,6 @@ class ProviderRuntimeService(object):
             '/provider.v1.ProviderRuntimeService/StreamText',
             provider__pb2.StreamTextRequest.SerializeToString,
             provider__pb2.StreamTextResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GenerateDeck(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/provider.v1.ProviderRuntimeService/GenerateDeck',
-            provider__pb2.GenerateDeckRequest.SerializeToString,
-            provider__pb2.GenerateDeckResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ResumeDeck(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/provider.v1.ProviderRuntimeService/ResumeDeck',
-            provider__pb2.ResumeDeckRequest.SerializeToString,
-            provider__pb2.GenerateDeckResponse.FromString,
             options,
             channel_credentials,
             insecure,

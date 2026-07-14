@@ -1,47 +1,47 @@
-"""Build per-node chat clients for deck pipeline requests."""
+"""Build the small, explicit model registry used by the PPT pipeline."""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from core.deck.contract import DeckNodeModelConfig, GenerateDeckInput, ResumeDeckInput
+from core.deck.contract import GeneratePptInput, MODEL_NODE_KEYS, ModelConfig
 from core.provider.model_utils import provider_config_manager
 
 
-def build_deck_llms(inp: GenerateDeckInput | ResumeDeckInput) -> Any:
-    if not inp.node_model_configs:
-        raise ValueError("node_model_configs is required")
+def build_ppt_llms(inp: GeneratePptInput) -> dict[str, Any]:
+    if not inp.models:
+        raise ValueError("models is required")
 
     clients: dict[str, Any] = {}
     capabilities: dict[str, dict[str, bool]] = {}
     metadata: dict[str, dict[str, str]] = {}
-    for config in inp.node_model_configs:
+    for config in inp.models:
         node_key = config.node_key.strip().lower()
-        if not node_key:
-            raise ValueError("node_model_configs[].node_key is required")
+        if node_key not in MODEL_NODE_KEYS:
+            allowed = ", ".join(sorted(MODEL_NODE_KEYS))
+            raise ValueError(f"unsupported model node '{config.node_key}'; expected one of: {allowed}")
+        if node_key in clients:
+            raise ValueError(f"duplicate model config for node '{node_key}'")
         clients[node_key] = build_chat_client_from_node(config)
         capabilities[node_key] = {"supports_image_input": bool(config.supports_image_input)}
         metadata[node_key] = {"provider": config.provider, "model": config.model}
 
     clients["__capabilities__"] = capabilities
     clients["__metadata__"] = metadata
-
     return clients
 
 
-def describe_model_assignment(inp: GenerateDeckInput | ResumeDeckInput) -> str:
-    parts = [f"{item.node_key}={item.provider}/{item.model}" for item in inp.node_model_configs]
-    return ", ".join(parts)
+def describe_model_assignment(inp: GeneratePptInput) -> str:
+    return ", ".join(f"{item.node_key}={item.provider}/{item.model}" for item in inp.models)
 
 
-def build_chat_client_from_node(config: DeckNodeModelConfig) -> Any:
+def build_chat_client_from_node(config: ModelConfig) -> Any:
     return build_chat_client(
         provider=config.provider,
         model=config.model,
         api_key=config.api_key,
         base_url=config.base_url,
-        provider_options_json=config.provider_options_json,
+        provider_options=config.provider_options,
         temperature=config.temperature,
         max_tokens=config.max_tokens,
     )
@@ -52,7 +52,7 @@ def build_chat_client(
     model: str,
     api_key: str,
     base_url: str,
-    provider_options_json: str,
+    provider_options: dict[str, Any],
     temperature: float,
     max_tokens: int,
 ) -> Any:
@@ -66,16 +66,13 @@ def build_chat_client(
         base_url=base_url.strip(),
         temperature=temperature,
         max_tokens=normalized_max_tokens,
-        provider_options=decode_provider_options(provider_options_json),
+        provider_options=dict(provider_options or {}),
     )
 
 
-def decode_provider_options(raw: str) -> dict[str, Any]:
-    raw = (raw or "").strip()
-    if not raw:
-        return {}
-
-    decoded = json.loads(raw)
-    if not isinstance(decoded, dict):
-        raise ValueError("provider_options_json must be a JSON object")
-    return decoded
+__all__ = [
+    "build_chat_client",
+    "build_chat_client_from_node",
+    "build_ppt_llms",
+    "describe_model_assignment",
+]

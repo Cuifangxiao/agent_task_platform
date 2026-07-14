@@ -346,7 +346,7 @@
         {"layout_id": "pixel_section", "components": ["section", "quote"], "rhythms": ["anchor", "breathing"], "composition": "Oversized level number and chapter title inside a pixel frame", "geometry": {"level": [100, 160, 300, 330], "headline": [420, 235, 700, 190]}},
         {"layout_id": "pixel_console", "components": ["content-basic", "data-table", "summary"], "rhythms": ["dense", "breathing"], "composition": "One primary console surface with a slim status rail and output footer", "geometry": {"console": [62, 150, 840, 445], "status": [930, 160, 285, 390]}},
         {"layout_id": "pixel_metrics", "components": ["kpi-cards", "chart-takeaway", "comparison", "quadrant"], "rhythms": ["dense"], "composition": "Pixel-aligned metrics or comparison blocks share one neon baseline", "geometry": {"primary": [70, 180, 500, 340], "secondary": [625, 180, 570, 340], "baseline": [215, 555, 850, 62]}},
-        {"layout_id": "pixel_sequence", "components": ["timeline", "steps", "agenda"], "rhythms": ["dense", "anchor"], "composition": "Quest stages advance across a segmented neon path with status checkpoints", "geometry": {"quests": [80, 205, 1120, 350], "prompt": [350, 580, 580, 45]}}
+        {"layout_id": "pixel_sequence", "components": ["timeline", "steps", "agenda"], "rhythms": ["dense", "anchor"], "composition": "Quest stages advance across a segmented neon path with status milestones", "geometry": {"quests": [80, 205, 1120, 350], "prompt": [350, 580, 580, 45]}}
       ]
     },
     {

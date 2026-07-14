@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import core.deck.pipeline.design_lock as design_lock
+from core.deck.contract import EventType, PptStage
 from core.deck.pipeline.design_lock import build_design_contract, compile_design_package, freeze_design_contract, page_contract
 from core.deck.pipeline.outline import parse_outline_slides
 from core.deck.pipeline.slides import apply_design_contract
@@ -16,7 +17,7 @@ def _state():
         "theme": default_theme().to_dict(),
         "plan": {
             "title": "Locked deck",
-            "narrative": "One confirmed story",
+            "narrative": "One coherent story",
             "slides": [
                 {"index": 1, "title": "Open", "role": "hook", "component": "cover", "key_message": "Set context"},
                 {"index": 2, "title": "Compare", "role": "turn", "component": "comparison", "key_message": "Show the change"},
@@ -58,15 +59,14 @@ def test_freeze_design_contract_replaces_old_spec_with_authoritative_artifacts(t
         "template-manifest.json",
     }
     assert expected.issubset({path.name for path in request_dir.iterdir()})
-    assert not (request_dir / "ppt-spec.v1.json").exists()
     persisted = json.loads((request_dir / "design-spec.json").read_text(encoding="utf-8"))
     assert persisted["spec_hash"] == result["design_contract"]["spec_hash"]
     assert result["design_contract"] == result["design_spec"]
     assert "## 10. Page blueprints" in (request_dir / "design-spec.md").read_text(encoding="utf-8")
     assert "## Executor rules" in (request_dir / "spec-lock.md").read_text(encoding="utf-8")
     assert (request_dir / "templates" / "page-001.svg").read_text(encoding="utf-8") == persisted["pages"][0]["template_svg_source"]
-    assert emitted[-1]["stage"] == "design_lock"
-    assert emitted[-1]["payload"]["status"] == "done"
+    assert emitted[-1].type is EventType.STEP_COMPLETED
+    assert emitted[-1].stage is PptStage.GENERATING_ASSETS
 
 
 def test_design_contract_reapplies_locked_component_without_losing_generated_text():

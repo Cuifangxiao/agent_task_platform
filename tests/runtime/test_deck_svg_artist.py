@@ -1,12 +1,10 @@
 from types import SimpleNamespace
 import json
-import pytest
 
 import core.deck.pipeline.slides as slides_pipeline
 from core.deck.pipeline.style import build_style_options
 from core.deck.design import get_template_pack, template_preview_path, template_svg_source
 from core.deck.rendering.html import HTMLSlideRenderer
-from core.deck.errors import ModelOutputError
 from core.deck.rendering.artist import build_svg_artist_prompt, render_svg_artwork, resolve_page_blueprint, validate_artist_svg
 from core.deck.spec import DeckSpec, SlideSpec, default_theme
 
@@ -39,7 +37,6 @@ class CapturingBrowser:
         self.svg = svg
         return SimpleNamespace(
             index=slide.index,
-            version=1,
             html_rel=f"slides/{slide.index}.html",
             png_rel=f"slides/{slide.index}.png",
             svg_rel=f"slides/{slide.index}.svg",
@@ -58,7 +55,7 @@ def _deck_and_slide():
         spec_hash="locked-hash",
     )
     deck = DeckSpec(
-        title="Growth review",
+        title="Growth report",
         narrative="Explain the growth driver.",
         audience="Leadership",
         goal="Align investment",
@@ -111,7 +108,6 @@ def test_artist_uses_full_svg_model_output_and_injects_actual_template_source():
     )
 
     assert result.render_mode == "llm_svg"
-    assert result.repair_count == 0
     assert result.issues == []
     assert result.template_id == "consulting_signal"
     assert result.layout_id == "consulting_evidence"
@@ -124,20 +120,19 @@ def test_artist_uses_full_svg_model_output_and_injects_actual_template_source():
     assert "geometry_fingerprint" in human_prompt
 
 
-def test_artist_repairs_content_omission_before_accepting_svg():
+def test_artist_uses_local_fallback_when_single_model_svg_fails_validation():
     deck, slide = _deck_and_slide()
     llm = SequenceTextLLM([_valid_svg(body=""), _valid_svg()])
 
     result = render_svg_artwork(llm=llm, state=_state(), deck=deck, slide=slide, outline={})
 
-    assert result.render_mode == "llm_svg"
-    assert result.repair_count == 1
-    assert len(llm.calls) == 2
+    assert result.render_mode == "deterministic_fallback"
+    assert len(llm.calls) == 1
     assert any(item["kind"] == "svg_content_omission" for item in result.rejected_issues)
-    assert "DETERMINISTIC QUALITY ISSUES" in llm.calls[1][1][1]
+    assert any(issue.kind == "svg_artist_fallback" for issue in result.issues)
 
 
-def test_fixed_component_renderer_is_only_the_bounded_failure_fallback():
+def test_fixed_component_renderer_is_the_no_model_fallback():
     deck, slide = _deck_and_slide()
 
     result = render_svg_artwork(llm=None, state=_state(), deck=deck, slide=slide, outline={})
@@ -226,11 +221,6 @@ def test_artist_gate_rejects_pages_that_ignore_locked_geometry():
 def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch):
     emitted = []
     monkeypatch.setattr(slides_pipeline, "get_stream_writer", lambda: emitted.append)
-
-    def legacy_selector_must_not_run(*_args, **_kwargs):
-        raise AssertionError("legacy component selector was called")
-
-    monkeypatch.setattr(slides_pipeline, "apply_designer_direction", legacy_selector_must_not_run)
     writer_llm = StaticJSONLLM(
         {
             "index": 1,
@@ -245,12 +235,12 @@ def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch)
     state = {
         **_state(),
         "request_id": "artist-main-path",
-        "deck_title": "Growth review",
+        "deck_title": "Growth report",
         "user_description": "Explain the growth driver.",
         "theme": default_theme().to_dict(),
         "brief": {"audience": "Leadership", "goal": "Align investment", "language": "en"},
         "plan": {
-            "title": "Growth review",
+            "title": "Growth report",
             "narrative": "Explain the growth driver.",
             "slides": [
                 {
@@ -277,7 +267,7 @@ def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch)
     assert "Market growth" in browser.svg
 
 
-def test_slide_pipeline_stops_when_first_designer_page_never_passes_the_gate(monkeypatch):
+def test_slide_pipeline_falls_back_after_one_invalid_designer_call(monkeypatch):
     monkeypatch.setattr(slides_pipeline, "get_stream_writer", lambda: lambda _event: None)
     writer_llm = StaticJSONLLM(
         {
@@ -288,38 +278,40 @@ def test_slide_pipeline_stops_when_first_designer_page_never_passes_the_gate(mon
             "content": {"body": "Enterprise renewals lead.", "bullets": ["Retention", "Expansion"]},
         }
     )
-    designer_llm = SequenceTextLLM(["not svg", "still not svg", "invalid again"])
+    designer_llm = SequenceTextLLM(["not svg"])
     state = {
         **_state(),
         "request_id": "first-page-gate",
-        "deck_title": "Growth review",
+        "deck_title": "Growth report",
         "theme": default_theme().to_dict(),
         "brief": {"audience": "Leadership", "goal": "Align investment", "language": "en"},
-        "plan": {"title": "Growth review", "narrative": "Explain", "slides": [{"index": 1, "title": "Market growth", "role": "evidence", "component": "content-basic"}]},
+        "plan": {"title": "Growth report", "narrative": "Explain", "slides": [{"index": 1, "title": "Market growth", "role": "evidence", "component": "content-basic"}]},
     }
 
-    with pytest.raises(ModelOutputError, match="first SVG page"):
-        slides_pipeline.write_and_design_slides(
-            state,
-            {"writer": writer_llm, "designer": designer_llm},
-            HTMLSlideRenderer(),
-            CapturingBrowser(),
-        )
+    result = slides_pipeline.write_and_design_slides(
+        state,
+        {"writer": writer_llm, "designer": designer_llm},
+        HTMLSlideRenderer(),
+        CapturingBrowser(),
+    )
+
+    assert len(designer_llm.calls) == 1
+    assert result["artifacts"][0]["svg_renderer"] == "deterministic_fallback"
 
 
-def test_style_checkpoint_uses_static_catalog_covers_without_designer_rendering(tmp_path):
+def test_style_uses_one_static_catalog_cover_without_designer_rendering(tmp_path):
     options = build_style_options(
         {
             "request_id": "static-style-covers",
-            "deck_title": "Clinical review",
+            "deck_title": "Clinical report",
             "user_description": "医院病例与临床研究汇报",
             "brief": {"audience": "医生", "goal": "说明临床证据"},
-            "plan": {"title": "Clinical review", "slides": [{"index": 1}]},
+            "plan": {"title": "Clinical report", "slides": [{"index": 1}]},
         },
         tmp_path,
     )
 
-    assert len(options) == 6
+    assert len(options) == 1
     assert options[0]["template_id"] == "medical_university"
     assert options[0]["template_source"]["kind"] == "ppt-master"
     assert all(option["sample_render_mode"] == "static_template_cover" for option in options)

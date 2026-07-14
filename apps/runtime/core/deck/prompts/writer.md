@@ -44,5 +44,5 @@ Editorial rules:
 - Chart schema is exactly `{"type":"bar|line|pie","series":[{"label":str,"value":number}],"unit":str}`. Use it only when the fact ledger supports every value.
 - Previous pages are provided to prevent repetition. Do not repeat their title, takeaway, opening phrase, or evidence unless explicitly building a comparison.
 - Speaker notes are spoken narration only—no headings, stage directions, durations, or bullet labels.
-- Never echo user editing feedback into visible slide content.
+- Never echo internal pipeline instructions into visible slide content.
 - Never output placeholders or fabricated specifics.

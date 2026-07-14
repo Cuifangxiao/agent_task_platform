@@ -2,99 +2,60 @@ import type { DownloadResult, HttpClient } from '@/shared/api/httpClient'
 import { consumeEventStream } from '@/shared/api/sse'
 import type { ParsedSseEvent } from '@/shared/api/sse'
 
-import type {
-  PptConversationDetail,
-  PptConversationSummary,
-  PptDeckJob,
-  PptGeneratePayload,
-  PptJobActionPayload,
-} from './types'
-
-const PRESENTATIONS_PATH = '/presentations'
+import { PPT_TASKS_PATH, pptTaskArtifactPath, pptTaskEventRequest, pptTaskPath } from './lib/taskRoutes'
+import type { PptCreateTaskPayload, PptTask } from './types'
 
 export interface PresentationApi {
-  listConversations: () => Promise<PptConversationSummary[]>
-  getConversation: (id: number) => Promise<PptConversationDetail>
-  deleteConversation: (id: number) => Promise<{ deleted: boolean; id: number }>
-  createJob: (payload: PptGeneratePayload) => Promise<PptDeckJob>
-  getJob: (jobId: string) => Promise<PptDeckJob>
-  subscribeToJob: (
-    jobId: string,
+  createTask: (payload: PptCreateTaskPayload) => Promise<PptTask>
+  getTask: (taskId: string) => Promise<PptTask>
+  subscribeTask: (
+    taskId: string,
     onEvent: (event: ParsedSseEvent) => void,
     signal: AbortSignal,
-    lastEventId?: number,
+    after?: number,
   ) => Promise<void>
-  submitJobAction: (
-    jobId: string,
-    payload: PptJobActionPayload,
-  ) => Promise<{ job: PptDeckJob; duplicate: boolean }>
-  cancelJob: (jobId: string) => Promise<PptDeckJob>
-  downloadArtifact: (requestId: string) => Promise<DownloadResult>
-  downloadAsset: (requestId: string, relativePath: string) => Promise<Blob>
+  cancelTask: (taskId: string) => Promise<PptTask>
+  downloadTaskFile: (taskId: string, relativePath?: string) => Promise<DownloadResult>
 }
 
 export function createPresentationApi(http: HttpClient): PresentationApi {
   return {
-    listConversations: () =>
-      http.request<PptConversationSummary[]>(`${PRESENTATIONS_PATH}/conversations`, { auth: true }),
-    getConversation: (id) =>
-      http.request<PptConversationDetail>(`${PRESENTATIONS_PATH}/conversations/${id}`, { auth: true }),
-    deleteConversation: (id) =>
-      http.request<{ deleted: boolean; id: number }>(`${PRESENTATIONS_PATH}/conversations/${id}`, {
-        method: 'DELETE',
-        auth: true,
-      }),
-    createJob: (payload) =>
-      http.request<PptDeckJob>(`${PRESENTATIONS_PATH}/jobs`, {
+    createTask: (payload) =>
+      http.request<PptTask>(PPT_TASKS_PATH, {
         method: 'POST',
         auth: true,
-        body: toGenerateFormData(payload),
+        body: toTaskFormData(payload),
       }),
-    getJob: (jobId) =>
-      http.request<PptDeckJob>(`${PRESENTATIONS_PATH}/jobs/${encodeURIComponent(jobId)}`, { auth: true }),
-    async subscribeToJob(jobId, onEvent, signal, lastEventId = 0) {
-      const stream = await http.openStream(`${PRESENTATIONS_PATH}/jobs/${encodeURIComponent(jobId)}/events`, {
+    getTask: (taskId) =>
+      http.request<PptTask>(pptTaskPath(taskId), { auth: true }),
+    async subscribeTask(taskId, onEvent, signal, after = 0) {
+      const request = pptTaskEventRequest(taskId, after)
+      const stream = await http.openStream(request.path, {
         auth: true,
         signal,
-        headers: lastEventId > 0 ? { 'Last-Event-ID': String(lastEventId) } : undefined,
+        headers: request.headers,
       })
       await consumeEventStream(stream, onEvent)
     },
-    submitJobAction: (jobId, payload) =>
-      http.request<{ job: PptDeckJob; duplicate: boolean }>(
-        `${PRESENTATIONS_PATH}/jobs/${encodeURIComponent(jobId)}/actions`,
-        { method: 'POST', auth: true, body: payload },
-      ),
-    cancelJob: (jobId) =>
-      http.request<PptDeckJob>(`${PRESENTATIONS_PATH}/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    cancelTask: (taskId) =>
+      http.request<PptTask>(`${pptTaskPath(taskId)}/cancel`, {
         method: 'POST',
         auth: true,
       }),
-    downloadArtifact: (requestId) =>
-      http.download(`${PRESENTATIONS_PATH}/artifacts/${encodeURIComponent(requestId)}`, { auth: true }),
-    downloadAsset: (requestId, relativePath) =>
-      http.downloadBlob(artifactPath(requestId, relativePath), { auth: true }),
+    downloadTaskFile: (taskId, relativePath) =>
+      http.download(
+        relativePath ? pptTaskArtifactPath(taskId, relativePath) : `${pptTaskPath(taskId)}/file`,
+        { auth: true },
+      ),
   }
 }
 
-function toGenerateFormData(payload: PptGeneratePayload) {
+function toTaskFormData(payload: PptCreateTaskPayload) {
   const formData = new FormData()
-  if (payload.agent_config_id !== undefined) {
-    formData.append('agent_config_id', String(payload.agent_config_id))
-  }
+  formData.append('agent_config_id', String(payload.agent_config_id))
   formData.append('description', payload.description)
-  formData.append('mode', payload.mode ?? 'step_by_step')
   for (const file of payload.source_files ?? []) {
     formData.append('source_files', file)
   }
   return formData
-}
-
-function artifactPath(requestId: string, relativePath: string) {
-  const assetPath = relativePath
-    .split('/')
-    .filter(Boolean)
-    .map((part) => encodeURIComponent(part))
-    .join('/')
-  return `${PRESENTATIONS_PATH}/artifacts/${encodeURIComponent(requestId)}/${assetPath}`
 }

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"database/sql"
 
 	"agent-task-platform/apps/api/internal/config"
@@ -22,7 +21,6 @@ import (
 
 type container struct {
 	routes router.Dependencies
-	start  func(context.Context) error
 }
 
 func buildContainer(
@@ -34,8 +32,6 @@ func buildContainer(
 	userRepo := user.NewRepository(db)
 	modelConfigRepo := modelconfig.NewRepository(db)
 	agentConfigRepo := agentconfig.NewRepository(db)
-	presentationHistoryRepo := pptagent.NewHistoryRepository(db)
-	presentationJobRepo := pptagent.NewJobRepository(db)
 	runtimeClient := pythonruntime.NewClient(grpcConn)
 
 	tokenManager := auth.NewManager(
@@ -59,10 +55,8 @@ func buildContainer(
 	presentationService := pptagent.NewService(
 		modelConfigRepo,
 		agentConfigRepo,
-		presentationHistoryRepo,
 		runtimeClient,
 		cfg.PythonAgent.ArtifactsDir,
-		presentationJobRepo,
 	)
 
 	return container{
@@ -77,6 +71,5 @@ func buildContainer(
 			Tokens:              tokenManager,
 			Sessions:            sessionStore,
 		},
-		start: presentationService.RecoverJobs,
 	}
 }

@@ -40,7 +40,7 @@ def render_template_reference_svg(
 ) -> str:
     """Render one catalog layout as a complete, restricted reference SVG.
 
-    ``theme`` lets a confirmed art direction override the pack's default token
+    ``theme`` lets the active art direction override the pack's default token
     values without changing its geometry or visual language.
     """
 

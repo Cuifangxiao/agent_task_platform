@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import io
 import logging
-import shutil
 import threading
 import textwrap
 import time
@@ -42,7 +41,6 @@ SVG_BROWSER_BLOCKING_ISSUES = frozenset(
 @dataclass
 class SlideArtifact:
     index: int
-    version: int
     html_path: Path
     png_path: Path
     svg_path: Path | None
@@ -186,7 +184,6 @@ class BrowserRenderer:
         slide: SlideSpec,
         html: str,
         *,
-        version: int = 1,
         theme: ThemeTokens | None = None,
         svg: str = "",
     ) -> SlideArtifact:
@@ -195,17 +192,10 @@ class BrowserRenderer:
         html_path = project.preview_html(slide.index)
         png_path = project.preview_png(slide.index)
         svg_path = project.svg(slide.index) if svg.strip() else None
-        history_html_path = project.preview_html(slide.index, version=version) if version > 1 else None
-        history_png_path = project.preview_png(slide.index, version=version) if version > 1 else None
-        history_svg_path = project.svg(slide.index, version=version) if version > 1 and svg_path is not None else None
         effective_html = svg_preview_html(svg) if svg_path is not None else html
         html_path.write_text(effective_html, encoding="utf-8")
         if svg_path is not None:
             svg_path.write_text(svg, encoding="utf-8")
-        if history_html_path is not None:
-            history_html_path.write_text(effective_html, encoding="utf-8")
-        if history_svg_path is not None:
-            history_svg_path.write_text(svg, encoding="utf-8")
 
         renderer = "playwright"
         dom_issues: list[ValidationIssue] = []
@@ -225,9 +215,6 @@ class BrowserRenderer:
             record_fallback()
             logger.info("slide screenshot fell back to pillow: page=%s err=%s", slide.index, exc)
             _fallback_preview_png(png_path, slide, theme)
-        if history_png_path is not None:
-            shutil.copyfile(png_path, history_png_path)
-
         issues = validate_html_static(effective_html, page=slide.index) + dom_issues
         issues.extend(svg_issues)
         if renderer != "playwright":
@@ -237,19 +224,18 @@ class BrowserRenderer:
                     severity="must_fix",
                     kind="preview_renderer_degraded",
                     description="The browser renderer was unavailable, so this preview used a non-authoritative fallback.",
-                    suggestion="Retry with Playwright available before treating the deck as fully reviewed.",
+                    suggestion="Enable Playwright to produce the authoritative browser preview.",
                 )
             )
         thumb_b64 = _thumbnail_b64(png_path)
         return SlideArtifact(
             index=slide.index,
-            version=version,
             html_path=html_path,
             png_path=png_path,
             svg_path=svg_path,
-            html_rel=_relative_to_request(history_html_path or html_path, request_dir),
-            png_rel=_relative_to_request(history_png_path or png_path, request_dir),
-            svg_rel=_relative_to_request(history_svg_path or svg_path, request_dir) if svg_path is not None else "",
+            html_rel=_relative_to_request(html_path, request_dir),
+            png_rel=_relative_to_request(png_path, request_dir),
+            svg_rel=_relative_to_request(svg_path, request_dir) if svg_path is not None else "",
             thumb_b64=thumb_b64,
             issues=issues,
             renderer=renderer,

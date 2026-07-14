@@ -15,7 +15,6 @@ import {
 import { computed } from 'vue'
 
 import ProviderIcon from '@/components/ProviderIcon.vue'
-import type { PptConversationSummary } from '@/features/presentations/types'
 import type { AgentConfig, AgentDefinition, ModelConfig } from '@/types'
 
 const props = withDefaults(defineProps<{
@@ -23,7 +22,6 @@ const props = withDefaults(defineProps<{
   agents: AgentDefinition[]
   agentConfigs: AgentConfig[]
   pptConfigs: AgentConfig[]
-  conversations: PptConversationSummary[]
   apiHealth: 'unknown' | 'ok' | 'down'
   preview?: boolean
 }>(), {
@@ -74,13 +72,7 @@ const providerRows = computed(() => {
 })
 
 const recentTasks = computed<DashboardTask[]>(() => {
-  if (props.preview) return previewTasks
-  return props.conversations.slice(0, 3).map((conversation) => ({
-    id: conversation.id,
-    title: conversation.title,
-    ...conversationStatus(conversation.status),
-    updatedAt: formatDateTime(conversation.updated_at),
-  }))
+  return props.preview ? previewTasks : []
 })
 
 const currentConfigName = computed(() => {
@@ -97,20 +89,6 @@ function providerName(provider: string) {
   return provider
 }
 
-function conversationStatus(status: string): Pick<DashboardTask, 'status' | 'tone'> {
-  if (status === 'done' || status === 'success') return { status: '已完成', tone: 'green' }
-  if (status === 'running') return { status: '生成中', tone: 'blue' }
-  if (status === 'waiting') return { status: '等待确认', tone: 'amber' }
-  if (status === 'error' || status === 'failed') return { status: '失败', tone: 'red' }
-  return { status: '排队中', tone: 'gray' }
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  const two = (part: number) => String(part).padStart(2, '0')
-  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
-}
 </script>
 
 <template>
@@ -210,7 +188,7 @@ function formatDateTime(value: string) {
           <Presentation :size="24" />
           <div>
             <strong>还没有 PPT 任务</strong>
-            <span>创建第一个任务后，最近进度会显示在这里。</span>
+            <span>当前版本不保存任务历史，请前往 PPT 页面创建任务。</span>
           </div>
           <button type="button" @click="emit('navigate', 'ppt')">创建任务</button>
         </div>

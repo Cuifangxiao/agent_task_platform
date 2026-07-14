@@ -5,8 +5,6 @@ import AppShell from '@/components/AppShell.vue'
 import {
   previewAgentConfigs,
   previewAgents,
-  previewConversationDetails,
-  previewConversations,
   previewLogs,
   previewModels,
   previewProviders,
@@ -29,20 +27,11 @@ const isDesignPreview = previewPage !== null
 const activePage = ref(previewPage ?? 'dashboard')
 const saving = ref(false)
 const designPreviewPresentationApi: PresentationApi = {
-  listConversations: async () => previewConversations,
-  getConversation: async (id) => {
-    const conversation = previewConversationDetails[id]
-    if (!conversation) throw new Error('没有找到这条预览对话。')
-    return conversation
-  },
-  deleteConversation: async () => { throw new Error('设计预览中不能删除对话。') },
-  createJob: async () => { throw new Error('设计预览中不能创建真实任务。') },
-  getJob: async () => { throw new Error('设计预览中没有真实任务。') },
-  subscribeToJob: async () => {},
-  submitJobAction: async () => { throw new Error('设计预览中不能提交任务操作。') },
-  cancelJob: async () => { throw new Error('设计预览中不能取消任务。') },
-  downloadArtifact: async () => { throw new Error('设计预览中没有可下载的产物。') },
-  downloadAsset: async () => { throw new Error('设计预览中没有可下载的资源。') },
+  createTask: async () => { throw new Error('设计预览中不能创建真实任务。') },
+  getTask: async () => { throw new Error('设计预览中没有真实任务。') },
+  subscribeTask: async () => {},
+  cancelTask: async () => { throw new Error('设计预览中不能取消任务。') },
+  downloadTaskFile: async () => { throw new Error('设计预览中没有可下载的文件。') },
 }
 
 interface FormActionCallbacks {
@@ -56,7 +45,6 @@ const pageModels = computed(() => isDesignPreview ? previewModels : store.modelC
 const pageAgents = computed(() => isDesignPreview ? previewAgents : store.agents.value)
 const pageAgentConfigs = computed(() => isDesignPreview ? previewAgentConfigs : store.agentConfigs.value)
 const pagePptConfigs = computed(() => pageAgentConfigs.value.filter((item) => item.agent_key === 'ppt_agent' && item.status === 'active'))
-const pageConversations = computed(() => isDesignPreview ? previewConversations : store.pptConversations.value)
 const pageLogs = computed(() => isDesignPreview ? previewLogs : store.logs.value)
 
 onMounted(() => {
@@ -207,7 +195,6 @@ function normalizeError(error: unknown) {
         :agents="pageAgents"
         :agent-configs="pageAgentConfigs"
         :ppt-configs="pagePptConfigs"
-        :conversations="pageConversations"
         :api-health="isDesignPreview ? 'ok' : store.health.value"
         :preview="isDesignPreview"
         @navigate="activePage = $event"

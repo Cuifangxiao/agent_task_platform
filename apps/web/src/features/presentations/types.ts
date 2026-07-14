@@ -1,216 +1,113 @@
-export interface PptGeneratePayload {
-  agent_config_id?: number
+export interface PptCreateTaskPayload {
+  agent_config_id: number
   description: string
   source_files?: File[]
-  mode?: 'quick' | 'step_by_step'
 }
 
-export interface PptStreamChunk {
-  event_version?: number
-  job_id?: string
-  conversation_id?: number
-  request_id?: string
-  event_type?: string
-  stage?: string
-  message?: string
-  channel?: string
-  text_delta?: string
-  content?: string
-  outline_markdown?: string
-  payload?: unknown
-  artifact_url?: string
-  done?: boolean
-  error?: string
-  error_code?: string
-  stage_status?: 'pending' | 'running' | 'waiting' | 'done' | 'warning' | 'error' | string
-  progress?: { current: number; total: number }
-  slide?: { index: number; version: number }
-  severity?: 'info' | 'warning' | 'error' | string
-  action_required?: 'approve_outline' | 'choose_style' | null | string
-  retryable?: boolean
-  sequence?: number
+export type PptTaskStatus = 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+export type PptEventType =
+  | 'TASK_STARTED'
+  | 'STEP_STARTED'
+  | 'STEP_PROGRESS'
+  | 'STEP_COMPLETED'
+  | 'ARTIFACT_READY'
+  | 'TASK_COMPLETED'
+  | 'TASK_FAILED'
+
+export type PptStage =
+  | 'PREPARING'
+  | 'PLANNING'
+  | 'GENERATING_CONTENT'
+  | 'GENERATING_ASSETS'
+  | 'GENERATING_PAGES'
+  | 'RENDERING'
+  | 'ASSEMBLING_PPT'
+  | 'FINISHED'
+
+export type PptResourceType =
+  | 'INPUT_ATTACHMENT'
+  | 'IMAGE'
+  | 'SVG'
+  | 'HTML'
+  | 'PAGE_PREVIEW'
+  | 'PPTX'
+  | 'OTHER_FILE'
+
+export interface PptProgress {
+  current: number
+  total: number
+  percent?: number
+  unit?: string
 }
 
-export type PptJobStatus =
-  | 'queued'
-  | 'running'
-  | 'waiting_for_outline'
-  | 'waiting_for_style'
-  | 'exporting'
-  | 'success'
-  | 'success_with_warnings'
-  | 'needs_review'
-  | 'failed'
-  | 'cancelled'
-
-export interface PptDeckJob {
-  job_id: string
-  conversation_id: number
-  agent_config_id: number
-  request_id?: string
-  mode: 'quick' | 'step_by_step' | string
-  status: PptJobStatus
-  stage: string
-  error_code?: string
-  error_summary?: string
-  retryable: boolean
-  last_event_sequence: number
-  quality: Record<string, unknown>
-  created_at: string
-  updated_at: string
-}
-
-export interface PptJobActionPayload {
-  action: 'approve_outline' | 'regenerate_outline' | 'choose_style' | 'regenerate_slide' | string
-  outline_markdown?: string
-  payload?: Record<string, unknown>
-}
-
-export interface PptConversationSummary {
-  id: number
-  agent_config_id: number
-  agent_config_name: string
-  title: string
-  status: 'running' | 'waiting' | 'done' | 'error' | string
-  latest_request_id?: string
-  created_at: string
-  updated_at: string
-}
-
-export interface PptConversationDetail extends PptConversationSummary {
-  messages: Record<string, unknown>[]
-  job?: PptDeckJob
-}
-
-export interface ProgressStep {
-  id: number
-  label: string
-  message: string
-  stage?: string
-  tone: 'normal' | 'error' | 'done'
-  state: 'pending' | 'running' | 'waiting' | 'done' | 'error'
-  startedAt?: number
-  completedAt?: number
-}
-
-export type SlideProgressStatus = 'pending' | 'running' | 'ready' | 'reviewed' | 'warning' | 'error'
-
-export interface SlideProgress {
-  index: number
-  title: string
-  keyMessage: string
-  layout: string
-  component: string
-  bullets: string[]
-  visualSuggestion: string
-  speakerNotes: string
-  previewPng: string
-  previewHtml: string
-  previewSvg: string
-  previewThumb: string
-  version: number
-  status: SlideProgressStatus
-  warnings: string[]
-}
-
-export interface SlideProgressUpdate extends Partial<Omit<SlideProgress, 'index'>> {
-  index: number
-  replaceWarnings?: boolean
-}
-
-export interface StyleOption {
-  styleId: string
+export interface PptResource {
+  resource_id: string
+  type: PptResourceType
   name: string
-  communicationMode: string
-  visualStyle: string
-  templateId: string
-  templateMode: string
-  templateSummary: string
-  templateSource: string
-  rationale: string
-  confirmations: Record<string, string>
-  layoutPrinciples: string[]
-  imageStrategy: string
-  coverPng: string
-  coverHtml: string
-  thumbB64: string
-  tokensSummary: string
-  previewNote: string
+  url?: string
+  relative_path?: string
+  mime_type?: string
+  size_bytes?: number
 }
 
-export interface UserMessage {
-  id: number
-  role: 'user'
-  kind: 'user'
-  text: string
-  fileNames?: string[]
+export interface PptPageDetail {
+  page_id?: string
+  page_index: number
+  page_count?: number
+  title?: string
 }
 
-export interface StatusMessage {
-  id: number
-  role: 'assistant'
-  kind: 'status'
-  title: string
-  text: string
-  requestId?: string
-  state: 'running' | 'waiting' | 'done' | 'error' | 'cancelled'
-  steps: ProgressStep[]
-  slides: SlideProgress[]
+export interface PptTaskError {
+  code: string
+  message: string
+  retryable?: boolean
 }
 
-export interface OutlineMessage {
-  id: number
-  role: 'assistant'
-  kind: 'outline'
-  title: string
-  text: string
-  requestId: string
-  outlineMarkdown: string
-  awaitingConfirm: boolean
-  showEditor: boolean
+export interface PptFinalResult {
+  ppt_file?: PptResource
+  slide_count?: number
+  elapsed_ms?: number
 }
 
-export interface StyleMessage {
-  id: number
-  role: 'assistant'
-  kind: 'style'
-  title: string
-  text: string
-  requestId: string
-  options: StyleOption[]
-  awaitingConfirm: boolean
+export interface PptAgentEvent {
+  task_id: string
+  sequence: number
+  created_at?: string
+  type: PptEventType
+  stage?: PptStage
+  message: string
+  progress?: PptProgress
+  resources?: PptResource[]
+  page?: PptPageDetail
+  error?: PptTaskError
+  final_result?: PptFinalResult
 }
 
-export interface ResultMessage {
-  id: number
-  role: 'assistant'
-  kind: 'result'
-  title: string
-  text: string
-  requestId: string
-  fileName: string
-  warnings: string[]
-  degraded: boolean
-  qualityStatus: string
+export interface PptTask {
+  task_id: string
+  status: PptTaskStatus
+  stage?: PptStage
+  message?: string
+  progress?: PptProgress
+  result?: PptFinalResult
+  error?: PptTaskError
+  last_event_sequence?: number
+  created_at?: string
+  updated_at?: string
+  finished_at?: string
+  events_url?: string
+  file_url?: string
 }
 
-export type ChatMessage = UserMessage | StatusMessage | OutlineMessage | StyleMessage | ResultMessage
+export interface PptPagePreview {
+  resource: PptResource
+  page?: PptPageDetail
+  sequence: number
+}
 
 export interface PreviewLightbox {
   src: string
   title: string
   subtitle: string
 }
-
-export type PresentationMessageAction =
-  | { type: 'preview'; src: string; title: string; subtitle: string }
-  | { type: 'approve-outline'; message: OutlineMessage }
-  | { type: 'regenerate-outline'; message: OutlineMessage }
-  | { type: 'choose-style'; message: StyleMessage; option: StyleOption }
-  | { type: 'regenerate-slide'; slide: SlideProgress }
-  | { type: 'download'; requestId: string; fileName: string }
-  | { type: 'update-outline'; messageId: number; value: string }
-  | { type: 'update-outline-feedback'; messageId: number; value: string }
-  | { type: 'toggle-outline-editor'; messageId: number }
-  | { type: 'update-style-feedback'; messageId: number; value: string }
-  | { type: 'update-slide-feedback'; slideIndex: number; value: string }

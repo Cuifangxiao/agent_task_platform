@@ -207,9 +207,9 @@ def invoke_text_with_retries(llm: Any, system: str, user: str, *, attempts: int)
     """Invoke a model for a non-JSON artifact and reject empty responses.
 
     SVG authoring is deliberately handled as text instead of asking a JSON model
-    to escape a complete XML document.  Retries here cover transport/model
-    failures and empty output; semantic SVG repair remains the responsibility of
-    the SVG Artist so it can feed deterministic quality issues back to the model.
+    to escape a complete XML document. Callers choose the number of transport or
+    empty-output attempts; the SVG Artist uses exactly one attempt and relies on
+    deterministic validation plus a local fallback.
     """
 
     last_error: Exception | None = None

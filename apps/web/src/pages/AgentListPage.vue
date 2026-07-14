@@ -8,7 +8,6 @@ import NodeBindingList from '@/components/NodeBindingList.vue'
 import ProviderIcon from '@/components/ProviderIcon.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { MODEL_TYPE_OPTIONS, modelTypeLabel, normalizeModelType } from '@/features/models/modelPresentation'
-import { modelNameSupportsImageInput } from '@/features/presentations/lib/workflow'
 import type { AgentConfig, AgentConfigNodeBinding, AgentConfigPayload, AgentDefinition, ModelConfig, Status } from '@/types'
 
 const props = defineProps<{
@@ -144,20 +143,6 @@ function nodeMeta(nodeKey: string) {
 function bindingModel(modelConfigId: string) {
   if (!modelConfigId) return null
   return modelsByID.value.get(Number(modelConfigId)) ?? null
-}
-
-function bindingVisionWarning(nodeKey: string, modelConfigId: string) {
-  if (!['review', 'vlm_review', 'review_vlm'].includes(nodeKey) || !modelConfigId) {
-    return ''
-  }
-  const model = modelsByID.value.get(Number(modelConfigId))
-  if (!model) return ''
-  const warning = '该模型未声明图片输入能力，视觉审查会明确进入 needs_review。'
-  const explicit = model.provider_options.supports_image_input ?? model.provider_options.supports_vision
-  if (explicit === true) return ''
-  if (explicit === false) return warning
-  if (normalizeModelType(model.model_type) === 'multimodal') return ''
-  return modelNameSupportsImageInput(model.model_name) ? '' : warning
 }
 
 function submit() {
@@ -364,9 +349,6 @@ function submit() {
                     </div>
                     <ModelTypeBadge :model-type="bindingModel(binding.model_config_id)!.model_type" />
                   </div>
-                  <small v-if="bindingVisionWarning(binding.node_key, binding.model_config_id)" class="form-error">
-                    {{ bindingVisionWarning(binding.node_key, binding.model_config_id) }}
-                  </small>
                 </label>
                 <div class="form-grid">
                   <label>

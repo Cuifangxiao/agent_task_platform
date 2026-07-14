@@ -1,25 +1,39 @@
-import core.deck.events as events
+from core.deck import events
+from core.deck.contract import EventType, PptStage, ResourceType
 
 
-def test_event_constructors_keep_expected_schema():
-    event = events.slide_preview("Preview ready", {"index": 1})
+def test_preview_event_uses_typed_page_and_relative_resources():
+    event = events.slide_preview(
+        "Preview ready",
+        {
+            "index": 2,
+            "total": 5,
+            "title": "Architecture",
+            "png": "previews/page-002.png",
+            "html": "previews/page-002.html",
+            "svg": "svg_output/page-002.svg",
+        },
+    )
 
-    assert event == {
-        "event_version": 1,
-        "event_type": "slide_preview",
-        "stage": "designer",
-        "stage_status": "running",
-        "message": "Preview ready",
-        "severity": "info",
-        "slide": {"index": 1, "version": 0},
-        "payload": {"index": 1},
-    }
+    assert event.type is EventType.ARTIFACT_READY
+    assert event.stage is PptStage.RENDERING
+    assert event.page.page_index == 2
+    assert event.page.page_count == 5
+    assert [item.type for item in event.resources] == [
+        ResourceType.PAGE_PREVIEW,
+        ResourceType.HTML,
+        ResourceType.SVG,
+    ]
+    assert [item.relative_path for item in event.resources] == [
+        "previews/page-002.png",
+        "previews/page-002.html",
+        "svg_output/page-002.svg",
+    ]
+    assert all("_v" not in item.relative_path for item in event.resources)
 
 
-def test_event_requires_type():
-    try:
-        events.event("", "stage")
-    except ValueError as exc:
-        assert "event_type" in str(exc)
-    else:
-        raise AssertionError("event() should reject a blank event_type")
+def test_stage_progress_maps_done_to_step_completed():
+    event = events.stage_progress("writer", "writer completed", {"status": "done"})
+
+    assert event.type is EventType.STEP_COMPLETED
+    assert event.stage is PptStage.GENERATING_CONTENT

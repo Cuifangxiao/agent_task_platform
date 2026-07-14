@@ -1,9 +1,7 @@
 package pythonruntime
 
 import (
-	"agent-task-platform/apps/api/internal/shared/actor"
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -11,20 +9,25 @@ import (
 	"agent-task-platform/apps/api/internal/modules/provider/catalog"
 	"agent-task-platform/apps/api/internal/modules/provider/credential"
 	"agent-task-platform/apps/api/internal/modules/textgeneration"
+	"agent-task-platform/apps/api/internal/shared/actor"
+	pptagentpb "agent-task-platform/contracts/gen/go/pptagent"
 	providerv1 "agent-task-platform/contracts/gen/go/v1/provider"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
-const maxDeckGRPCMessageBytes = 300 << 20
+const maxPPTGRPCMessageBytes = 300 << 20
 
 type Client struct {
 	grpcClient providerv1.ProviderRuntimeServiceClient
+	pptClient  pptagentpb.PptAgentServiceClient
 	timeout    time.Duration
 }
 
 func NewClient(conn grpc.ClientConnInterface) *Client {
 	return &Client{
 		grpcClient: providerv1.NewProviderRuntimeServiceClient(conn),
+		pptClient:  pptagentpb.NewPptAgentServiceClient(conn),
 		timeout:    5 * time.Second,
 	}
 }
@@ -149,108 +152,54 @@ func (c *Client) StreamText(
 	}, nil
 }
 
-func (c *Client) GenerateDeck(
-	ctx context.Context,
-	user actor.User,
-	req pptagent.RuntimeGenerateDeckRequest,
-) (pptagent.DeckStream, error) {
+func (c *Client) GeneratePpt(ctx context.Context, req pptagent.RuntimeRequest) (pptagent.EventStream, error) {
 	callCtx, cancel := context.WithCancel(ctx)
-
-	nodeModelConfigs := make([]*providerv1.DeckNodeModelConfig, 0, len(req.NodeModelConfigs))
-	for _, config := range req.NodeModelConfigs {
-		nodeModelConfigs = append(nodeModelConfigs, &providerv1.DeckNodeModelConfig{
-			NodeKey:             config.NodeKey,
-			Provider:            config.Provider,
-			Model:               config.Model,
-			ApiKey:              config.APIKey,
-			BaseUrl:             config.BaseURL,
-			ProviderOptionsJson: config.ProviderOptionsJSON,
-			Temperature:         config.Temperature,
-			MaxTokens:           int32(config.MaxTokens),
-			SupportsImageInput:  config.SupportsImageInput,
+	models := make([]*pptagentpb.ModelConfig, 0, len(req.Models))
+	for _, config := range req.Models {
+		options, err := structpb.NewStruct(config.ProviderOptions)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("encode provider options for %s: %w", config.NodeKey, err)
+		}
+		models = append(models, &pptagentpb.ModelConfig{
+			NodeKey:            config.NodeKey,
+			Provider:           config.Provider,
+			Model:              config.Model,
+			ApiKey:             config.APIKey,
+			BaseUrl:            config.BaseURL,
+			ProviderOptions:    options,
+			Temperature:        config.Temperature,
+			MaxTokens:          int32(config.MaxTokens),
+			SupportsImageInput: config.SupportsImageInput,
 		})
 	}
-
-	sourceFiles := make([]*providerv1.DeckSourceFile, 0, len(req.SourceFiles))
-	for _, file := range req.SourceFiles {
-		sourceFiles = append(sourceFiles, &providerv1.DeckSourceFile{
-			Filename:   file.FileName,
-			Content:    file.Content,
-			ResourceId: file.ResourceID,
-			LocalPath:  file.LocalPath,
-			Sha256:     file.SHA256,
-			SizeBytes:  file.SizeBytes,
+	attachments := make([]*pptagentpb.InputResource, 0, len(req.Attachments))
+	for _, attachment := range req.Attachments {
+		attachments = append(attachments, &pptagentpb.InputResource{
+			ResourceId: attachment.ResourceID,
+			Name:       attachment.Name,
+			MimeType:   attachment.MimeType,
+			Content:    attachment.Content,
+			Sha256:     attachment.SHA256,
 		})
 	}
-
-	stream, err := c.grpcClient.GenerateDeck(callCtx, &providerv1.GenerateDeckRequest{
-		JobId:          req.JobID,
-		GenerationMode: req.Mode,
-		User: &providerv1.UserContext{
-			UserId:    user.UserID,
-			Username:  user.Username,
-			SessionId: user.SessionID,
-			Device:    user.Device,
+	stream, err := c.pptClient.GeneratePpt(callCtx, &pptagentpb.GeneratePptRequest{
+		TaskId:      req.TaskID,
+		Description: req.Description,
+		Attachments: attachments,
+		Models:      models,
+		Options: &pptagentpb.PptOptions{
+			Language:           req.Options.Language,
+			ExpectedSlideCount: req.Options.ExpectedSlideCount,
+			AspectRatio:        req.Options.AspectRatio,
+			TemplateId:         req.Options.TemplateID,
 		},
-		UserDescription:    req.Description,
-		SourceFileFilename: req.SourceFileName,
-		SourceFile:         req.SourceFile,
-		NodeModelConfigs:   nodeModelConfigs,
-		SourceFiles:        sourceFiles,
-	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
+	}, grpc.MaxCallSendMsgSize(maxPPTGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxPPTGRPCMessageBytes))
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("call python runtime generate deck failed: %w", err)
+		return nil, fmt.Errorf("call python runtime generate ppt: %w", err)
 	}
-
-	return &deckStream{
-		stream: stream,
-		cancel: cancel,
-	}, nil
-}
-
-func (c *Client) ResumeDeck(
-	ctx context.Context,
-	user actor.User,
-	req pptagent.RuntimeResumeDeckRequest,
-) (pptagent.DeckStream, error) {
-	callCtx, cancel := context.WithCancel(ctx)
-
-	nodeModelConfigs := make([]*providerv1.DeckNodeModelConfig, 0, len(req.NodeModelConfigs))
-	for _, config := range req.NodeModelConfigs {
-		nodeModelConfigs = append(nodeModelConfigs, &providerv1.DeckNodeModelConfig{
-			NodeKey:             config.NodeKey,
-			Provider:            config.Provider,
-			Model:               config.Model,
-			ApiKey:              config.APIKey,
-			BaseUrl:             config.BaseURL,
-			ProviderOptionsJson: config.ProviderOptionsJSON,
-			Temperature:         config.Temperature,
-			MaxTokens:           int32(config.MaxTokens),
-			SupportsImageInput:  config.SupportsImageInput,
-		})
-	}
-
-	stream, err := c.grpcClient.ResumeDeck(callCtx, &providerv1.ResumeDeckRequest{
-		JobId: req.JobID,
-		User: &providerv1.UserContext{
-			UserId:    user.UserID,
-			Username:  user.Username,
-			SessionId: user.SessionID,
-			Device:    user.Device,
-		},
-		RequestId:        req.RequestID,
-		OutlineMarkdown:  req.OutlineMarkdown,
-		NodeModelConfigs: nodeModelConfigs,
-		Action:           req.Action,
-		PayloadJson:      req.PayloadJSON,
-	}, grpc.MaxCallSendMsgSize(maxDeckGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxDeckGRPCMessageBytes))
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("call python runtime resume deck failed: %w", err)
-	}
-
-	return &deckStream{
+	return &pptStream{
 		stream: stream,
 		cancel: cancel,
 	}, nil
@@ -283,69 +232,85 @@ func (s *textStream) Close() error {
 	return nil
 }
 
-type deckStream struct {
-	stream deckRuntimeStream
+type pptStream struct {
+	stream pptRuntimeStream
 	cancel context.CancelFunc
 }
 
-type deckRuntimeStream interface {
-	Recv() (*providerv1.GenerateDeckResponse, error)
+type pptRuntimeStream interface {
+	Recv() (*pptagentpb.AgentEvent, error)
 }
 
-func (s *deckStream) Recv() (*pptagent.DeckStreamChunk, error) {
+func (s *pptStream) Recv() (*pptagent.AgentEvent, error) {
 	resp, err := s.stream.Recv()
 	if err != nil {
 		return nil, err
 	}
-
-	chunk := &pptagent.DeckStreamChunk{
-		EventVersion:    int(resp.GetEventVersion()),
-		JobID:           resp.GetJobId(),
-		RequestID:       resp.GetRequestId(),
-		EventType:       resp.GetEventType(),
-		Stage:           resp.GetStage(),
-		Message:         resp.GetMessage(),
-		Channel:         resp.GetChannel(),
-		TextDelta:       resp.GetTextDelta(),
-		Content:         resp.GetContent(),
-		OutlineMarkdown: resp.GetOutlineMarkdown(),
-		Payload:         parsePayload(resp.GetPayloadJson()),
-		Done:            resp.GetDone(),
-		Error:           resp.GetError(),
-		ErrorCode:       resp.GetErrorCode(),
-		StageStatus:     resp.GetStageStatus(),
-		Severity:        resp.GetSeverity(),
-		ActionRequired:  resp.GetActionRequired(),
-		Retryable:       resp.GetRetryable(),
-		Sequence:        resp.GetSequence(),
+	event := &pptagent.AgentEvent{
+		TaskID:    resp.GetTaskId(),
+		Sequence:  resp.GetSequence(),
+		Type:      pptagent.EventType(resp.GetType().String()),
+		Stage:     pptagent.Stage(resp.GetStage().String()),
+		Message:   resp.GetMessage(),
+		Resources: mapResources(resp.GetResources()),
 	}
-	if progress := resp.GetProgress(); progress != nil && (progress.GetCurrent() != 0 || progress.GetTotal() != 0) {
-		chunk.Progress = &pptagent.DeckProgress{Current: int(progress.GetCurrent()), Total: int(progress.GetTotal())}
+	if createdAt := resp.GetCreatedAt(); createdAt != nil {
+		if err := createdAt.CheckValid(); err != nil {
+			return nil, fmt.Errorf("invalid ppt event timestamp: %w", err)
+		}
+		event.CreatedAt = createdAt.AsTime()
 	}
-	if slide := resp.GetSlide(); slide != nil && slide.GetIndex() > 0 {
-		chunk.Slide = &pptagent.DeckSlideEvent{Index: int(slide.GetIndex()), Version: int(slide.GetVersion())}
+	if progress := resp.GetProgress(); progress != nil {
+		event.Progress = &pptagent.Progress{
+			Current: progress.GetCurrent(), Percent: progress.GetPercent(), Total: progress.GetTotal(), Unit: progress.GetUnit(),
+		}
 	}
-	return chunk, nil
+	if page := resp.GetPage(); page != nil {
+		event.Page = &pptagent.PageDetail{
+			PageID: page.GetPageId(), PageIndex: page.GetPageIndex(), PageCount: page.GetPageCount(), Title: page.GetTitle(),
+		}
+	}
+	if detail := resp.GetError(); detail != nil {
+		event.Error = &pptagent.ErrorDetail{
+			Code: detail.GetCode(), Message: detail.GetMessage(), DebugMessage: detail.GetDebugMessage(), Retryable: detail.GetRetryable(),
+		}
+	}
+	if result := resp.GetFinalResult(); result != nil {
+		event.FinalResult = &pptagent.FinalResult{
+			PPTFile: mapResource(result.GetPptFile()), SlideCount: result.GetSlideCount(), ElapsedMS: result.GetElapsedMs(),
+		}
+	}
+	return event, nil
 }
 
-func (s *deckStream) Close() error {
+func (s *pptStream) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
 	return nil
 }
 
-func parsePayload(raw string) json.RawMessage {
-	if raw == "" {
-		return nil
+func mapResources(resources []*pptagentpb.ResourceRef) []pptagent.ResourceRef {
+	mapped := make([]pptagent.ResourceRef, 0, len(resources))
+	for _, resource := range resources {
+		if resource != nil {
+			mapped = append(mapped, mapResource(resource))
+		}
 	}
-	if json.Valid([]byte(raw)) {
-		return json.RawMessage(raw)
-	}
+	return mapped
+}
 
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return nil
+func mapResource(resource *pptagentpb.ResourceRef) pptagent.ResourceRef {
+	if resource == nil {
+		return pptagent.ResourceRef{}
 	}
-	return encoded
+	return pptagent.ResourceRef{
+		ResourceID:   resource.GetResourceId(),
+		Type:         pptagent.ResourceType(resource.GetType().String()),
+		Name:         resource.GetName(),
+		RelativePath: resource.GetRelativePath(),
+		MimeType:     resource.GetMimeType(),
+		SizeBytes:    resource.GetSizeBytes(),
+		SHA256:       resource.GetSha256(),
+	}
 }

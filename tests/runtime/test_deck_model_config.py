@@ -18,13 +18,14 @@ def test_build_chat_client_preserves_configured_max_tokens(monkeypatch):
         model="gpt-4o-mini",
         api_key="test",
         base_url="",
-        provider_options_json="{}",
+        provider_options={"timeout": 30},
         temperature=0.2,
         max_tokens=512,
     )
 
     assert result is client
     assert captured["max_tokens"] == 512
+    assert captured["provider_options"] == {"timeout": 30}
 
 
 def test_build_chat_client_rejects_non_positive_max_tokens():
@@ -34,7 +35,7 @@ def test_build_chat_client_rejects_non_positive_max_tokens():
             model="gpt-4o-mini",
             api_key="test",
             base_url="",
-            provider_options_json="{}",
+            provider_options={},
             temperature=0.2,
             max_tokens=0,
         )

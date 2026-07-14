@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 from pptx import Presentation
 
-from core.deck.contract import DeckSourceFile, GenerateDeckInput
+from core.deck.contract import GeneratePptInput, InputResource
 from core.deck.errors import ExportError
 from core.deck.export import DeckExporter
 from core.deck.export.svg_native import add_svg_as_native_shapes
@@ -21,12 +21,11 @@ def _image_bytes(fmt: str = "PNG", size: tuple[int, int] = (320, 180)) -> bytes:
     return buffer.getvalue()
 
 
-def _input(filename: str, content: bytes) -> GenerateDeckInput:
-    return GenerateDeckInput(
-        user_id=1,
-        username="tester",
-        user_description="Deck",
-        source_files=[DeckSourceFile(filename=filename, content=content)],
+def _input(filename: str, content: bytes) -> GeneratePptInput:
+    return GeneratePptInput(
+        task_id="task-1",
+        description="Deck",
+        attachments=[InputResource(resource_id="source-1", name=filename, content=content)],
     )
 
 

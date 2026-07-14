@@ -1,4 +1,4 @@
-"""Typed state shared by deck pipeline nodes."""
+"""Typed state for the uninterrupted PPT graph."""
 
 from __future__ import annotations
 
@@ -6,6 +6,9 @@ from typing import Any, TypedDict
 
 
 class DeckGraphState(TypedDict, total=False):
+    task_id: str
+    # Local rendering/export code uses request_id as its directory key. It is
+    # always exactly equal to task_id; no second identifier is generated.
     request_id: str
     project_dir: str
     deck_title: str
@@ -14,14 +17,15 @@ class DeckGraphState(TypedDict, total=False):
     uploaded_file_text: str
     source_chunks: list[dict[str, Any]]
     source_images: list[dict[str, Any]]
+    expected_slide_count: int
+    language: str
+    aspect_ratio: str
+    template_id: str
     brief: dict[str, Any]
     outline_markdown: str
-    outline_feedback: str
-    outline_action: str
     plan: dict[str, Any]
     style_options: list[dict[str, Any]]
     theme: dict[str, Any]
-    template_id: str
     image_strategy: str
     art_direction: dict[str, Any]
     design_spec: dict[str, Any]
@@ -36,11 +40,8 @@ class DeckGraphState(TypedDict, total=False):
     deck_spec: dict[str, Any]
     artifacts: list[dict[str, Any]]
     validation_issues: list[dict[str, Any]]
-    repair_round: int
-    vlm_reviewed: bool
-    coherence_reviewed: bool
-    coherence_round: int
     artifact_path: str
     generation_manifest: dict[str, Any]
-    quality_status: str
-    generation_mode: str
+
+
+__all__ = ["DeckGraphState"]

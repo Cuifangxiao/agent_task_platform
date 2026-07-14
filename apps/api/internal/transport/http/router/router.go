@@ -1,5 +1,5 @@
 // Package router owns the public HTTP surface. Business handlers stay grouped
-// by module while this package defines versioning and compatibility policy.
+// by module while this package defines authentication and endpoint layout.
 package router
 
 import (
@@ -52,7 +52,6 @@ func New(deps Dependencies, logger *slog.Logger) *gin.Engine {
 
 	registerProbe(engine)
 	registerV1(engine, deps)
-	registerLegacy(engine, deps)
 	return engine
 }
 
@@ -94,69 +93,17 @@ func registerV1(engine *gin.Engine, deps Dependencies) {
 
 	protected.POST("/text-generations", deps.TextGeneration.StreamText)
 
-	presentations := protected.Group("/presentations")
-	presentations.GET("/conversations", deps.Presentations.ListConversations)
-	presentations.GET("/conversations/:id", deps.Presentations.GetConversation)
-	presentations.DELETE("/conversations/:id", deps.Presentations.DeleteConversation)
-	presentations.POST("/jobs", deps.Presentations.CreateJob)
-	presentations.GET("/jobs/:job_id", deps.Presentations.GetJob)
-	presentations.GET("/jobs/:job_id/events", deps.Presentations.SubscribeJob)
-	presentations.POST("/jobs/:job_id/actions", deps.Presentations.JobAction)
-	presentations.POST("/jobs/:job_id/cancel", deps.Presentations.CancelJob)
-	presentations.GET("/metrics", deps.Presentations.ProductMetrics)
-	presentations.GET("/artifacts/:request_id", deps.Presentations.DownloadArtifact)
-	presentations.GET("/artifacts/:request_id/*asset_path", deps.Presentations.DownloadArtifact)
-}
-
-func registerLegacy(engine *gin.Engine, deps Dependencies) {
-	engine.POST("/login", deps.Users.Login)
-	engine.POST("/refresh", deps.Users.Refresh)
-	engine.POST("/register", deps.Users.Register)
-
-	protected := engine.Group("")
-	protected.Use(middleware.Auth(deps.Tokens, deps.Sessions))
-	protected.GET("/me", deps.Users.Me)
-	protected.POST("/logout", deps.Users.Logout)
-	protected.GET("/providers", deps.ProviderCatalog.List)
-	protected.GET("/model-configs", deps.ModelConfigs.List)
-	protected.POST("/model-configs", deps.ModelConfigs.Create)
-	protected.GET("/model-configs/:id", deps.ModelConfigs.Get)
-	protected.PUT("/model-configs/:id", deps.ModelConfigs.Update)
-	protected.DELETE("/model-configs/:id", deps.ModelConfigs.Delete)
-	protected.GET("/agents", deps.AgentConfigs.ListAgents)
-	protected.GET("/agents/:id", deps.AgentConfigs.GetAgent)
-	protected.GET("/agent-configs", deps.AgentConfigs.ListConfigs)
-	protected.POST("/agent-configs", deps.AgentConfigs.CreateConfig)
-	protected.GET("/agent-configs/:id", deps.AgentConfigs.GetConfig)
-	protected.PUT("/agent-configs/:id", deps.AgentConfigs.UpdateConfig)
-	protected.DELETE("/agent-configs/:id", deps.AgentConfigs.DeleteConfig)
-	protected.POST("/provider-credentials/test", deps.ProviderCredentials.TestCredential)
-	protected.POST("/agent/stream-text", deps.TextGeneration.StreamText)
-	protected.GET("/ppt-agent/conversations", deps.Presentations.ListConversations)
-	protected.GET("/ppt-agent/conversations/:id", deps.Presentations.GetConversation)
-	protected.DELETE("/ppt-agent/conversations/:id", deps.Presentations.DeleteConversation)
-	protected.POST("/ppt-agent/jobs", deps.Presentations.CreateJob)
-	protected.GET("/ppt-agent/jobs/:job_id", deps.Presentations.GetJob)
-	protected.GET("/ppt-agent/jobs/:job_id/events", deps.Presentations.SubscribeJob)
-	protected.POST("/ppt-agent/jobs/:job_id/actions", deps.Presentations.JobAction)
-	protected.POST("/ppt-agent/jobs/:job_id/cancel", deps.Presentations.CancelJob)
-	protected.GET("/ppt-agent/metrics", deps.Presentations.ProductMetrics)
-	protected.POST("/ppt-agent/generate", deprecated("/api/v1/presentations/jobs"), deps.Presentations.GenerateDeck)
-	protected.POST("/ppt-agent/resume", deprecated("/api/v1/presentations/jobs/:job_id/actions"), deps.Presentations.ResumeDeck)
-	protected.GET("/ppt-agent/artifacts/:request_id", deps.Presentations.DownloadArtifact)
-	protected.GET("/ppt-agent/artifacts/:request_id/*asset_path", deps.Presentations.DownloadArtifact)
+	ppt := protected.Group("/ppt")
+	ppt.POST("/tasks", deps.Presentations.CreateTask)
+	ppt.GET("/tasks/:task_id", deps.Presentations.GetTask)
+	ppt.GET("/tasks/:task_id/events", deps.Presentations.SubscribeTask)
+	ppt.POST("/tasks/:task_id/cancel", deps.Presentations.CancelTask)
+	ppt.GET("/tasks/:task_id/file", deps.Presentations.DownloadFile)
+	ppt.GET("/tasks/:task_id/artifacts/*asset_path", deps.Presentations.DownloadArtifact)
 }
 
 func health(c *gin.Context) {
 	response.OK(c, gin.H{"status": "ok"})
-}
-
-func deprecated(successor string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Deprecation", "true")
-		c.Header("Link", "<"+successor+">; rel=\"successor-version\"")
-		c.Next()
-	}
 }
 
 func markVersionedPath(c *gin.Context) {

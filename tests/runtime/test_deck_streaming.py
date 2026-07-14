@@ -1,137 +1,89 @@
-import json
-from types import SimpleNamespace
+from pathlib import Path
 
-import core.deck.events as events
-from core.deck.streaming import event_to_output, stream_graph_outputs
-
-
-class FakeGraph:
-    def __init__(self, parts):
-        self.parts = parts
-        self.calls = []
-
-    def stream(self, stream_input, **kwargs):
-        self.calls.append((stream_input, kwargs))
-        yield from self.parts
+from core.deck import events
+from core.deck.contract import EventType, GeneratePptInput, PipelineEvent, PptStage, ResourceType
+from core.deck.service import DeckService
 
 
-def test_stream_graph_outputs_uses_v2_envelope_and_synthesizes_done():
-    graph = FakeGraph(
-        [
-            {
-                "type": "custom",
-                "ns": (),
-                "data": events.stage_started("brief", "Preparing brief"),
-            },
-            {"type": "values", "ns": (), "data": {}, "interrupts": ()},
-        ]
-    )
+class SuccessfulGraph:
+    def stream(self, initial_state, *, stream_mode):
+        assert stream_mode == ["custom", "values"]
+        root = Path(initial_state["project_dir"])
+        preview = root / "previews" / "page-001.png"
+        preview.write_bytes(b"preview")
+        pptx = root / "exports" / "deck.pptx"
+        pptx.write_bytes(b"pptx")
+        yield (
+            "custom",
+            events.slide_preview(
+                "Page preview ready",
+                {"index": 1, "total": 1, "title": "Demo", "png": "previews/page-001.png"},
+            ),
+        )
+        # A graph node cannot own the task terminal; the service emits it exactly once.
+        yield (
+            "custom",
+            PipelineEvent(EventType.TASK_COMPLETED, PptStage.FINISHED, "must be ignored"),
+        )
+        yield (
+            "custom",
+            events.artifact(
+                "export",
+                "PPTX ready",
+                str(pptx),
+                {"relative_path": "exports/deck.pptx", "filename": "deck.pptx"},
+            ),
+        )
+        yield ("values", {**initial_state, "artifact_path": str(pptx), "final_slides": [{"index": 1}]})
 
-    outputs = list(
-        stream_graph_outputs(
-            "job-1",
-            "request-1",
-            graph,
-            {"deck_title": "Demo"},
-            {"configurable": {"thread_id": "request-1"}},
-            initial_sequence=4,
+
+class FailingGraph:
+    def stream(self, _initial_state, *, stream_mode):
+        assert stream_mode == ["custom", "values"]
+        yield ("custom", events.stage_started("outline", "Planning"))
+        raise RuntimeError("private pipeline details")
+
+
+def _service(monkeypatch, tmp_path, graph):
+    monkeypatch.setenv("DECK_ARTIFACTS_DIR", str(tmp_path))
+    monkeypatch.setattr("core.deck.service.build_ppt_llms", lambda _inp: {})
+    monkeypatch.setattr("core.deck.service.build_ppt_graph", lambda *_args: graph)
+    return DeckService()
+
+
+def test_service_sequences_events_and_emits_one_last_success_terminal(monkeypatch, tmp_path):
+    result = list(
+        _service(monkeypatch, tmp_path, SuccessfulGraph()).generate_ppt(
+            GeneratePptInput(task_id="task-1", description="Create a one-page demo")
         )
     )
 
-    assert [output.event_type for output in outputs] == ["stage_started", "done"]
-    assert [output.sequence for output in outputs] == [5, 6]
-    _, kwargs = graph.calls[0]
-    assert kwargs == {
-        "config": {"configurable": {"thread_id": "request-1"}},
-        "stream_mode": ["custom", "values"],
-        "version": "v2",
-        "output_keys": [],
-    }
+    assert [event.sequence for event in result] == list(range(1, len(result) + 1))
+    terminals = [event for event in result if event.type in {EventType.TASK_COMPLETED, EventType.TASK_FAILED}]
+    assert terminals == [result[-1]]
+    assert result[-1].type is EventType.TASK_COMPLETED
+    assert result[-1].stage is PptStage.FINISHED
+    assert result[-1].final_result.slide_count == 1
+    assert result[-1].final_result.ppt_file.relative_path == "exports/deck.pptx"
+    assert result[-1].final_result.ppt_file.type is ResourceType.PPTX
+    preview = next(resource for event in result for resource in event.resources if resource.type is ResourceType.PAGE_PREVIEW)
+    assert preview.relative_path == "previews/page-001.png"
+    assert not Path(preview.relative_path).is_absolute()
+    assert preview.size_bytes == len(b"preview")
+    assert (tmp_path / "task-1" / "exports" / "deck.pptx").is_file()
 
 
-def test_values_interrupt_becomes_terminal_outline_review_event():
-    graph = FakeGraph(
-        [
-            {
-                "type": "values",
-                "ns": (),
-                "data": {},
-                "interrupts": (
-                    SimpleNamespace(
-                        value={
-                            "stage": "outline_review",
-                            "outline_markdown": "# Demo",
-                            "allowed_actions": ["approve_outline"],
-                        }
-                    ),
-                ),
-            }
-        ]
+def test_service_failure_is_the_only_terminal_and_is_last(monkeypatch, tmp_path):
+    result = list(
+        _service(monkeypatch, tmp_path, FailingGraph()).generate_ppt(
+            GeneratePptInput(task_id="task-2", description="Fail after planning")
+        )
     )
 
-    outputs = list(stream_graph_outputs("job-1", "request-1", graph, {}, {}))
-
-    assert len(outputs) == 1
-    interrupt = outputs[0]
-    assert interrupt.event_type == "interrupt"
-    assert interrupt.stage == "outline_review"
-    assert interrupt.stage_status == "waiting"
-    assert interrupt.action_required == "approve_outline"
-    assert interrupt.outline_markdown == "# Demo"
-    assert interrupt.done is True
-    assert json.loads(interrupt.payload_json)["allowed_actions"] == ["approve_outline"]
-
-
-def test_style_interrupt_uses_choose_style_action():
-    graph = FakeGraph(
-        [
-            {
-                "type": "values",
-                "ns": (),
-                "data": {},
-                "interrupts": (SimpleNamespace(value={"stage": "style_review"}),),
-            }
-        ]
-    )
-
-    [interrupt] = list(stream_graph_outputs("job-1", "request-1", graph, {}, {}))
-
-    assert interrupt.message == "Style options are ready for review"
-    assert interrupt.action_required == "choose_style"
-
-
-def test_existing_terminal_event_is_not_duplicated():
-    graph = FakeGraph(
-        [
-            {
-                "type": "custom",
-                "ns": (),
-                "data": events.generation_done(),
-            }
-        ]
-    )
-
-    outputs = list(stream_graph_outputs("job-1", "request-1", graph, {}, {}))
-
-    assert [output.event_type for output in outputs] == ["done"]
-
-
-def test_event_to_output_maps_payload_progress_slide_and_stage_alias():
-    output = event_to_output(
-        "job-1",
-        "request-1",
-        7,
-        {
-            "event_type": "slide_preview",
-            "stage": "render",
-            "message": "Preview ready",
-            "payload": {"index": "3", "version": "2", "current": "3", "total": "8"},
-            "severity": "warning",
-        },
-    )
-
-    assert output.stage == "designer"
-    assert (output.progress_current, output.progress_total) == (3, 8)
-    assert (output.slide_index, output.slide_version) == (3, 2)
-    assert output.severity == "warning"
-    assert output.sequence == 7
+    assert [event.sequence for event in result] == list(range(1, len(result) + 1))
+    terminals = [event for event in result if event.type in {EventType.TASK_COMPLETED, EventType.TASK_FAILED}]
+    assert terminals == [result[-1]]
+    assert result[-1].type is EventType.TASK_FAILED
+    assert result[-1].stage is PptStage.PLANNING
+    assert result[-1].message == "PPT generation failed"
+    assert result[-1].error.debug_message == "private pipeline details"

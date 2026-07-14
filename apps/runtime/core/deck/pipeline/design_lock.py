@@ -1,4 +1,4 @@
-"""Compile the approved narrative and art direction into an executable design lock."""
+"""Compile the generated narrative and recommended art direction into an executable design lock."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def freeze_design_contract(
     """Write the one authoritative design package used by all page executors."""
 
     writer = get_stream_writer()
-    writer(events.stage_started("design_lock", "Compiling the approved art direction into page blueprints"))
+    writer(events.stage_started("design_lock", "Compiling the recommended art direction into page blueprints"))
     package = compile_design_package(state, llm_registry=llm_registry)
     project = DeckProjectPaths.for_request(output_dir, str(state["request_id"])).ensure()
     request_dir = project.root
@@ -91,8 +91,7 @@ def freeze_design_contract(
     return {
         **package,
         "project_dir": str(project.root),
-        # Existing slide/repair nodes read this key. It is the same authoritative
-        # object, not a legacy parallel contract.
+        # Slide authoring reads the same authoritative object.
         "design_contract": package["design_spec"],
     }
 
@@ -112,10 +111,10 @@ def compile_design_package(
     brief = state.get("brief") if isinstance(state.get("brief"), dict) else {}
     outline_pages = [item for item in plan.get("slides") or [] if isinstance(item, dict)]
     if not outline_pages:
-        raise ValueError("approved outline contains no executable page sections")
+        raise ValueError("outline contains no executable page sections")
     asset_manifest = _build_asset_manifest(state.get("source_images") or [])
     selection_source = _template_selection_source(state, art_direction)
-    theme_source = "approved_theme_tokens" if isinstance(state.get("theme"), dict) and state.get("theme") else "template_catalog"
+    theme_source = "selected_theme_tokens" if isinstance(state.get("theme"), dict) and state.get("theme") else "template_catalog"
     template_manifest = _build_template_manifest(pack, selection_source=selection_source)
 
     page_blueprints = _deterministic_blueprints(
@@ -138,9 +137,9 @@ def compile_design_package(
                 system=load_node_prompt("art_director"),
                 user=json.dumps(
                     {
-                        "approved_outline": plan,
+                        "outline": plan,
                         "brief": brief,
-                        "approved_art_direction": art_direction,
+                        "art_direction": art_direction,
                         "selected_template": pack.to_dict(),
                         "visualization_catalog": public_visualization_catalog(),
                         "available_assets": asset_manifest["assets"],
@@ -177,7 +176,7 @@ def compile_design_package(
             "communication_mode": str(art_direction.get("communication_mode") or pack.communication_mode),
             "visual_style": str(art_direction.get("visual_style") or pack.visual_style),
             "rationale": str(art_direction.get("rationale") or pack.summary),
-            "confirmations": dict(art_direction.get("confirmations") or {}),
+            "execution_assumptions": dict(art_direction.get("execution_assumptions") or {}),
             "design_narrative": design_narrative,
         },
         "template": template_manifest,
@@ -517,7 +516,7 @@ def _normalize_design_narrative(raw: Any, fallback: dict[str, str]) -> dict[str,
 
 def _template_selection_source(state: DeckGraphState, art_direction: dict[str, Any]) -> str:
     if art_direction:
-        return "approved_art_direction"
+        return "recommended_art_direction"
     requested = str(state.get("template_id") or "").strip()
     return "user_request" if requested and requested != "auto" else "system_recommendation"
 
@@ -538,7 +537,7 @@ def _template_provenance(
         "catalog_source": "design_system/template_packs.json",
         "source": dict(pack.source),
         "geometry_source": f"template_packs[{pack.template_id}].layouts[{layout_id}].geometry",
-        "theme_source": "approved art-direction tokens" if theme_source == "approved_theme_tokens" else f"template_packs[{pack.template_id}].theme",
+        "theme_source": "selected art-direction tokens" if theme_source == "selected_theme_tokens" else f"template_packs[{pack.template_id}].theme",
         "svg_generator": "core.deck.design.sources.render_template_reference_svg",
         "art_director_refined": art_director_refined,
     }
@@ -673,7 +672,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _design_spec_markdown(spec: dict[str, Any]) -> str:
-    """Render the authoritative JSON as a reviewable eleven-section design brief."""
+    """Render the authoritative JSON as a human-readable eleven-section design brief."""
 
     content = spec.get("content") if isinstance(spec.get("content"), dict) else {}
     art = spec.get("art_direction") if isinstance(spec.get("art_direction"), dict) else {}
@@ -684,7 +683,7 @@ def _design_spec_markdown(spec: dict[str, Any]) -> str:
     fonts = theme.get("fonts") if isinstance(theme.get("fonts"), dict) else {}
     type_scale = theme.get("type_scale") if isinstance(theme.get("type_scale"), dict) else {}
     pages = [item for item in spec.get("pages") or [] if isinstance(item, dict)]
-    confirmations = art.get("confirmations") if isinstance(art.get("confirmations"), dict) else {}
+    assumptions = art.get("execution_assumptions") if isinstance(art.get("execution_assumptions"), dict) else {}
     quality = spec.get("quality_rules") if isinstance(spec.get("quality_rules"), dict) else {}
 
     lines = [
@@ -757,9 +756,9 @@ def _design_spec_markdown(spec: dict[str, Any]) -> str:
             for item in pages
         ],
         "",
-        "## 11. Execution confirmations and quality gates",
+        "## 11. Execution assumptions and quality gates",
         "",
-        *[f"- {key}: {_md(value)}" for key, value in confirmations.items()],
+        *[f"- {key}: {_md(value)}" for key, value in assumptions.items()],
         *[f"- {key}: `{value}`" for key, value in quality.items()],
         "",
     ]

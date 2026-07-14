@@ -6,7 +6,7 @@
 http://<api-host>:<port>/api/v1
 ```
 
-无版本前缀路由仅用于旧客户端兼容，见文末“旧接口兼容与弃用”。特别注意：`/ppt-agent/generate` 和 `/ppt-agent/resume` **只有 legacy 版本**；`/api/v1` 没有对应的 `/generate`、`/resume`，必须使用 Job、Event、Action 三类接口。
+除进程探针 `GET /healthz` 外，业务接口全部位于 `/api/v1`。PPT 只有 `/api/v1/ppt/tasks` 这一套接口；旧 conversations/jobs/actions/generate/resume 路由已经删除。
 
 ## 1. 通用约定
 
@@ -31,7 +31,7 @@ http://<api-host>:<port>/api/v1
 }
 ```
 
-`data` 的实际类型由接口定义，可以是对象、数组或标量。创建资源通常返回 `201 Created`，PPT Job 创建返回 `202 Accepted`，其余成功请求返回 `200 OK`。
+`data` 的实际类型由接口定义，可以是对象、数组或标量。创建资源通常返回 `201 Created`，PPT Task 创建返回 `202 Accepted`，其余成功请求返回 `200 OK`。
 
 ### 1.3 错误响应
 
@@ -115,17 +115,12 @@ Authorization: Bearer <access_token>
 | PATCH | `/api/v1/agent-configs/:id` | 是 | `AgentConfig` |
 | DELETE | `/api/v1/agent-configs/:id` | 是 | `{message}` |
 | POST | `/api/v1/text-generations` | 是 | 文本 SSE |
-| GET | `/api/v1/presentations/conversations` | 是 | `ConversationSummary[]` |
-| GET | `/api/v1/presentations/conversations/:id` | 是 | `ConversationDetail` |
-| DELETE | `/api/v1/presentations/conversations/:id` | 是 | `{deleted, id}` |
-| POST | `/api/v1/presentations/jobs` | 是 | `DeckJob`（202） |
-| GET | `/api/v1/presentations/jobs/:job_id` | 是 | `DeckJob` |
-| GET | `/api/v1/presentations/jobs/:job_id/events` | 是 | 可续传 PPT SSE |
-| POST | `/api/v1/presentations/jobs/:job_id/actions` | 是 | `{job, duplicate}` |
-| POST | `/api/v1/presentations/jobs/:job_id/cancel` | 是 | `DeckJob` |
-| GET | `/api/v1/presentations/metrics` | 是 | `DeckProductMetrics` |
-| GET | `/api/v1/presentations/artifacts/:request_id` | 是 | PPTX 文件 |
-| GET | `/api/v1/presentations/artifacts/:request_id/*asset_path` | 是 | 指定产物文件 |
+| POST | `/api/v1/ppt/tasks` | 是 | `PptTask`（202） |
+| GET | `/api/v1/ppt/tasks/:task_id` | 是 | `PptTask` |
+| GET | `/api/v1/ppt/tasks/:task_id/events` | 是 | 进程内可重放 PPT SSE |
+| POST | `/api/v1/ppt/tasks/:task_id/cancel` | 是 | `PptTask` |
+| GET | `/api/v1/ppt/tasks/:task_id/file` | 是 | PPTX 文件 |
+| GET | `/api/v1/ppt/tasks/:task_id/artifacts/*asset_path` | 是 | 指定任务产物 |
 
 ## 3. 健康检查
 
@@ -416,7 +411,7 @@ body 中所有字段均可选：`name`、`provider`、`model_name`、`model_type
 }
 ```
 
-Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent 的可配置模型节点为 `brief`、`outline`、`style`、`writer`、`designer`、`review`、`coherence`；以接口返回的 `nodes` 为最终依据。
+Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent 的可配置模型节点只有 `brief`、`outline`、`style`、`writer`、`designer`；以接口返回的 `nodes` 为最终依据。
 
 ### 7.2 `AgentConfig` 响应
 
@@ -457,9 +452,7 @@ Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent
     { "node_key": "outline", "model_config_id": 10 },
     { "node_key": "style", "model_config_id": 10 },
     { "node_key": "writer", "model_config_id": 10 },
-    { "node_key": "designer", "model_config_id": 10 },
-    { "node_key": "review", "model_config_id": 11 },
-    { "node_key": "coherence", "model_config_id": 10 }
+    { "node_key": "designer", "model_config_id": 10 }
   ],
   "is_default": true,
   "status": "active"
@@ -517,397 +510,230 @@ data: {"request_id":"...","done":true,"sequence":1}
 
 文本 SSE 当前不写 `id:`，也不支持 `Last-Event-ID` 重放。若在建立 SSE 前发现请求、模型配置或鉴权错误，仍返回标准 JSON error envelope。
 
-## 9. PPT 会话
+## 9. PPT Task
 
-### 9.1 会话列表
+PPT 使用进程内 Task，不再使用 Conversation、Job、Action 或恢复接口。创建成功只表示 Go 已接受任务并启动后台 goroutine；实际结果通过任务查询和 SSE 获得。
 
-`GET /api/v1/presentations/conversations`
-
-返回当前用户的 `ConversationSummary[]`，按最近更新时间倒序：
+### 9.1 `PptTask`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | integer | 会话 ID |
-| `agent_config_id` | integer | 创建任务时使用的 Agent 配置 |
-| `agent_config_name` | string | 配置名称快照 |
-| `title` | string | 从 description 派生，最多保留 48 个 Unicode 字符后加 `...` |
-| `status` | string | `running`、`waiting`、`done`、`error`、`cancelled` |
-| `latest_request_id` | string，可省略 | 最近一次 Runtime request ID |
-| `created_at`, `updated_at` | RFC3339 string | 时间 |
+| `task_id` | UUID string | 任务 ID，也是任务产物目录名 |
+| `status` | string | `running`、`succeeded`、`failed`、`cancelled` |
+| `stage` | string | 当前稳定阶段 |
+| `message` | string | 最近事件的用户可读说明 |
+| `last_event_sequence` | uint64 | 当前任务最后一个事件序号 |
+| `result` | `FinalResult`，可省略 | 成功结果 |
+| `error` | `ErrorDetail`，可省略 | 失败或取消详情 |
+| `events_url` | string | 本任务 SSE 地址 |
+| `file_url` | string，可省略 | 最终 PPTX 下载地址 |
+| `created_at`、`updated_at` | RFC3339 string | 时间 |
+| `finished_at` | RFC3339 string，可省略 | 进入终态的时间 |
 
-### 9.2 会话详情
+任务只属于创建它的用户。其他用户查询同一 `task_id` 统一得到 `404 not_found`。
 
-`GET /api/v1/presentations/conversations/:id`
+### 9.2 创建任务
 
-返回上述摘要字段，并增加：
+`POST /api/v1/ppt/tasks`
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `messages` | array | 会话消息投影 |
-| `job` | `DeckJob`，可省略 | 该会话最近一个 Job |
+成功返回 `202 Accepted` 和 `PptTask`。服务先完整校验描述和五个模型节点绑定，再创建内存任务；校验失败不会留下 Task。
 
-每条消息都有 `id`、`role`、`kind`，其余字段随 `kind` 变化：
-
-| `kind` | `role` | 主要字段 |
-| --- | --- | --- |
-| `user` | `user` | `text`，可选 `fileNames[]` |
-| `status` | `assistant` | `title`、`text`、`requestId?`、`state`、`steps[]`、`slides[]` |
-| `outline` | `assistant` | `title`、`text`、`requestId`、`outlineMarkdown`、`awaitingConfirm`、`showEditor` |
-| `style` | `assistant` | `title`、`text`、`requestId`、`options[]`、`awaitingConfirm` |
-| `result` | `assistant` | `title`、`text`、`requestId`、`fileName`、`warnings[]`、`degraded`、`qualityStatus` |
-
-`status.steps[]` 包含 `id`、`label`、`message`、`tone`、可选 `stage`；`status.slides[]` 可能包含页码、标题、要点、layout/component、预览路径、version、status 和 warnings。消息是持久化事件的 UI 兼容投影；精确、可续传的执行记录以 Job Event SSE 为准。
-
-### 9.3 删除会话
-
-`DELETE /api/v1/presentations/conversations/:id`
-
-仅能删除当前用户自己的会话。删除会级联清理该会话的消息、Job、Event、Action、Asset 和 Source 数据，并清理关联的 PPT 产物目录。处于 `queued`、`running` 或 `exporting` 的 Job 会返回 `409 conflict`，需要先取消或等待任务结束；等待大纲/风格确认的会话可以直接删除。
-
-## 10. PPT Job
-
-### 10.1 `DeckJob` 结构
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `job_id` | UUID string | 后台 Job ID |
-| `conversation_id` | integer | 自动创建的会话 ID |
-| `agent_config_id` | integer | 实际选用的 PPT Agent 配置 |
-| `request_id` | UUID string，可省略 | Runtime 开始生成后取得的 request ID，也是产物目录 ID |
-| `mode` | string | `quick` 或 `step_by_step` |
-| `status` | string | 见 Job 状态表 |
-| `stage` | string | 当前规范化流水线阶段 |
-| `error_code`, `error_summary` | string，可省略 | 失败信息；敏感 token/key 会被脱敏 |
-| `retryable` | boolean | 失败是否被标记为可重试；当前没有通用 retry 路由 |
-| `last_event_sequence` | integer | 已持久化的最后事件序号 |
-| `quality` | object/JSON value | 最近 artifact 质量数据；尚无数据时为 `{}` |
-| `created_at`, `updated_at` | RFC3339 string | 时间 |
-
-### 10.2 Job 状态
-
-| 状态 | 是否终态 | 含义/允许的后续操作 |
-| --- | --- | --- |
-| `queued` | 否 | 已持久化，等待后台 worker；创建和接受 action 后会短暂处于该状态 |
-| `running` | 否 | Runtime 正在执行普通阶段 |
-| `waiting_for_outline` | 否（等待态） | SSE 在大纲 interrupt 后关闭；可 `approve_outline` 或 `regenerate_outline` |
-| `waiting_for_style` | 否（等待态） | SSE 在风格 interrupt 后关闭；可 `choose_style` |
-| `exporting` | 否 | 正在导出/已产生 artifact、等待最终质量状态 |
-| `success` | 是 | 成功且无质量警告；可 `regenerate_slide` |
-| `success_with_warnings` | 是 | 已导出但有警告/降级；可 `regenerate_slide` |
-| `needs_review` | 是 | 已导出但仍有 must-fix 问题；可 `regenerate_slide` |
-| `failed` | 是 | 失败；查看 `error_code`、`error_summary`、`retryable` |
-| `cancelled` | 是 | 已请求取消并终止后台 gRPC context |
-
-API 重启时，尚未取得 Runtime request ID 的 `queued` Job 会重新启动。其余可恢复扫描范围内的 Job（`queued` 但已有 request ID、`running`、`exporting`）因原 gRPC 调用已经丢失，会转为 `failed`、`error_code: "worker_restarted"`、`retryable: true`。处于等待确认状态的 Job 不在该扫描范围内，保持可继续操作。
-
-### 10.3 创建 Job
-
-`POST /api/v1/presentations/jobs`
-
-推荐使用 multipart：
-
-| form 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `description` | text | 是 | trim 后 1–5000 字符 |
-| `agent_config_id` | positive integer text | 否 | 指定当前用户的 active `ppt_agent` 配置；省略时选默认 active 配置，否则选第一个 active 配置；非空值必须是正整数 |
-| `mode` | text | 否 | 仅接受小写 `quick` 或 `step_by_step`；空值默认 `step_by_step` |
-| `source_files` | file，可重复 | 否 | 推荐的多文件字段 |
-| `source_file` | file，可重复 | 否 | 兼容字段，与 `source_files` 一起收集 |
-| `file` | file，可重复 | 否 | 兼容字段，与上述字段一起收集 |
-
-示例：
-
-```bash
-curl -X POST http://127.0.0.1:8080/api/v1/presentations/jobs \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "description=根据报告生成季度业务复盘" \
-  -F "mode=step_by_step" \
-  -F "agent_config_id=3" \
-  -F "source_files=@report.pdf" \
-  -F "source_files=@metrics.csv"
-```
-
-成功立即返回 `202 Accepted` 和 `DeckJob`，通常初始 `status` 为 `queued`；生成过程不依赖创建请求保持连接。
-
-#### 文件格式和限制
-
-multipart 上传允许扩展名（大小写不敏感）：
-
-```text
-.pdf  .txt  .md  .markdown  .csv  .json  .yaml  .yml  .docx  .png  .jpg  .jpeg  .webp
-```
-
-PNG/JPEG/WebP 不进入文本解析。Runtime 会解码、校验并去除元数据后重新编码到当前任务的 `images/` 目录；限制为单文件 20 MiB、单边 8192 px、总像素 40 MP。SVG 只能通过资产清单引用该任务目录中的受控相对路径。
-
-| 限制 | 值 |
-| --- | --- |
-| 单文件内容 | ≤ 20 MiB（20 × 2²⁰ bytes） |
-| 所有源文件内容合计 | ≤ 100 MiB（100 × 2²⁰ bytes） |
-| 整个 multipart request body | ≤ 101 MiB（101 × 2²⁰ bytes） |
-
-空文件会返回 `400 invalid_request`；不支持的扩展名返回 `415 unsupported_media_type`；request body、单文件或总量超限返回 `413 payload_too_large`。源文件会先持久化到 artifact 同级的 `deck-sources/<job_id>`，MySQL 保存 resource ID、相对路径、SHA-256 和大小；后台传给 Runtime 的是受控本地路径和完整性元数据。
-
-#### JSON 兼容请求
-
-当 Content-Type 不是 multipart 时，Handler 也接受 JSON：
+JSON 请求不支持附件：
 
 ```json
 {
-  "agent_config_id": 3,
-  "description": "生成产品介绍",
-  "mode": "quick",
-  "source_files": [
-    {
-      "filename": "notes.md",
-      "content": "IyBUaXRsZQ=="
-    }
-  ]
+  "agent_config_id": 1,
+  "description": "生成一份介绍 Agent Task Platform 架构的演示文稿",
+  "options": {
+    "language": "zh-CN",
+    "expected_slide_count": 8,
+    "aspect_ratio": "16:9",
+    "template_id": "auto"
+  }
 }
 ```
 
-`content` 对应 Go `[]byte`，必须是 base64 字符串。JSON 与 multipart 共用 `agent_config_id`、`mode`、扩展名、空文件、单文件 20 MiB 和总计 100 MiB 校验；multipart 另外有 101 MiB request body 上限。`source_files[]` 还可被 JSON decoder 接收 `resource_id`、`sha256`、`size_bytes`，但这些是服务端资源元数据，创建 Job 时会被丢弃并重新生成；客户端不应发送。顶层 `source_file_name` 也是旧版内部兼容字段，canonical Job JSON 不应使用。multipart 更适合实际文件上传，推荐外部客户端优先使用。
+| 字段 | 必填 | 约束/行为 |
+| --- | --- | --- |
+| `agent_config_id` | 否 | 正整数；省略或 0 时选择当前用户默认 active PPT 配置，否则选择首个可用配置 |
+| `description` | 是 | trim 后非空，最多 5000 个 Unicode 字符 |
+| `options.language` | 否 | 空值默认 `zh-CN` |
+| `options.expected_slide_count` | 否 | 无符号整数；0 表示不指定 |
+| `options.aspect_ratio` | 否 | 空值默认 `16:9` |
+| `options.template_id` | 否 | 空值默认 `auto` |
 
-### 10.4 查询 Job
+有附件时使用 `multipart/form-data`：
 
-`GET /api/v1/presentations/jobs/:job_id`
+| 表单字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `agent_config_id` | 否 | 正整数；规则同 JSON |
+| `description` | 是 | PPT 需求 |
+| `language` | 否 | 语言 |
+| `expected_slide_count` | 否 | 正整数 |
+| `aspect_ratio` | 否 | 比例 |
+| `template_id` | 否 | 模板标识 |
+| `attachments` | 否 | 可重复文件字段；推荐名称 |
+| `source_files`、`source_file`、`file` | 否 | 与 `attachments` 等价的上传兼容名称 |
 
-返回当前用户拥有的 `DeckJob`。前端刷新后可先查询 Job，再从 `last_event_sequence` 或本地最后消费序号决定如何续订事件。
+支持的附件扩展名：
 
-### 10.5 提交 Action
+```text
+.pdf .txt .md .markdown .csv .json .yaml .yml .docx
+.png .jpg .jpeg .webp
+```
 
-`POST /api/v1/presentations/jobs/:job_id/actions`
+空文件返回 `400`，不支持的扩展名返回 `415`。单个文件最多 20 MiB，文件内容合计最多 100 MiB，multipart request body 最多 101 MiB；超限返回 `413`。Go 读取附件后计算 SHA-256，并把字节内容直接放入本次内部 gRPC 请求，不为附件建立数据库记录。
 
-Header：
+PPT Agent 配置必须 active，并且恰好能解析 `brief`、`outline`、`style`、`writer`、`designer` 五个 active 文本/多模态模型。任一节点缺失、模型停用或 `max_tokens <= 0` 都拒绝创建任务。
+
+### 9.3 查询任务
+
+`GET /api/v1/ppt/tasks/:task_id`
+
+返回当前 Go 进程中的任务快照。任务从未存在、已经被惰性清理、API 已重启或不属于当前用户时均返回 `404`。
+
+### 9.4 取消任务
+
+`POST /api/v1/ppt/tasks/:task_id/cancel`
+
+无 body。服务先发布一个 `TASK_FAILED` 终态事件，其中 `error.code` 为 `TASK_CANCELLED`，把 Task 状态设为 `cancelled`，再取消 Python gRPC context。取消是终态，不支持 resume；对已经结束的任务取消返回 `409 conflict`。
+
+## 10. PPT Event SSE
+
+### 10.1 订阅与进程内重放
+
+`GET /api/v1/ppt/tasks/:task_id/events`
+
+可以通过以下任一方式传入已消费序号：
 
 ```http
-Idempotency-Key: <caller-generated-key>
-```
-
-该 header 可选，建议不超过 128 字符。省略时服务按规范化 action、outline 和 payload 计算 SHA-256 key。相同 Job 下相同 key 只创建一次操作。
-
-Body 通用结构：
-
-```json
-{
-  "action": "approve_outline",
-  "outline_markdown": "# 大纲\n...",
-  "payload": {}
-}
-```
-
-| action | Job 前置状态 | 必填内容 | `payload` |
-| --- | --- | --- | --- |
-| `approve_outline` | `waiting_for_outline` | 非空 `outline_markdown` | `{}` |
-| `regenerate_outline` | `waiting_for_outline` | 无 | `{}` |
-| `choose_style` | `waiting_for_style` | 无 | 可含 `style_id`（兼容 `styleId`）和 `feedback` |
-| `regenerate_slide` | `success` / `success_with_warnings` / `needs_review` | `payload.index` 必须是正整数 | 可选 `payload.feedback` |
-
-`payload` 应为 JSON object，Runtime 端限制其序列化内容不超过 64 KB。
-
-成功：
-
-```json
-{
-  "data": {
-    "job": { "job_id": "...", "status": "queued", "...": "..." },
-    "duplicate": false
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
-若 idempotency key 已存在，返回当前 Job 且 `duplicate: true`，不会再次启动 Runtime。Action 被接受后应重新订阅 events；Action 接口本身不返回生成 SSE。
-
-### 10.6 取消 Job
-
-`POST /api/v1/presentations/jobs/:job_id/cancel`
-
-无 body。非终态 Job 会持久化为 `cancelled`、发出 `cancelled` event，并取消当前后台 gRPC context。对已经终止的 Job 调用时返回其当前状态。
-
-## 11. PPT Job Event SSE
-
-### 11.1 订阅与恢复
-
-`GET /api/v1/presentations/jobs/:job_id/events`
-
-可通过任一方式指定已消费序号：
-
-```http
-Last-Event-ID: 42
+Last-Event-ID: 12
 ```
 
 ```text
-GET /api/v1/presentations/jobs/:job_id/events?after=42
+GET /api/v1/ppt/tasks/:task_id/events?after=12
 ```
 
-两者同时提供时取较大非负整数。服务返回该 Job 中 `sequence > after` 的持久化事件，每批最多读取 200 条；无新事件时约每 350 ms 轮询。断线不取消后台 Job。
+两者同时出现时取较大的有效无符号整数。服务先重放内存中 `sequence > after` 的事件，再发送实时事件；终态事件发送后关闭 SSE。约每 15 秒发送一次 `: heartbeat` 注释保持连接。
 
-调用方应在每次收到事件后保存 SSE `id`；重连时传回 `Last-Event-ID`，并按 ID 去重。若恢复游标 >0，系统会另外记录 `subscription_resumed` 指标事件。
+这不是数据库续传：Task 和全部事件仅存在当前 Go 进程，API 重启后不能查询或重放。结束任务当前约保留一小时并惰性清理，这个时间窗口不构成持久化保证。
 
-### 11.2 SSE 帧
+### 10.2 SSE 帧
+
+SSE `event` 是 EventType 的小写形式，`id` 等于 `sequence`：
 
 ```text
-id: 17
-event: stage_progress
-data: {"event_version":1,"job_id":"...","conversation_id":8,"request_id":"...","event_type":"stage_progress","stage":"writer","stage_status":"running","message":"Writing slides","severity":"info","retryable":false,"sequence":17}
-
+id: 3
+event: step_progress
+data: {"task_id":"...","sequence":3,"created_at":"...","type":"STEP_PROGRESS","stage":"GENERATING_PAGES","message":"正在生成第 2/8 页","progress":{"current":2,"total":8,"percent":25,"unit":"page"}}
 ```
 
-`event:` 等于 data 的 `event_type`；`id:` 与 data 的 `sequence` 相同。等待态和终态事件带 `done: true`，发送后当前 SSE 连接结束。若客户端已追到等待/终态最后一个事件，重新订阅可能只收到一个无 ID 的合成 `done` 帧。
-
-### 11.3 Event data 字段
+每个 `AgentEvent` 包含：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `event_version` | integer | 当前为 `1` |
-| `job_id` | string，可省略 | Job ID |
-| `conversation_id` | integer，可省略 | 会话 ID |
-| `request_id` | string | Runtime request ID；早期队列事件可能为空 |
-| `event_type` | string，可省略 | 事件名 |
-| `stage` | string，可省略 | 当前规范化阶段 |
-| `message` | string，可省略 | 人类可读说明 |
-| `channel` | string，可省略 | `text_delta` 的逻辑通道 |
-| `text_delta` | string，可省略 | 文本增量 |
-| `content` | string，可省略 | 完整文本内容 |
-| `outline_markdown` | string，可省略 | 大纲内容 |
-| `payload` | 任意 JSON，可省略 | 事件特有数据 |
-| `artifact_url` | string，可省略 | artifact event 中为 canonical 下载地址 `/api/v1/presentations/artifacts/{request_id}` |
-| `done` | boolean，可省略 | 当前流是否在此事件结束 |
-| `error` | string，可省略 | 错误摘要 |
-| `error_code` | string，可省略 | 稳定程度高于 message 的错误标识 |
-| `stage_status` | string，可省略 | `pending`、`running`、`waiting`、`done`、`warning`、`error` |
-| `progress` | object，可省略 | `{current, total}` |
-| `slide` | object，可省略 | `{index, version}` |
-| `severity` | string，可省略 | `info`、`warning`、`error` |
-| `action_required` | string，可省略 | 通常为 `approve_outline` 或 `choose_style` |
-| `retryable` | boolean | 是否建议重试 |
-| `sequence` | integer | Job 内单调递增的持久化序号 |
+| `task_id` | string | Task UUID |
+| `sequence` | uint64 | Task 内从 1 开始严格递增；是排序游标，不是版本号 |
+| `created_at` | RFC3339 string | 事件时间 |
+| `type` | string | 事件类型 |
+| `stage` | string | 稳定前端阶段 |
+| `message` | string | 可直接展示的说明 |
+| `progress` | object，可省略 | `current`、`total`、`percent`、`unit` |
+| `resources` | array，可省略 | 本事件就绪的文件资源 |
+| `page` | object，可省略 | `page_id`、`page_index`、`page_count`、`title` |
+| `error` | object，可省略 | `code`、`message`、`retryable`；Runtime 调试详情不会转发给客户端 |
+| `final_result` | object，可省略 | `ppt_file`、`slide_count`、`elapsed_ms` |
 
-### 11.4 阶段
+### 10.3 事件类型
 
-规范化阶段按工作流大致为：
-
-```text
-brief -> outline -> outline_review -> style -> style_review -> writer
-      -> designer -> validate -> review_vlm -> repair -> coherence -> export
-```
-
-`quick` 模式会自动通过大纲和风格 review；`step_by_step` 会在 `outline_review`、`style_review` 产生 interrupt 并等待 Action。
-
-### 11.5 当前事件类型
-
-| event type | 来源/说明 |
-| --- | --- |
-| `job_queued` | API 已创建并持久化 Job |
-| `stage_started`, `stage_progress` | 阶段开始/进度 |
-| `agent_message` | Agent 阶段说明 |
-| `fact_sheet_ready` | brief 事实表完成 |
-| `text_delta` | 大纲等流式文本增量 |
-| `outline` | 完整大纲 |
-| `style_options` | 风格候选 |
-| `slide_started`, `slide_spec_ready`, `slide_ready` | Writer 页级事件 |
-| `slide_preview` | HTML/PNG 预览就绪，含页码与版本 |
-| `validation_report` | 结构/质量校验结果 |
-| `repair_progress` | 自动修复或用户单页重做进度 |
-| `export_progress` | 导出进度 |
-| `artifact` | PPTX/质量信息就绪，并增加 `artifact_url` |
-
-`style_options` 的每个候选方向除静态模板封面外，还包含 `communication_mode`、`visual_style`、`template_id`、`template_mode`、`template_summary`、`template_source`、`rationale`、`confirmations`（八项执行确认）、`layout_principles`、`image_strategy`、`sample_render_mode=static_template_cover` 与 `preview_note`。模板选择阶段不会调用 Designer 或 Chromium；`cover_html` 保留为空以兼容旧客户端。`template_mode=free_design` 表示自由设计；其他模式会在逐页蓝图中实际注入转换后的受限 SVG 结构，而不是只记录模板名称。
-| `interrupt` | 等待大纲确认或风格选择；`done: true` |
-| `action_accepted` | API 已接受幂等 Action |
-| `subscription_disconnected` | 订阅断开但 Job 继续，用于指标 |
-| `subscription_resumed` | 带游标恢复订阅，用于指标 |
-| `artifact_downloaded` | 成功提供过一次 PPTX 成品下载，用于指标；模板封面和页面预览不计入 |
-| `done` | 当前运行成功结束；`done: true` |
-| `error` | Job 或订阅错误；`done: true` |
-| `cancelled` | Job 被取消；`done: true` |
-
-客户端应允许出现新的 event type，并以通用字段和 `payload` 做向前兼容。
-
-## 12. PPT 指标
-
-### `GET /api/v1/presentations/metrics`
-
-返回当前用户范围内的聚合指标：
-
-| 字段 | 类型 | 说明 |
+| `type` | SSE event | 含义 |
 | --- | --- | --- |
-| `total_jobs` | integer | Job 总数 |
-| `successful_jobs` | integer | `success` + `success_with_warnings` |
-| `exported_jobs` | integer | 上述状态再加 `needs_review` |
-| `success_rate` | number | successful / total |
-| `disconnected_jobs` | integer | 曾记录订阅断开的 Job 数 |
-| `recovered_subscriptions` | integer | 曾记录恢复订阅的 Job 数 |
-| `subscription_recovery_rate` | number | 恢复数（不超过断开数）/断开数 |
-| `regenerated_jobs` | integer | 提交过 `regenerate_slide` 的 Job 数 |
-| `regenerate_rate` | number | regenerated / total |
-| `slide_regenerate_rate` | number | 当前与 `regenerate_rate` 相同 |
-| `average_must_fix_issues` | number | 每个最终 artifact 的平均 must-fix 问题数 |
-| `auto_repair_success_rate` | number | 有非用户反馈 repair 的 Job 中成功比例 |
-| `download_success_rate` | number | 有下载事件的 Job / exported jobs |
-| `average_generation_ms` | number | 有起止时间 Job 的平均耗时（毫秒） |
+| `TASK_STARTED` | `task_started` | Python 已开始处理 |
+| `STEP_STARTED` | `step_started` | 一个可展示步骤开始 |
+| `STEP_PROGRESS` | `step_progress` | 页、资源或步骤进度 |
+| `STEP_COMPLETED` | `step_completed` | 一个可展示步骤完成 |
+| `ARTIFACT_READY` | `artifact_ready` | 一个或多个中间产物可下载 |
+| `TASK_COMPLETED` | `task_completed` | PPTX 已完成；终态 |
+| `TASK_FAILED` | `task_failed` | 生成失败或取消；终态 |
 
-分母为 0 时对应 rate 为 0。
+取消不引入独立的 `TASK_CANCELLED` 事件类型，而由 `TASK_FAILED + error.code=TASK_CANCELLED` 表示。Task 快照的 `status` 会是 `cancelled`。
 
-## 13. Artifact 下载
+### 10.4 稳定阶段
 
-### 13.1 下载 PPTX
-
-`GET /api/v1/presentations/artifacts/:request_id`
-
-成功返回文件，`Content-Disposition` 文件名为：
-
-```text
-deck-<request_id>.pptx
-```
-
-### 13.2 下载指定资源
-
-`GET /api/v1/presentations/artifacts/:request_id/*asset_path`
-
-用于下载事件/会话中出现的相对路径，例如：
-
-```text
-/api/v1/presentations/artifacts/<request_id>/previews/page-001_v2.png
-/api/v1/presentations/artifacts/<request_id>/previews/page-001_v2.html
-```
-
-安全与约束：
-
-- `request_id` 必须匹配 36 字符十六进制/连字符格式，并且必须属于当前用户的 Job；
-- `asset_path` 必须是 artifact 目录内的现有普通文件，拒绝绝对路径、`..` 穿越和目录；
-- HTML 若含 `script`/`iframe`/`object`/`embed`、事件属性、外部 HTTP URL、`javascript:` 等模式会返回 404；
-- 可提供的 HTML 会增加严格 CSP、`nosniff`；
-- 文件成功返回时不使用 JSON envelope，错误仍使用 canonical error envelope。
-
-## 14. 内部 gRPC 协议
-
-### 14.1 基本信息
-
-| 项目 | 值 |
+| `stage` | 含义 |
 | --- | --- |
-| Proto 真源 | `contracts/proto/v1/provider/provider.proto` |
-| Package | `provider.v1` |
-| Service | `ProviderRuntimeService` |
-| Go 生成代码 | `contracts/gen/go/v1/provider` |
-| Python 生成代码 | `apps/runtime/api` |
-| 默认地址 | `127.0.0.1:50051`（Runtime 默认只监听 loopback） |
-| 传输 | 当前为内部明文 gRPC，无 TLS |
-| Deck 单条 gRPC 消息上限 | 300 MiB（Go 调用端与 Python server 双向） |
+| `PREPARING` | 校验输入、保存附件、建立项目目录 |
+| `PLANNING` | brief、outline、style |
+| `GENERATING_CONTENT` | writer 生成逐页内容 |
+| `GENERATING_ASSETS` | 准备页面资源 |
+| `GENERATING_PAGES` | designer 生成页面 |
+| `RENDERING` | 渲染 SVG/HTML/预览 |
+| `ASSEMBLING_PPT` | 组装 PPTX |
+| `FINISHED` | 成功完成 |
 
-Provider 目录和凭据测试的 Go 调用超时为 5 秒；流式调用使用可取消 context。Runtime 不验证 HTTP JWT，而是信任 API 写入的 `UserContext`，因此 gRPC 端口只能放在可信内部网络。容器或跨主机部署时需在 Runtime YAML 中显式把 host 改为 `0.0.0.0` 或私网地址，并由容器网络、防火墙或服务网格限制入口。
+阶段是稳定外部契约，不等同于 Python 函数名。失败事件会保留发生故障时的阶段。
 
-### 14.2 RPC 总览
+### 10.5 失败收口
 
-| RPC | 类型 | 请求 | 响应 |
+流开始前的无效 Python 请求使用标准 gRPC status。Go 无法建立 Runtime 流时发布 `TASK_FAILED/PYTHON_RUNTIME_UNAVAILABLE`；未收到终态就异常断流或提前 EOF 时发布 `TASK_FAILED/PYTHON_STREAM_LOST`。这两类错误均可标记 `retryable: true`，但“重试”是重新创建 Task，不是恢复旧 Task。
+
+## 11. PPT 产物下载
+
+### 11.1 最终 PPTX
+
+`GET /api/v1/ppt/tasks/:task_id/file`
+
+只有任务已收到包含 PPTX 相对路径的成功结果后才可下载。响应文件名为：
+
+```text
+deck-<task_id>.pptx
+```
+
+### 11.2 指定产物
+
+`GET /api/v1/ppt/tasks/:task_id/artifacts/*asset_path`
+
+`asset_path` 来自事件 `resources[].url`，可能指向 SVG、HTML 或页面预览。Go 校验：
+
+- `task_id` 是规范 UUID，并属于当前用户；
+- 相对路径不是绝对路径、卷路径或 `..` 穿越；
+- 解析后的绝对路径仍位于 `python_agent.artifacts_dir/<task_id>/`；
+- 目标是实际存在的普通文件。
+
+HTML/SVG 响应附加 CSP、sandbox 和 `X-Content-Type-Options: nosniff`。Python 事件传输 `relative_path`，公开 URL 由 Go 生成；事件不得泄露 Runtime 绝对路径。
+
+Go 的 `python_agent.artifacts_dir` 与 Python 的 `DECK_ARTIFACTS_DIR` 必须指向同一个物理目录。不同容器需要共享卷，不共享文件系统的跨主机部署暂不支持产物下载。
+
+## 12. PPT 当前持久化边界
+
+PPT Task、事件、进度、错误和中间状态不写 MySQL，也不使用 LangGraph checkpointer。SSE 缓冲、订阅和取消函数都在 Go `TaskHub` 中；进程退出即丢失。Python 不提供 review、action、pause、resume、repair 或版本化 artifact 接口。
+
+MySQL 仍用于用户、登录相关数据、模型配置和 Agent 节点绑定；“PPT 不落库”不代表服务不依赖 MySQL/Redis。
+## 13. 内部 gRPC 协议
+
+### 13.1 服务与生成物
+
+Runtime 默认监听 `127.0.0.1:50051`，当前使用内部明文 gRPC。它不验证 HTTP JWT，只接受 Go API 解析好的模型配置和用户输入，因此端口必须留在可信网络。
+
+| 用途 | Proto 真源 | Package / Service | Go 生成代码 |
 | --- | --- | --- | --- |
-| `TestCredential` | unary | `TestCredentialRequest` | `TestCredentialResponse` |
-| `ListProviders` | unary | `ListProvidersRequest` | `ListProvidersResponse` |
-| `StreamText` | server streaming | `StreamTextRequest` | stream `StreamTextResponse` |
-| `GenerateDeck` | server streaming | `GenerateDeckRequest` | stream `GenerateDeckResponse` |
-| `ResumeDeck` | server streaming | `ResumeDeckRequest` | stream `GenerateDeckResponse` |
+| Provider 与文本 | `contracts/proto/v1/provider/provider.proto` | `provider.v1.ProviderRuntimeService` | `contracts/gen/go/v1/provider` |
+| PPT | `contracts/proto/ppt/ppt_agent.proto` | `ppt.agent.PptAgentService` | `contracts/gen/go/pptagent` |
 
-### 14.3 共享消息
+两套 Python 生成代码都位于 `apps/runtime/api`。PPT 请求可内联最多 100 MiB 附件，Go 调用和 Runtime server 的 gRPC 单条消息上限为 300 MiB。修改任一 proto 后从仓库根目录执行 `make proto`，不要手工编辑生成文件。
+
+### 13.2 RPC 总览
+
+| Service | RPC | 类型 | 请求 | 响应 |
+| --- | --- | --- | --- | --- |
+| `ProviderRuntimeService` | `TestCredential` | unary | `TestCredentialRequest` | `TestCredentialResponse` |
+| `ProviderRuntimeService` | `ListProviders` | unary | `ListProvidersRequest` | `ListProvidersResponse` |
+| `ProviderRuntimeService` | `StreamText` | server streaming | `StreamTextRequest` | stream `StreamTextResponse` |
+| `PptAgentService` | `GeneratePpt` | server streaming | `GeneratePptRequest` | stream `AgentEvent` |
+
+没有 `GenerateDeck`、`ResumeDeck` 或双向 PPT RPC。
+
+### 13.3 Provider 共享消息与 RPC
 
 `UserContext`：
 
@@ -915,206 +741,102 @@ Provider 目录和凭据测试的 Go 调用超时为 5 秒；流式调用使用�
 | --- | --- | --- |
 | `user_id` | `int64` | 已认证用户 ID |
 | `username` | `string` | 用户名 |
-| `session_id` | `string` | HTTP session ID；后台 PPT worker 目前可能只填 user/name |
-| `device` | `string` | 登录设备；后台 PPT worker 目前可能为空 |
+| `session_id` | `string` | HTTP session ID |
+| `device` | `string` | 登录设备 |
 
-`DeckNodeModelConfig`：
+`TestCredentialRequest` 包含 `user`、`provider`、`api_key`、`base_url`；响应包含 `request_id`、`provider`、`status`、`message`。
 
-| 字段 | Proto 类型 | 说明 |
-| --- | --- | --- |
-| `node_key` | `string` | Agent 节点 key |
-| `provider` | `string` | Provider key |
-| `model` | `string` | 模型名 |
-| `api_key` | `string` | 模型凭据，只在内部传输 |
-| `base_url` | `string` | Provider 地址 |
-| `provider_options_json` | `string` | JSON object 字符串 |
-| `temperature` | `double` | 节点最终参数 |
-| `max_tokens` | `int32` | 节点最终参数 |
-| `supports_image_input` | `bool` | VLM review 是否可传图片 |
-
-`DeckSourceFile`：
-
-| 字段 | Proto 类型 | 说明 |
-| --- | --- | --- |
-| `filename` | `string` | 原文件名 |
-| `content` | `bytes` | 内联内容；后台 Job 的外置文件通常为空 |
-| `resource_id` | `string` | API 生成的资源 UUID |
-| `local_path` | `string` | 受控共享文件路径 |
-| `sha256` | `string` | 内容摘要 |
-| `size_bytes` | `int64` | 预期大小 |
-
-### 14.4 Provider RPC
-
-`TestCredentialRequest`：`user: UserContext`、`provider: string`、`api_key: string`、`base_url: string`。
-
-`TestCredentialResponse`：`request_id: string`、`provider: string`、`status: string`、`message: string`。
-
-`ListProvidersRequest` 为空。`ListProvidersResponse.providers[]` 中每个 `ProviderDescriptor` 包含：
+`ListProvidersRequest` 为空。`ListProvidersResponse.providers[]` 的 `ProviderDescriptor` 包含：
 
 | 字段 | Proto 类型 |
 | --- | --- |
-| `name`, `display_name`, `description`, `manager`, `sdk`, `default_base_url` | `string` |
-| `supports_credential_test`, `supports_custom_base_url` | `bool` |
+| `name`、`display_name`、`description`、`manager`、`sdk`、`default_base_url` | `string` |
+| `supports_credential_test`、`supports_custom_base_url` | `bool` |
 | `models` | repeated `ProviderModel` |
 
-`ProviderModel` 包含 `id`、`model_name`、`display_name`、`type`、`reasoning_supported`、`parameters[]`。其中 `type` 只使用 `text`、`multimodal`、`image` 三种能力分类；旧 Provider 目录中的 `chat` 会按模型名称兼容归一为 `text` 或 `multimodal`。`ProviderModelParameter` 包含 `name`、`display_name`、`type`、`description`、`default_value`、`options[]`、`required`，以及带 presence 的 optional `min`/`max` double。
-
-### 14.5 文本 RPC
+`ProviderModel` 包含 `id`、`model_name`、`display_name`、`type`、`reasoning_supported`、`parameters[]`。`type` 只使用 `text`、`multimodal`、`image`。`ProviderModelParameter` 包含 `name`、`display_name`、`type`、`description`、`default_value`、`options[]`、`required` 以及 optional `min`/`max`。
 
 `StreamTextRequest`：
 
 | 字段 | Proto 类型 |
 | --- | --- |
 | `user` | `UserContext` |
-| `provider`, `model`, `api_key`, `base_url` | `string` |
-| `prompt`, `system_prompt` | `string` |
+| `provider`、`model`、`api_key`、`base_url` | `string` |
+| `prompt`、`system_prompt` | `string` |
 | `temperature` | `double` |
 | `max_tokens` | `int32` |
 | `provider_options_json` | `string` |
 
-`StreamTextResponse`：
+`StreamTextResponse` 包含 `request_id`、`delta`、`done`、`error`、`sequence`。
+
+### 13.4 PPT 请求
+
+```proto
+rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
+```
+
+`GeneratePptRequest`：
 
 | 字段 | Proto 类型 | 说明 |
 | --- | --- | --- |
-| `request_id` | `string` | Runtime 调用 UUID |
-| `delta` | `string` | 文本增量 |
-| `done` | `bool` | 流结束 |
-| `error` | `string` | 错误文本 |
-| `sequence` | `int32` | Runtime 内文本序号 |
+| `task_id` | `string` | Go 生成的 Task UUID |
+| `description` | `string` | PPT 需求 |
+| `attachments` | repeated `InputResource` | 内联输入附件 |
+| `models` | repeated `ModelConfig` | 五个节点的最终模型配置 |
+| `options` | `PptOptions` | 语言、页数、比例和模板 |
 
-### 14.6 PPT 生成 RPC
-
-`GenerateDeckRequest`：
+`InputResource`：
 
 | 字段 | Proto 类型 | 说明 |
 | --- | --- | --- |
-| `user` | `UserContext` | 调用用户 |
-| `user_description` | `string` | PPT 需求 |
-| `source_file_filename` | `string` | 单文件兼容字段 |
-| `source_file` | `bytes` | 单文件兼容字段 |
-| `node_model_configs` | repeated `DeckNodeModelConfig` | 各节点最终模型配置 |
-| `source_files` | repeated `DeckSourceFile` | 多文件资源 |
-| `job_id` | `string` | API Job UUID |
-| `generation_mode` | `string` | `quick`/`step_by_step` |
+| `resource_id`、`name`、`mime_type`、`sha256` | `string` | 资源标识和元数据 |
+| `content` | `bytes` | 附件完整内容 |
 
-`ResumeDeckRequest`：
+`ModelConfig`：
 
 | 字段 | Proto 类型 | 说明 |
 | --- | --- | --- |
-| `user` | `UserContext` | 调用用户 |
-| `request_id` | `string` | 原生成 Runtime request ID/checkpoint thread ID |
-| `outline_markdown` | `string` | 确认后的大纲 |
-| `node_model_configs` | repeated `DeckNodeModelConfig` | 节点模型配置 |
-| `action` | `string` | 四种 PPT action 之一 |
-| `payload_json` | `string` | action JSON object，Runtime 限制 64 KB |
-| `job_id` | `string` | API Job UUID |
+| `node_key` | `string` | `brief`、`outline`、`style`、`writer`、`designer` 之一 |
+| `provider`、`model`、`api_key`、`base_url` | `string` | Provider 调用配置；API key 只在内部传输 |
+| `provider_options` | `google.protobuf.Struct` | Provider 扩展选项 |
+| `temperature` | `double` | 节点最终参数 |
+| `max_tokens` | `int32` | 节点最终参数 |
+| `supports_image_input` | `bool` | 模型图片输入能力 |
 
-两个 RPC 都返回 `GenerateDeckResponse` stream：
+`PptOptions` 包含 `language`、`expected_slide_count`、`aspect_ratio`、`template_id`。请求不包含用户会话、checkpoint、当前阶段、resume 数据、review action 或版本号。
 
-| 字段 | Proto 类型 | HTTP SSE 映射 |
+### 13.5 PPT 事件与资源
+
+`AgentEvent`：
+
+| 字段 | Proto 类型 | 说明 |
 | --- | --- | --- |
-| `request_id` | `string` | `request_id` |
-| `event_type` | `string` | `event_type` 与 SSE event name |
-| `stage` | `string` | 规范化为 canonical stage |
-| `message` | `string` | `message` |
-| `channel` | `string` | `channel` |
-| `text_delta` | `string` | `text_delta` |
-| `content` | `string` | `content` |
-| `payload_json` | `string` | 解析为 JSON `payload`；无效 JSON 会作为字符串编码 |
-| `artifact_path` | `string` | Runtime 内部路径；公开 URL 由 API 生成 |
-| `done` | `bool` | `done` |
-| `error` | `string` | `error` |
-| `sequence` | `int64` | Runtime 序号；持久化 Job SSE 使用数据库事件序号 |
-| `outline_markdown` | `string` | `outline_markdown` |
-| `event_version` | `int32` | `event_version` |
-| `job_id` | `string` | `job_id` |
-| `stage_status` | `string` | `stage_status` |
-| `progress` | `DeckProgress` | `{current,total}` |
-| `slide` | `DeckSlideEvent` | `{index,version}` |
-| `severity` | `string` | `severity` |
-| `action_required` | `string` | `action_required` |
-| `retryable` | `bool` | `retryable` |
-| `error_code` | `string` | `error_code` |
+| `task_id` | `string` | Task UUID |
+| `sequence` | `uint64` | 单任务递增序号 |
+| `created_at` | `google.protobuf.Timestamp` | 事件时间 |
+| `type` | `EventType` | 统一事件类型 |
+| `stage` | `PptStage` | 稳定展示阶段 |
+| `message` | `string` | 用户可读消息 |
+| `progress` | `Progress` | `current`、`total`、`percent`、`unit` |
+| `resources` | repeated `ResourceRef` | 本事件相关文件 |
+| `detail` | oneof | `PageDetail`、`ErrorDetail`、`FinalResult` 之一 |
 
-Runtime 的顶层 RPC 异常不会把异常详情直接返回客户端：文本/Deck 流只暴露安全摘要 `runtime request failed`，Deck 同时使用 `error_code: "runtime_internal"`；完整异常与堆栈仅写服务端日志。工作流内部主动产生的结构化业务错误仍按上表的 `error`/`error_code` 返回。
+`ResourceRef`：
 
-修改协议后从仓库根目录执行 `make proto`，不要手工编辑任一生成文件。
-
-## 15. 旧接口兼容与弃用
-
-### 15.1 兼容原则
-
-旧路由没有 `/api/v1` 前缀，继续保留是为了迁移既有客户端。其普通 JSON 成功响应直接返回历史 payload，不含 `{data,meta}`；错误一般为 `{"message":"..."}`，绑定错误还可能有顶层 `error` 字符串。Request ID header 仍会返回。新代码不得依赖旧 payload 形状。
-
-除 `/healthz`、`/login`、`/refresh`、`/register` 外，旧路由同样需要 Bearer access token。
-
-### 15.2 路由映射
-
-| Legacy | Canonical successor | 备注 |
+| 字段 | Proto 类型 | 说明 |
 | --- | --- | --- |
-| `GET /healthz` | `GET /api/v1/health` | legacy 返回裸 `{status}` |
-| `POST /register` | `POST /api/v1/auth/register` | 公开 |
-| `POST /login` | `POST /api/v1/auth/login` | 公开 |
-| `POST /refresh` | `POST /api/v1/auth/refresh` | 公开 |
-| `GET /me` | `GET /api/v1/auth/me` |  |
-| `POST /logout` | `POST /api/v1/auth/logout` |  |
-| `GET /providers` | `GET /api/v1/providers` |  |
-| `POST /provider-credentials/test` | `POST /api/v1/providers/credential-tests` | 路径命名已统一 |
-| `GET /model-configs` | `GET /api/v1/model-configs` |  |
-| `POST /model-configs` | `POST /api/v1/model-configs` |  |
-| `GET /model-configs/:id` | `GET /api/v1/model-configs/:id` |  |
-| `PUT /model-configs/:id` | `PATCH /api/v1/model-configs/:id` | legacy PUT 实际也是部分更新 |
-| `DELETE /model-configs/:id` | `DELETE /api/v1/model-configs/:id` |  |
-| `GET /agents` | `GET /api/v1/agents` |  |
-| `GET /agents/:id` | `GET /api/v1/agents/:id` |  |
-| `GET /agent-configs` | `GET /api/v1/agent-configs` |  |
-| `POST /agent-configs` | `POST /api/v1/agent-configs` |  |
-| `GET /agent-configs/:id` | `GET /api/v1/agent-configs/:id` |  |
-| `PUT /agent-configs/:id` | `PATCH /api/v1/agent-configs/:id` | legacy PUT 实际也是部分更新 |
-| `DELETE /agent-configs/:id` | `DELETE /api/v1/agent-configs/:id` |  |
-| `POST /agent/stream-text` | `POST /api/v1/text-generations` | SSE |
-| `GET /ppt-agent/conversations` | `GET /api/v1/presentations/conversations` |  |
-| `GET /ppt-agent/conversations/:id` | `GET /api/v1/presentations/conversations/:id` |  |
-| `DELETE /ppt-agent/conversations/:id` | `DELETE /api/v1/presentations/conversations/:id` |  |
-| `POST /ppt-agent/jobs` | `POST /api/v1/presentations/jobs` | 推荐立即迁移 |
-| `GET /ppt-agent/jobs/:job_id` | `GET /api/v1/presentations/jobs/:job_id` |  |
-| `GET /ppt-agent/jobs/:job_id/events` | `GET /api/v1/presentations/jobs/:job_id/events` | 可续传 SSE |
-| `POST /ppt-agent/jobs/:job_id/actions` | `POST /api/v1/presentations/jobs/:job_id/actions` |  |
-| `POST /ppt-agent/jobs/:job_id/cancel` | `POST /api/v1/presentations/jobs/:job_id/cancel` |  |
-| `GET /ppt-agent/metrics` | `GET /api/v1/presentations/metrics` |  |
-| `GET /ppt-agent/artifacts/:request_id[/<asset>]` | `GET /api/v1/presentations/artifacts/:request_id[/<asset>]` | 文件响应 |
+| `resource_id` | `string` | 资源 ID |
+| `type` | `ResourceType` | `INPUT_ATTACHMENT`、`IMAGE`、`SVG`、`HTML`、`PAGE_PREVIEW`、`PPTX`、`OTHER_FILE` |
+| `name` | `string` | 文件名 |
+| `relative_path` | `string` | `DECK_ARTIFACTS_DIR/<task_id>/` 下的相对路径 |
+| `mime_type` | `string` | MIME |
+| `size_bytes` | `uint64` | 文件大小 |
+| `sha256` | `string` | 可选摘要 |
 
-### 15.3 仅 legacy 的 PPT 直连流
+Python 不返回公开 URL。Go 把相对路径转换为当前用户可访问的 Task 下载 URL，并在 SSE 边界移除 `ErrorDetail.debug_message`。成功流必须以 `TASK_COMPLETED` 结束，失败流尽量以 `TASK_FAILED` 结束；Go 会为无终态断流补发失败事件。
 
-`POST /ppt-agent/generate` 和 `POST /ppt-agent/resume` 是旧版“HTTP 请求直接持有 Runtime SSE”的接口，**没有 `/api/v1` 版本**。两者响应会带：
+## 14. 进程探针与已删除接口
 
-```http
-Deprecation: true
-Link: </api/v1/presentations/jobs>; rel="successor-version"
-```
+`GET /healthz` 是唯一不带 `/api/v1` 的路由，仅供容器和负载均衡器探测进程；业务健康检查可使用 `GET /api/v1/health`。旧的 `/login`、`/providers` 等无前缀业务路由没有注册。
 
-或 resume 的：
-
-```http
-Link: </api/v1/presentations/jobs/:job_id/actions>; rel="successor-version"
-```
-
-`/ppt-agent/generate` 接受与创建 Job 相同的 multipart/JSON 生成参数，但直接返回 PPT SSE；`/ppt-agent/resume` 接受：
-
-```json
-{
-  "request_id": "<runtime request uuid>",
-  "outline_markdown": "...",
-  "action": "approve_outline",
-  "payload": {}
-}
-```
-
-迁移方式：
-
-1. 用 `POST /api/v1/presentations/jobs` 创建后台 Job；
-2. 用 `GET .../jobs/:job_id/events` 消费和恢复事件；
-3. 遇到 `interrupt` 后用 `POST .../jobs/:job_id/actions` 提交确认；
-4. 刷新页面时用 `GET .../jobs/:job_id` 恢复状态。
-
-只有 `generate`/`resume` 目前显式返回 `Deprecation` header；其他无前缀兼容路由虽未发该 header，也不应被新客户端采用。代码当前未声明具体移除日期。
+旧 `/ppt-agent/*` 与 `/api/v1/presentations/*` 路由没有兼容层，也没有 resume/action 替代语义；PPT 客户端必须直接使用 `/api/v1/ppt/tasks`。

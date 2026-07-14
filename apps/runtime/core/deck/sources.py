@@ -18,8 +18,8 @@ from core.deck.assets import (
     MAX_IMAGE_PIXELS,
     is_image_filename,
 )
-from core.deck.contract import DeckSourceFile, GenerateDeckInput
-from core.deck.paths import DeckProjectPaths, source_dir
+from core.deck.contract import GeneratePptInput, InputResource
+from core.deck.paths import DeckProjectPaths
 from core.tools.document_parser import parse_uploaded_document
 
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
@@ -60,7 +60,7 @@ def persist_normalized_source_bundle(
 
 
 def parse_uploaded_files(
-    inp: GenerateDeckInput,
+    inp: GeneratePptInput,
     *,
     max_total_chars: int | None = None,
     max_chars_per_file: int | None = None,
@@ -72,7 +72,7 @@ def parse_uploaded_files(
 
 
 def parse_uploaded_files_with_provenance(
-    inp: GenerateDeckInput,
+    inp: GeneratePptInput,
     *,
     max_total_chars: int | None = None,
     max_chars_per_file: int | None = None,
@@ -114,12 +114,12 @@ def parse_uploaded_files_with_provenance(
     return join_source_file_names(source_files), "\n\n".join(sections), chunks
 
 
-def materialize_source_images(inp: GenerateDeckInput, request_dir: Path) -> list[dict[str, Any]]:
+def materialize_source_images(inp: GeneratePptInput, request_dir: Path) -> list[dict[str, Any]]:
     """Decode and re-encode uploaded images into a request-scoped safe directory.
 
     Re-encoding strips user filenames and embedded payloads/metadata from the
-    file consumed by the browser and PPTX exporter. The original upload remains
-    in the controlled source store for normal job lifecycle cleanup.
+    file consumed by the browser and PPTX exporter. Only the sanitized image is
+    written into the task artifact directory.
     """
 
     images_dir = request_dir.resolve() / "images"
@@ -240,54 +240,21 @@ def _provenance_chunks(filename: str, text: str) -> list[dict[str, Any]]:
     return result
 
 
-def collect_source_files(inp: GenerateDeckInput) -> list[DeckSourceFile]:
-    source_files = [
-        DeckSourceFile(
-            filename=item.filename.strip(),
-            content=item.content,
-            resource_id=item.resource_id,
-            local_path=item.local_path,
-            sha256=item.sha256,
-            size_bytes=item.size_bytes,
-        )
-        for item in inp.source_files
-        if item.content or item.local_path
-    ]
-    if not source_files and inp.source_file:
-        source_files.append(
-            DeckSourceFile(
-                filename=(inp.source_file_filename or "uploaded-file").strip(),
-                content=inp.source_file,
-            )
-        )
-    return source_files
+def collect_source_files(inp: GeneratePptInput) -> list[InputResource]:
+    return [item for item in inp.attachments if item.content]
 
 
-def _source_content(source_file: DeckSourceFile) -> bytes:
-    if source_file.content:
-        return source_file.content
-    raw_path = source_file.local_path.strip()
-    if not raw_path:
-        return b""
-    allowed_root = source_dir()
-    path = Path(raw_path).expanduser().resolve(strict=True)
-    try:
-        path.relative_to(allowed_root)
-    except ValueError as exc:
-        raise ValueError("deck source resource is outside the controlled source directory") from exc
-    if not path.is_file():
-        raise ValueError("deck source resource is not a regular file")
-    size = path.stat().st_size
-    if size > MAX_SOURCE_BYTES or (source_file.size_bytes > 0 and size != source_file.size_bytes):
+def _source_content(source_file: InputResource) -> bytes:
+    data = source_file.content
+    if len(data) > MAX_SOURCE_BYTES:
         raise ValueError("deck source resource size is invalid")
-    data = path.read_bytes()
     expected = source_file.sha256.strip().lower()
     if expected and hashlib.sha256(data).hexdigest() != expected:
         raise ValueError("deck source resource checksum mismatch")
     return data
 
 
-def join_source_file_names(source_files: list[DeckSourceFile], *, max_chars: int = 2000) -> str:
+def join_source_file_names(source_files: list[InputResource], *, max_chars: int = 2000) -> str:
     names: list[str] = []
     used = 0
     for index, source_file in enumerate(source_files):

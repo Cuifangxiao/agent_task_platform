@@ -43,25 +43,13 @@ INSERT IGNORE INTO agents (
         JSON_OBJECT(
             'key', 'writer',
             'display_name', 'Slide Writer',
-            'description', 'Expand each outline item into structured SlideSpec v2 content.',
+            'description', 'Expand each outline item into structured slide content.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'designer',
             'display_name', 'Slide Designer',
-            'description', 'Render slide specs through the HTML design system and repair page-level issues.',
-            'requires_model', true
-        ),
-        JSON_OBJECT(
-            'key', 'review',
-            'display_name', 'Visual Review',
-            'description', 'Review slide previews for visual and layout issues.',
-            'requires_model', true
-        ),
-        JSON_OBJECT(
-            'key', 'coherence',
-            'display_name', 'Coherence Pass',
-            'description', 'Check cross-page consistency, repeated titles, and narrative flow.',
+            'description', 'Render slide content into local SVG, HTML previews, and PPT assets.',
             'requires_model', true
         )
     ),

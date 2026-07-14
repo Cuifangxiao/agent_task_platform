@@ -255,7 +255,7 @@ def normalize_slide_spec(
     bullets = _normalize_string_list(source.get("bullets") or source.get("items"))
     content = source.get("content") if isinstance(source.get("content"), dict) else {}
     if not content:
-        content = _content_from_legacy(component, title, key_message, bullets, index)
+        content = _fallback_content(component, title, key_message, bullets, index)
 
     notes = str(source.get("notes") or source.get("speaker_notes") or key_message or "").strip()
     sources = [str(item).strip() for item in source.get("sources") or [] if str(item).strip()]
@@ -272,11 +272,6 @@ def normalize_slide_spec(
         layout_variant=_normalize_layout_variant(source.get("layout_variant")),
         design=_normalize_design(source.get("design")),
     )
-
-
-def compact_slide_spec(slide: SlideSpec) -> SlideSpec:
-    """Compatibility no-op: density is validated and repaired without deleting text."""
-    return slide
 
 
 def slide_text_values(slide: SlideSpec) -> list[str]:
@@ -307,7 +302,7 @@ def slide_has_placeholder(slide: SlideSpec) -> bool:
     return any(has_placeholder_text(value) for value in slide_text_values(slide))
 
 
-def _content_from_legacy(component: str, title: str, key_message: str, bullets: list[str], index: int) -> dict[str, Any]:
+def _fallback_content(component: str, title: str, key_message: str, bullets: list[str], index: int) -> dict[str, Any]:
     if component == "cover":
         return {"subtitle": key_message, "eyebrow": "Presentation", "meta": ""}
     if component == "section":

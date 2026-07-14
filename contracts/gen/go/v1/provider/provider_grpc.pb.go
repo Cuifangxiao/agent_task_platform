@@ -22,8 +22,6 @@ const (
 	ProviderRuntimeService_TestCredential_FullMethodName = "/provider.v1.ProviderRuntimeService/TestCredential"
 	ProviderRuntimeService_ListProviders_FullMethodName  = "/provider.v1.ProviderRuntimeService/ListProviders"
 	ProviderRuntimeService_StreamText_FullMethodName     = "/provider.v1.ProviderRuntimeService/StreamText"
-	ProviderRuntimeService_GenerateDeck_FullMethodName   = "/provider.v1.ProviderRuntimeService/GenerateDeck"
-	ProviderRuntimeService_ResumeDeck_FullMethodName     = "/provider.v1.ProviderRuntimeService/ResumeDeck"
 )
 
 // ProviderRuntimeServiceClient is the client API for ProviderRuntimeService service.
@@ -33,8 +31,6 @@ type ProviderRuntimeServiceClient interface {
 	TestCredential(ctx context.Context, in *TestCredentialRequest, opts ...grpc.CallOption) (*TestCredentialResponse, error)
 	ListProviders(ctx context.Context, in *ListProvidersRequest, opts ...grpc.CallOption) (*ListProvidersResponse, error)
 	StreamText(ctx context.Context, in *StreamTextRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamTextResponse], error)
-	GenerateDeck(ctx context.Context, in *GenerateDeckRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateDeckResponse], error)
-	ResumeDeck(ctx context.Context, in *ResumeDeckRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateDeckResponse], error)
 }
 
 type providerRuntimeServiceClient struct {
@@ -84,44 +80,6 @@ func (c *providerRuntimeServiceClient) StreamText(ctx context.Context, in *Strea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ProviderRuntimeService_StreamTextClient = grpc.ServerStreamingClient[StreamTextResponse]
 
-func (c *providerRuntimeServiceClient) GenerateDeck(ctx context.Context, in *GenerateDeckRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateDeckResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &ProviderRuntimeService_ServiceDesc.Streams[1], ProviderRuntimeService_GenerateDeck_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[GenerateDeckRequest, GenerateDeckResponse]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ProviderRuntimeService_GenerateDeckClient = grpc.ServerStreamingClient[GenerateDeckResponse]
-
-func (c *providerRuntimeServiceClient) ResumeDeck(ctx context.Context, in *ResumeDeckRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateDeckResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &ProviderRuntimeService_ServiceDesc.Streams[2], ProviderRuntimeService_ResumeDeck_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[ResumeDeckRequest, GenerateDeckResponse]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ProviderRuntimeService_ResumeDeckClient = grpc.ServerStreamingClient[GenerateDeckResponse]
-
 // ProviderRuntimeServiceServer is the server API for ProviderRuntimeService service.
 // All implementations must embed UnimplementedProviderRuntimeServiceServer
 // for forward compatibility.
@@ -129,8 +87,6 @@ type ProviderRuntimeServiceServer interface {
 	TestCredential(context.Context, *TestCredentialRequest) (*TestCredentialResponse, error)
 	ListProviders(context.Context, *ListProvidersRequest) (*ListProvidersResponse, error)
 	StreamText(*StreamTextRequest, grpc.ServerStreamingServer[StreamTextResponse]) error
-	GenerateDeck(*GenerateDeckRequest, grpc.ServerStreamingServer[GenerateDeckResponse]) error
-	ResumeDeck(*ResumeDeckRequest, grpc.ServerStreamingServer[GenerateDeckResponse]) error
 	mustEmbedUnimplementedProviderRuntimeServiceServer()
 }
 
@@ -149,12 +105,6 @@ func (UnimplementedProviderRuntimeServiceServer) ListProviders(context.Context, 
 }
 func (UnimplementedProviderRuntimeServiceServer) StreamText(*StreamTextRequest, grpc.ServerStreamingServer[StreamTextResponse]) error {
 	return status.Error(codes.Unimplemented, "method StreamText not implemented")
-}
-func (UnimplementedProviderRuntimeServiceServer) GenerateDeck(*GenerateDeckRequest, grpc.ServerStreamingServer[GenerateDeckResponse]) error {
-	return status.Error(codes.Unimplemented, "method GenerateDeck not implemented")
-}
-func (UnimplementedProviderRuntimeServiceServer) ResumeDeck(*ResumeDeckRequest, grpc.ServerStreamingServer[GenerateDeckResponse]) error {
-	return status.Error(codes.Unimplemented, "method ResumeDeck not implemented")
 }
 func (UnimplementedProviderRuntimeServiceServer) mustEmbedUnimplementedProviderRuntimeServiceServer() {
 }
@@ -225,28 +175,6 @@ func _ProviderRuntimeService_StreamText_Handler(srv interface{}, stream grpc.Ser
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ProviderRuntimeService_StreamTextServer = grpc.ServerStreamingServer[StreamTextResponse]
 
-func _ProviderRuntimeService_GenerateDeck_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(GenerateDeckRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(ProviderRuntimeServiceServer).GenerateDeck(m, &grpc.GenericServerStream[GenerateDeckRequest, GenerateDeckResponse]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ProviderRuntimeService_GenerateDeckServer = grpc.ServerStreamingServer[GenerateDeckResponse]
-
-func _ProviderRuntimeService_ResumeDeck_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ResumeDeckRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(ProviderRuntimeServiceServer).ResumeDeck(m, &grpc.GenericServerStream[ResumeDeckRequest, GenerateDeckResponse]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ProviderRuntimeService_ResumeDeckServer = grpc.ServerStreamingServer[GenerateDeckResponse]
-
 // ProviderRuntimeService_ServiceDesc is the grpc.ServiceDesc for ProviderRuntimeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -267,16 +195,6 @@ var ProviderRuntimeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamText",
 			Handler:       _ProviderRuntimeService_StreamText_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "GenerateDeck",
-			Handler:       _ProviderRuntimeService_GenerateDeck_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "ResumeDeck",
-			Handler:       _ProviderRuntimeService_ResumeDeck_Handler,
 			ServerStreams: true,
 		},
 	},

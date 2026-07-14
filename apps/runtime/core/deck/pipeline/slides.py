@@ -11,7 +11,6 @@ from typing import Any
 from langgraph.config import get_stream_writer
 
 import core.deck.events as events
-from core.deck.errors import ModelOutputError
 from core.deck.pipeline.design_lock import page_contract
 from core.deck.pipeline.helpers import clamp_slide_count, component_from_layout, fallback_slide_title
 from core.deck.pipeline.llm import compose_context_prompt, invoke_json_with_retries, llm_for_node, llm_log_context, load_node_prompt
@@ -22,7 +21,7 @@ from core.deck.rendering.artist import render_svg_artwork
 from core.deck.rendering.browser import BrowserRenderer
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
-from core.deck.spec import COMPONENTS, DeckSpec, SlideSpec, ThemeTokens, _normalize_design, default_theme, normalize_slide_spec
+from core.deck.spec import COMPONENTS, DeckSpec, SlideSpec, ThemeTokens, default_theme, normalize_slide_spec
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +48,8 @@ def write_and_design_slides(
         slides=[],
     )
     slide_llm = llm_for_node(llm_registry, "writer", aliases=("slides",))
-    # Full-page SVG authoring must be explicitly configured.  Falling through
-    # to the writer/default model would silently put the legacy component
-    # selector back on the production path.
+    # Full-page SVG authoring must be explicitly configured; the writer model
+    # is responsible for content rather than page rendering.
     designer_llm = llm_registry.get("designer")
     writer(events.stage_started("slides", f"Generating {total} SVG slide previews", {"total": total}))
     logger.info("deck slides start: request_id=%s total=%s", request_id, total)
@@ -69,9 +67,10 @@ def write_and_design_slides(
         writer(
             events.slide_started(
                 f"Generating slide {index}/{total}: {title}",
-                legacy_slide_payload(
+                slide_event_payload(
                     {
                         "index": index,
+                        "total": total,
                         "title": title,
                         "key_message": str(outline.get("key_message") or "").strip(),
                         "component": str(outline.get("component") or ""),
@@ -102,7 +101,7 @@ def write_and_design_slides(
         writer(
             events.slide_spec_ready(
                 f"Slide {slide.index} spec ready: {slide.title}",
-                {"index": slide.index, "title": slide.title, "component": slide.component, "role": slide.role},
+                {"index": slide.index, "total": total, "title": slide.title, "component": slide.component, "role": slide.role},
             )
         )
 
@@ -128,11 +127,6 @@ def write_and_design_slides(
         previous_visual_signatures.append(artwork.visual_signature)
         if artwork.issues:
             all_issues.extend(issues_to_dicts(artwork.issues))
-        if slide.index == 1 and designer_llm is not None and artwork.render_mode != "llm_svg":
-            raise ModelOutputError(
-                "The first SVG page did not pass the design gate after bounded repair; generation stopped before repeating the defect across the deck.",
-                stage="designer",
-            )
         metadata = llm_registry.get("__metadata__") if isinstance(llm_registry.get("__metadata__"), dict) else {}
         designer_model = metadata.get("designer") or {}
         writer(
@@ -145,15 +139,12 @@ def write_and_design_slides(
                     "template_id": artwork.template_id,
                     "layout_id": artwork.layout_id,
                     "page_rhythm": artwork.page_rhythm,
-                    "artist_repair_count": artwork.repair_count,
                     "artist_rejected_issue_count": len(artwork.rejected_issues),
                     "metrics": {
                         "duration_ms": round((time.perf_counter() - designer_started_at) * 1000),
                         "provider": designer_model.get("provider", ""),
                         "model": designer_model.get("model", ""),
                         **designer_metrics.snapshot(),
-                        "repair_count": artwork.repair_count,
-                        "vlm_issue_count": 0,
                         "export_degraded": artwork.render_mode != "llm_svg",
                     },
                 },
@@ -173,23 +164,25 @@ def write_and_design_slides(
         )
         artifact_payload = {
             "index": slide.index,
+            "total": total,
+            "title": slide.title,
             "png": artifact.png_rel,
             "html": artifact.html_rel,
             "svg": artifact.svg_rel,
-            "version": artifact.version,
             "status": "ready" if not (artifact.issues or spec_issues or artwork.issues) else "warning",
             "renderer": artifact.renderer,
             "svg_renderer": artwork.render_mode,
             "template_id": artwork.template_id,
             "layout_id": artwork.layout_id,
             "page_rhythm": artwork.page_rhythm,
-            "artist_repair_count": artwork.repair_count,
             "visual_signature": artwork.visual_signature,
             "artist_rejected_issues": artwork.rejected_issues,
         }
         artifacts.append(artifact_payload)
         writer(events.slide_preview(f"Slide {slide.index} preview ready", artifact_payload))
-        writer(events.slide_ready(f"Slide {slide.index} ready: {slide.title}", legacy_slide_payload(slide.to_dict(), status=artifact_payload["status"])))
+        ready_payload = slide_event_payload(slide.to_dict(), status=artifact_payload["status"])
+        ready_payload["total"] = total
+        writer(events.slide_ready(f"Slide {slide.index} ready: {slide.title}", ready_payload))
         if artifact.issues:
             all_issues.extend(issues_to_dicts(artifact.issues))
 
@@ -243,7 +236,7 @@ def _generate_slide_spec(
         warning = str(exc)
         record_fallback()
     slide = normalize_slide_spec(raw_slide, index=index, outline=outline, deck_title=deck.title, narrative=deck.narrative)
-    slide = repair_placeholder_slide(slide, outline, deck)
+    slide = normalize_placeholder_slide(slide, outline, deck)
     logger.info(
         "event=ppt_slide_writer_end request_id=%s slide_index=%s component=%s variant=%s duration_ms=%s recovered=%s",
         request_id,
@@ -264,41 +257,8 @@ def _neighbor_outlines(plan_slides: list[dict[str, Any]], index: int) -> dict[st
     }
 
 
-def apply_designer_direction(designer_llm: Any, slide: SlideSpec, outline: dict[str, Any], theme: ThemeTokens) -> SlideSpec:
-    """Invoke Designer and apply only catalogued components/tokens."""
-
-    try:
-        direction = invoke_json_with_retries(
-            designer_llm,
-            system=load_node_prompt("designer"),
-            user=compose_context_prompt(
-                {
-                    "slide": slide.to_dict(),
-                    "outline": outline,
-                    "theme": theme.to_dict(),
-                    "allowed_components": sorted(COMPONENTS),
-                    "allowed_layout_variants": ["balanced", "editorial", "split"],
-                },
-                uploaded_file_text="",
-            ),
-            attempts=2,
-        )
-    except ValueError:
-        direction = {}
-        record_fallback()
-    component = str(direction.get("component") or "").strip().lower().replace("_", "-")
-    if component in COMPONENTS and _component_accepts_content(component, slide.content, slide.chart):
-        slide.component = component
-    variant = str(direction.get("layout_variant") or "").strip().lower()
-    if variant in {"balanced", "editorial", "split"}:
-        slide.layout_variant = variant
-    raw_design = direction.get("design") if isinstance(direction.get("design"), dict) else direction
-    slide.design = _normalize_design(raw_design)
-    return slide
-
-
 def apply_design_contract(slide: SlideSpec, state: DeckGraphState) -> SlideSpec:
-    """Re-apply the confirmed page contract after model-directed styling."""
+    """Re-apply the frozen page contract after model-directed styling."""
 
     locked = page_contract(state, slide.index)
     component = str(locked.get("component") or "").strip()
@@ -568,7 +528,7 @@ def target_slide_count(state: DeckGraphState, raw_slides: list[Any] | None = Non
     return clamp_slide_count((state.get("brief") or {}).get("suggested_pages") or 8)
 
 
-def repair_placeholder_slide(slide: SlideSpec, outline: dict[str, Any], deck: DeckSpec) -> SlideSpec:
+def normalize_placeholder_slide(slide: SlideSpec, outline: dict[str, Any], deck: DeckSpec) -> SlideSpec:
     issues = validate_slide_spec(slide)
     if not any(issue.kind == "placeholder_text" for issue in issues):
         return slide
@@ -583,7 +543,7 @@ def repair_placeholder_slide(slide: SlideSpec, outline: dict[str, Any], deck: De
     return slide
 
 
-def legacy_slide_payload(slide: dict[str, Any], *, status: str) -> dict[str, Any]:
+def slide_event_payload(slide: dict[str, Any], *, status: str) -> dict[str, Any]:
     content = slide.get("content") if isinstance(slide.get("content"), dict) else {}
     bullets = content.get("bullets") or content.get("items") or content.get("steps") or []
     if not isinstance(bullets, list):

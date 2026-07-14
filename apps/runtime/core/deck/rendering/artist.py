@@ -1,4 +1,4 @@
-"""Model-backed, one-page-at-a-time SVG art direction and bounded repair."""
+"""Model-backed, one-page-at-a-time SVG art direction with a local fallback."""
 
 from __future__ import annotations
 
@@ -16,11 +16,10 @@ from core.deck.pipeline.llm import invoke_text_with_retries, load_node_prompt
 from core.deck.quality.issues import ValidationIssue, dedupe_issues, issues_to_dicts
 from core.deck.quality.svg import validate_svg_page
 from core.deck.rendering.svg import SVGSlideRenderer
-from core.deck.runtime_metrics import record_fallback, record_retry
+from core.deck.runtime_metrics import record_fallback
 from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec, ThemeTokens
 
 
-MAX_SVG_REPAIRS = 2
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +29,6 @@ class SVGArtwork:
 
     svg: str
     render_mode: str
-    repair_count: int = 0
     issues: list[ValidationIssue] = field(default_factory=list)
     rejected_issues: list[dict[str, Any]] = field(default_factory=list)
     template_id: str = ""
@@ -47,11 +45,8 @@ def render_svg_artwork(
     slide: SlideSpec,
     outline: dict[str, Any] | None = None,
     previous_visual_signatures: list[dict[str, Any]] | None = None,
-    quality_feedback: list[dict[str, Any]] | None = None,
-    existing_svg: str = "",
-    max_repairs: int = MAX_SVG_REPAIRS,
 ) -> SVGArtwork:
-    """Author one complete SVG, validate it, repair it, then fall back safely.
+    """Author one complete SVG once, validate it, then fall back safely.
 
     Only an explicitly configured Designer model should be passed as ``llm``.
     The deterministic component renderer is retained solely as the last-resort
@@ -67,12 +62,11 @@ def render_svg_artwork(
     request_id = str(state.get("request_id") or "")
     started_at = time.perf_counter()
     logger.info(
-        "event=ppt_svg_artist_start request_id=%s slide_index=%s template_id=%s layout_id=%s max_repairs=%s has_model=%s",
+        "event=ppt_svg_artist_start request_id=%s slide_index=%s template_id=%s layout_id=%s has_model=%s",
         request_id,
         slide.index,
         template_id,
         layout_id,
-        max(0, int(max_repairs)),
         llm is not None,
     )
 
@@ -84,8 +78,6 @@ def render_svg_artwork(
             outline=outline or {},
             blueprint=blueprint,
             previous_visual_signatures=signatures,
-            quality_feedback=list(quality_feedback or []),
-            existing_svg=existing_svg,
         )
         candidate = ""
         try:
@@ -93,7 +85,7 @@ def render_svg_artwork(
                 llm,
                 system=load_node_prompt("svg_executor"),
                 user=base_prompt,
-                attempts=2,
+                attempts=1,
             )
         except ValueError as exc:
             rejected.append(_generation_issue(slide.index, str(exc)).to_dict())
@@ -105,94 +97,64 @@ def render_svg_artwork(
                 " ".join(str(exc).split())[:500],
             )
 
-        for repair_count in range(max(0, int(max_repairs)) + 1):
-            if candidate:
-                normalized, normalization_issue = _normalize_or_issue(
-                    candidate,
+        if candidate:
+            normalized, normalization_issue = _normalize_or_issue(
+                candidate,
+                slide=slide,
+                theme=deck.theme,
+                blueprint=blueprint,
+                template_id=template_id,
+            )
+            if normalization_issue is None:
+                candidate_issues = validate_artist_svg(
+                    normalized,
                     slide=slide,
                     theme=deck.theme,
                     blueprint=blueprint,
-                    template_id=template_id,
+                    previous_visual_signatures=signatures,
                 )
-                if normalization_issue is None:
-                    candidate_issues = validate_artist_svg(
+                if not candidate_issues:
+                    signature = visual_signature(
                         normalized,
-                        slide=slide,
-                        theme=deck.theme,
-                        blueprint=blueprint,
-                        previous_visual_signatures=signatures,
+                        template_id=template_id,
+                        layout_id=layout_id,
+                        page_rhythm=rhythm,
+                        component=slide.component,
                     )
-                    if not candidate_issues:
-                        signature = visual_signature(
-                            normalized,
-                            template_id=template_id,
-                            layout_id=layout_id,
-                            page_rhythm=rhythm,
-                            component=slide.component,
-                        )
-                        logger.info(
-                            "event=ppt_svg_artist_end request_id=%s slide_index=%s duration_ms=%s render_mode=llm_svg "
-                            "repair_count=%s rejected_issue_count=%s svg_chars=%s",
-                            request_id,
-                            slide.index,
-                            round((time.perf_counter() - started_at) * 1000),
-                            repair_count,
-                            len(rejected),
-                            len(normalized),
-                        )
-                        return SVGArtwork(
-                            svg=normalized,
-                            render_mode="llm_svg",
-                            repair_count=repair_count,
-                            rejected_issues=rejected,
-                            template_id=template_id,
-                            layout_id=layout_id,
-                            page_rhythm=rhythm,
-                            visual_signature=signature,
-                        )
-                    rejected.extend(issues_to_dicts(candidate_issues))
                     logger.info(
-                        "event=ppt_svg_gate_rejected request_id=%s slide_index=%s repair_round=%s issue_count=%s issue_kinds=%s",
+                        "event=ppt_svg_artist_end request_id=%s slide_index=%s duration_ms=%s render_mode=llm_svg "
+                        "rejected_issue_count=%s svg_chars=%s",
                         request_id,
                         slide.index,
-                        repair_count,
-                        len(candidate_issues),
-                        ",".join(sorted({item.kind for item in candidate_issues})),
+                        round((time.perf_counter() - started_at) * 1000),
+                        len(rejected),
+                        len(normalized),
                     )
-                else:
-                    rejected.append(normalization_issue.to_dict())
-                    logger.info(
-                        "event=ppt_svg_gate_rejected request_id=%s slide_index=%s repair_round=%s issue_count=1 issue_kinds=%s",
-                        request_id,
-                        slide.index,
-                        repair_count,
-                        normalization_issue.kind,
+                    return SVGArtwork(
+                        svg=normalized,
+                        render_mode="llm_svg",
+                        rejected_issues=rejected,
+                        template_id=template_id,
+                        layout_id=layout_id,
+                        page_rhythm=rhythm,
+                        visual_signature=signature,
                     )
-
-            if repair_count >= max(0, int(max_repairs)):
-                break
-            record_retry()
-            logger.info(
-                "event=ppt_svg_repair_start request_id=%s slide_index=%s repair_attempt=%s rejected_issue_count=%s",
-                request_id,
-                slide.index,
-                repair_count + 1,
-                len(rejected),
-            )
-            try:
-                candidate = invoke_text_with_retries(
-                    llm,
-                    system=load_node_prompt("svg_executor") + "\n\n" + load_node_prompt("svg_repair"),
-                    user=_repair_prompt(
-                        base_prompt=base_prompt,
-                        current_svg=candidate,
-                        quality_issues=rejected[-12:],
-                    ),
-                    attempts=1,
+                rejected.extend(issues_to_dicts(candidate_issues))
+                logger.info(
+                    "event=ppt_svg_gate_rejected request_id=%s slide_index=%s issue_count=%s issue_kinds=%s",
+                    request_id,
+                    slide.index,
+                    len(candidate_issues),
+                    ",".join(sorted({item.kind for item in candidate_issues})),
                 )
-            except ValueError as exc:
-                rejected.append(_generation_issue(slide.index, str(exc)).to_dict())
-                candidate = ""
+            else:
+                rejected.append(normalization_issue.to_dict())
+                logger.info(
+                    "event=ppt_svg_gate_rejected request_id=%s slide_index=%s issue_count=1 issue_kinds=%s",
+                    request_id,
+                    slide.index,
+                    normalization_issue.kind,
+                )
 
     fallback = _fallback_artwork(
         deck=deck,
@@ -200,16 +162,15 @@ def render_svg_artwork(
         blueprint=blueprint,
         template_id=template_id,
         rejected=rejected,
-        reason="Designer model was not explicitly configured." if llm is None else "Designer SVG did not pass the bounded quality gate.",
+        reason="Designer model was not explicitly configured." if llm is None else "Designer SVG did not pass the deterministic safety gate.",
     )
     logger.warning(
-        "event=ppt_svg_artist_end request_id=%s slide_index=%s duration_ms=%s render_mode=%s repair_count=%s "
+        "event=ppt_svg_artist_end request_id=%s slide_index=%s duration_ms=%s render_mode=%s "
         "rejected_issue_count=%s svg_chars=%s",
         request_id,
         slide.index,
         round((time.perf_counter() - started_at) * 1000),
         fallback.render_mode,
-        fallback.repair_count,
         len(rejected),
         len(fallback.svg),
     )
@@ -224,8 +185,6 @@ def build_svg_artist_prompt(
     outline: dict[str, Any],
     blueprint: dict[str, Any],
     previous_visual_signatures: list[dict[str, Any]],
-    quality_feedback: list[dict[str, Any]] | None = None,
-    existing_svg: str = "",
 ) -> str:
     """Build the page prompt, including the actual template SVG source."""
 
@@ -310,7 +269,6 @@ def build_svg_artist_prompt(
             "images_are_allowed_only_when_listed_in_approved_assets": True,
             "visualization_reference_is_grammar_not_data": True,
         },
-        "quality_feedback": list(quality_feedback or [])[:20],
     }
     parts = [
             "PAGE EXECUTION CONTEXT (JSON):",
@@ -329,14 +287,6 @@ def build_svg_artist_prompt(
                 visualization_reference,
                 "",
                 "Use this only as a visual grammar. Replace every sample label and number with the semantic SlideSpec; never copy reference data.",
-            ]
-        )
-    if existing_svg.strip():
-        parts.extend(
-            [
-                "",
-                "CURRENT RENDER TO REDESIGN (preserve correct content, repair the supplied quality feedback):",
-                _extract_svg(existing_svg),
             ]
         )
     return "\n".join(parts)
@@ -838,20 +788,6 @@ def _page_from_collection(collection: Any, page_index: int) -> dict[str, Any]:
     return {}
 
 
-def _repair_prompt(*, base_prompt: str, current_svg: str, quality_issues: list[dict[str, Any]]) -> str:
-    return "\n".join(
-        [
-            base_prompt,
-            "",
-            "DETERMINISTIC QUALITY ISSUES (JSON):",
-            json.dumps(quality_issues, ensure_ascii=False, indent=2),
-            "",
-            "CURRENT SVG TO REPAIR:",
-            current_svg or "<empty/invalid SVG>",
-        ]
-    )
-
-
 def _extract_svg(raw: str) -> str:
     cleaned = re.sub(r"^```(?:xml|svg)?\s*|\s*```$", "", str(raw or "").strip(), flags=re.IGNORECASE)
     start = cleaned.lower().find("<svg")
@@ -912,7 +848,7 @@ def _generation_issue(page: int, description: str) -> ValidationIssue:
         severity="must_fix",
         kind="svg_artist_generation",
         description=description,
-        suggestion="Retry the one-page SVG Artist call.",
+        suggestion="Use the deterministic local SVG fallback for this page.",
     )
 
 
@@ -947,7 +883,6 @@ def _slug(value: str) -> str:
 
 
 __all__ = [
-    "MAX_SVG_REPAIRS",
     "SVGArtwork",
     "build_svg_artist_prompt",
     "normalize_svg_document",

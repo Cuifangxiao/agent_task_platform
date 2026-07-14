@@ -28,9 +28,9 @@ The shared HTTP client unwraps successful `{ data, meta }` responses and raises 
 `src/features/presentations` is split by responsibility:
 
 - `api.ts` and `types.ts`: public feature contract.
-- `components/PresentationWorkspace.vue`: lightweight UI orchestration.
-- `components/PresentationThread.vue`, `PresentationComposer.vue`, and history/preview components: focused UI sections.
-- `composables/usePresentationConversations.ts`: history loading and hydration.
-- `composables/usePresentationJobController.ts`: job lifecycle, actions, cancellation, and SSE reconnection.
-- `composables/usePresentationMessages.ts`: reactive message store and event application.
-- `lib/conversationProjection.ts`, `eventProjection.ts`, and `progressView.ts`: pure normalization and view projection functions.
+- `components/PresentationWorkspace.vue`: creates one generation task, owns its SSE subscription, and exposes cancellation/download actions.
+- `components/PresentationComposer.vue`, `TaskEventTimeline.vue`, and `PagePreviewGrid.vue`: focused input, progress, and artifact UI.
+- `lib/taskProjection.ts`: validates streamed events and projects task state and page previews.
+- `lib/taskRoutes.ts`: canonical `/api/v1/ppt/tasks` route construction and SSE replay cursors.
+
+PPT generation is intentionally a single uninterrupted task. The frontend has no conversation history, review action, pause/resume, or artifact-version state.

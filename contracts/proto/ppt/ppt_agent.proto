@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package ppt.agent;
+
+option go_package = "agent-task-platform/contracts/gen/go/pptagent;pptagentpb";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+service PptAgentService {
+  rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
+}
+
+message GeneratePptRequest {
+  string task_id = 1;
+  string description = 2;
+  repeated InputResource attachments = 3;
+  repeated ModelConfig models = 4;
+  PptOptions options = 5;
+}
+
+message InputResource {
+  string resource_id = 1;
+  string name = 2;
+  string mime_type = 3;
+  bytes content = 4;
+  string sha256 = 5;
+}
+
+message ModelConfig {
+  string node_key = 1;
+  string provider = 2;
+  string model = 3;
+  string api_key = 4;
+  string base_url = 5;
+  google.protobuf.Struct provider_options = 6;
+  double temperature = 7;
+  int32 max_tokens = 8;
+  bool supports_image_input = 9;
+}
+
+message PptOptions {
+  string language = 1;
+  uint32 expected_slide_count = 2;
+  string aspect_ratio = 3;
+  string template_id = 4;
+}
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  TASK_STARTED = 1;
+  STEP_STARTED = 2;
+  STEP_PROGRESS = 3;
+  STEP_COMPLETED = 4;
+  ARTIFACT_READY = 5;
+  TASK_COMPLETED = 6;
+  TASK_FAILED = 7;
+}
+
+enum PptStage {
+  PPT_STAGE_UNSPECIFIED = 0;
+  PREPARING = 1;
+  PLANNING = 2;
+  GENERATING_CONTENT = 3;
+  GENERATING_ASSETS = 4;
+  GENERATING_PAGES = 5;
+  RENDERING = 6;
+  ASSEMBLING_PPT = 7;
+  FINISHED = 8;
+}
+
+enum ResourceType {
+  RESOURCE_TYPE_UNSPECIFIED = 0;
+  INPUT_ATTACHMENT = 1;
+  IMAGE = 2;
+  SVG = 3;
+  HTML = 4;
+  PAGE_PREVIEW = 5;
+  PPTX = 6;
+  OTHER_FILE = 7;
+}
+
+message Progress {
+  uint32 current = 1;
+  uint32 total = 2;
+  float percent = 3;
+  string unit = 4;
+}
+
+message ResourceRef {
+  string resource_id = 1;
+  ResourceType type = 2;
+  string name = 3;
+  string relative_path = 4;
+  string mime_type = 5;
+  uint64 size_bytes = 6;
+  string sha256 = 7;
+}
+
+message PageDetail {
+  string page_id = 1;
+  uint32 page_index = 2;
+  uint32 page_count = 3;
+  string title = 4;
+}
+
+message ErrorDetail {
+  string code = 1;
+  string message = 2;
+  string debug_message = 3;
+  bool retryable = 4;
+}
+
+message FinalResult {
+  ResourceRef ppt_file = 1;
+  uint32 slide_count = 2;
+  uint64 elapsed_ms = 3;
+}
+
+message AgentEvent {
+  string task_id = 1;
+  uint64 sequence = 2;
+  google.protobuf.Timestamp created_at = 3;
+  EventType type = 4;
+  PptStage stage = 5;
+  string message = 6;
+  Progress progress = 7;
+  repeated ResourceRef resources = 8;
+
+  oneof detail {
+    PageDetail page = 9;
+    ErrorDetail error = 10;
+    FinalResult final_result = 11;
+  }
+}

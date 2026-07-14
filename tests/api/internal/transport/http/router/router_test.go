@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -110,21 +111,22 @@ func TestCanonicalRouteTable(t *testing.T) {
 		"PATCH /api/v1/agent-configs/:id",
 		"DELETE /api/v1/agent-configs/:id",
 		"POST /api/v1/text-generations",
-		"GET /api/v1/presentations/conversations",
-		"GET /api/v1/presentations/conversations/:id",
-		"POST /api/v1/presentations/jobs",
-		"GET /api/v1/presentations/jobs/:job_id",
-		"GET /api/v1/presentations/jobs/:job_id/events",
-		"POST /api/v1/presentations/jobs/:job_id/actions",
-		"POST /api/v1/presentations/jobs/:job_id/cancel",
-		"GET /api/v1/presentations/metrics",
-		"GET /api/v1/presentations/artifacts/:request_id",
-		"GET /api/v1/presentations/artifacts/:request_id/*asset_path",
+		"POST /api/v1/ppt/tasks",
+		"GET /api/v1/ppt/tasks/:task_id",
+		"GET /api/v1/ppt/tasks/:task_id/events",
+		"POST /api/v1/ppt/tasks/:task_id/cancel",
+		"GET /api/v1/ppt/tasks/:task_id/file",
+		"GET /api/v1/ppt/tasks/:task_id/artifacts/*asset_path",
 	}
 
 	for _, route := range expected {
 		if _, ok := registered[route]; !ok {
 			t.Errorf("canonical route is not registered: %s", route)
+		}
+	}
+	for route := range registered {
+		if strings.Contains(route, "/presentations/") || strings.Contains(route, "/ppt-agent/") {
+			t.Errorf("obsolete PPT route is still registered: %s", route)
 		}
 	}
 }

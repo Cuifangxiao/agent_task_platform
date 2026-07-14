@@ -1,8 +1,7 @@
-"""Strategist art-direction generation and user selection."""
+"""Choose one recommended art direction automatically."""
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import shutil
@@ -11,21 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from langgraph.config import get_stream_writer
-from langgraph.types import interrupt
 
 import core.deck.events as events
 from core.deck.design.catalog import TemplatePack, get_template_pack, list_template_packs, template_preview_path
 from core.deck.paths import DeckProjectPaths
 from core.deck.pipeline.helpers import emit_agent
-from core.deck.pipeline.llm import invoke_json_with_retries, load_node_prompt
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.quality import validate_theme_contrast
-from core.deck.runtime_metrics import record_fallback
 from core.deck.spec import DeckSpec, ThemeTokens
 
 
 logger = logging.getLogger(__name__)
-STYLE_OPTION_LIMIT = 6
 _SAFE_TEMPLATE_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
 
@@ -34,73 +29,14 @@ def prepare_style_options(
     output_root: Path,
 ) -> dict[str, Any]:
     writer = get_stream_writer()
-    emit_agent(writer, "style", "Strategist / Template Curator", "从静态模板目录推荐视觉方向，不调用 Designer 或浏览器渲染。")
-    writer(events.stage_started("style", "Loading static template covers"))
+    emit_agent(writer, "style", "Template Curator", "从静态模板目录选择首个推荐视觉方向。")
+    writer(events.stage_started("style", "Selecting the recommended style"))
     options = build_style_options(state, output_root)
-    writer(events.style_options({"options": public_style_options(options), "review_type": "art_direction"}))
-    return {"style_options": options}
-
-
-def review_style(state: DeckGraphState, llm_registry: dict[str, Any] | None = None) -> dict[str, Any]:
-    writer = get_stream_writer()
-    options = state.get("style_options") or []
-    if str(state.get("generation_mode") or "") == "quick":
-        selected, _matched = select_style_option(options, "")
-        theme = ThemeTokens.from_dict(selected.get("tokens") or {})
-        writer(events.stage_progress("style_review", f"Quick mode selected art direction: {selected.get('name')}", {"status": "done"}))
-        return _selected_style_state(selected, theme, feedback="")
-
-    writer(events.stage_progress("style_review", "Waiting for art-direction confirmation"))
-    decision = interrupt(
-        {
-            "stage": "style_review",
-            "review_type": "art_direction",
-            "style_options": public_style_options(options),
-            "allowed_actions": ["choose_style"],
-        }
-    )
-    style_id = ""
-    feedback = ""
-    if isinstance(decision, dict):
-        style_id = str(decision.get("style_id") or decision.get("styleId") or "").strip()
-        feedback = str(decision.get("feedback") or "").strip()
-        payload = decision.get("payload")
-        if isinstance(payload, dict):
-            style_id = style_id or str(payload.get("style_id") or payload.get("styleId") or "").strip()
-            feedback = feedback or str(payload.get("feedback") or "").strip()
-
-    selected, matched = select_style_option(options, style_id)
-    if style_id and not matched:
-        writer(events.stage_progress("style_review", f"Unknown style_id '{style_id}', selected the recommended direction.", {"status": "warning", "style_id": style_id}))
+    selected, _ = select_style_option(options, "")
     theme = ThemeTokens.from_dict(selected.get("tokens") or {})
-    if feedback and llm_registry and llm_registry.get("style") is not None:
-        try:
-            adjusted = adjust_theme_from_feedback(theme, feedback, llm_registry["style"])
-            if theme_is_valid(adjusted):
-                theme = adjusted
-            else:
-                record_fallback()
-                writer(events.stage_progress("style_review", "Feedback produced low-contrast tokens; kept the selected palette.", {"status": "warning"}))
-        except ValueError as exc:
-            record_fallback()
-            writer(events.stage_progress("style_review", f"Could not apply token feedback; kept the selected direction: {exc}", {"status": "warning"}))
-    elif feedback:
-        theme.motif = (theme.motif + " | " + feedback).strip(" |")
-
-    writer(
-        events.stage_progress(
-            "style_review",
-            f"Selected art direction: {selected.get('name')}",
-            {
-                "style_id": selected.get("style_id"),
-                "name": selected.get("name"),
-                "template_id": selected.get("template_id"),
-                "template_mode": selected.get("template_mode"),
-                "feedback": feedback,
-            },
-        )
-    )
-    return _selected_style_state(selected, theme, feedback=feedback)
+    public_options = public_style_options([selected])
+    writer(events.style_options({"options": public_options}))
+    return {"style_options": options, **_selected_style_state(selected, theme)}
 
 
 def build_style_options(
@@ -110,8 +46,7 @@ def build_style_options(
     request_id = str(state.get("request_id") or "")
     started_at = time.perf_counter()
     packs = _candidate_packs(state)
-    option_limit = 1 if str(state.get("generation_mode") or "") == "quick" else STYLE_OPTION_LIMIT
-    selected_packs = packs[:option_limit]
+    selected_packs = packs[:1]
     options: list[dict[str, Any]] = []
     logger.info(
         "event=ppt_style_options_start request_id=%s option_count=%s preview_mode=static_template_cover",
@@ -141,7 +76,7 @@ def build_style_options(
                 "thumb_b64": "",
                 "tokens_summary": tokens_summary(theme),
                 "sample_render_mode": "static_template_cover",
-                "preview_note": "模板封面示意；确认后会根据内容和反馈适配，不在选择阶段实时绘制。",
+                "preview_note": "模板封面示意；生成阶段会根据内容自动适配。",
             }
         )
         logger.info(
@@ -182,7 +117,7 @@ def _direction_from_pack(pack: TemplatePack, state: DeckGraphState) -> dict[str,
         "template_mode": pack.template_mode,
         "template_summary": pack.summary,
         "rationale": pack.summary,
-        "confirmations": _confirmations(pack, state),
+        "execution_assumptions": _execution_assumptions(pack, state),
         "layout_principles": pack.layout_principles,
         "image_strategy": pack.image_strategy,
         "icon_strategy": pack.icon_strategy,
@@ -191,7 +126,7 @@ def _direction_from_pack(pack: TemplatePack, state: DeckGraphState) -> dict[str,
     }
 
 
-def _confirmations(pack: TemplatePack, state: DeckGraphState) -> dict[str, str]:
+def _execution_assumptions(pack: TemplatePack, state: DeckGraphState) -> dict[str, str]:
     brief = state.get("brief") if isinstance(state.get("brief"), dict) else {}
     plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
     palette = pack.theme.palette
@@ -269,24 +204,6 @@ def _preferred_template_id(haystack: str) -> str:
     return next((template_id for template_id, tokens in mappings if any(token in haystack for token in tokens)), "editorial_freeform")
 
 
-def adjust_theme_from_feedback(theme: ThemeTokens, feedback: str, style_llm: Any) -> ThemeTokens:
-    raw = invoke_json_with_retries(
-        style_llm,
-        system=load_node_prompt("style"),
-        user=json.dumps(
-            {
-                "task": "Adjust only the ThemeTokens object from feedback; keep accessibility and PPT-safe fonts.",
-                "theme": theme.to_dict(),
-                "feedback": feedback,
-            },
-            ensure_ascii=False,
-        ),
-        attempts=2,
-    )
-    tokens = raw.get("tokens") if isinstance(raw.get("tokens"), dict) else raw.get("theme") if isinstance(raw.get("theme"), dict) else raw
-    return ThemeTokens.from_dict(tokens if isinstance(tokens, dict) else theme.to_dict())
-
-
 def theme_is_valid(theme: ThemeTokens) -> bool:
     deck = DeckSpec(title="", narrative="", audience="", goal="", language="zh", theme=theme, slides=[])
     return not any(issue.severity == "must_fix" for issue in validate_theme_contrast(deck))
@@ -303,7 +220,7 @@ def public_style_options(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "template_summary",
         "template_source",
         "rationale",
-        "confirmations",
+        "execution_assumptions",
         "layout_principles",
         "image_strategy",
         "icon_strategy",
@@ -328,7 +245,7 @@ def select_style_option(options: list[dict[str, Any]], style_id: str) -> tuple[d
     return fallback, False
 
 
-def _selected_style_state(selected: dict[str, Any], theme: ThemeTokens, *, feedback: str) -> dict[str, Any]:
+def _selected_style_state(selected: dict[str, Any], theme: ThemeTokens) -> dict[str, Any]:
     art_direction = {
         key: selected.get(key)
         for key in (
@@ -341,13 +258,12 @@ def _selected_style_state(selected: dict[str, Any], theme: ThemeTokens, *, feedb
             "template_summary",
             "template_source",
             "rationale",
-            "confirmations",
+            "execution_assumptions",
             "layout_principles",
             "image_strategy",
             "icon_strategy",
         )
     }
-    art_direction["feedback"] = feedback
     return {
         "theme": theme.to_dict(),
         "art_direction": art_direction,
@@ -361,11 +277,9 @@ def tokens_summary(theme: ThemeTokens) -> str:
 
 
 __all__ = [
-    "adjust_theme_from_feedback",
     "build_style_options",
     "prepare_style_options",
     "public_style_options",
-    "review_style",
     "select_style_option",
     "theme_is_valid",
     "tokens_summary",

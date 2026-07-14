@@ -35,7 +35,7 @@ def test_restricted_svg_renderer_covers_core_components_without_quality_errors()
         SlideSpec(7, "context", "agenda", "The discussion follows four decisions", {"items": ["Context", "Evidence", "Options", "Action"]}),
         SlideSpec(8, "evidence", "timeline", "Delivery advances through four milestones", {"items": ["Discover", "Prototype", "Pilot", "Scale"]}),
         SlideSpec(9, "solution", "steps", "Execution is a four-step loop", {"steps": ["Frame", "Build", "Measure", "Adapt"]}),
-        SlideSpec(10, "turn", "comparison", "The target model removes two constraints", {"left_title": "Current", "right_title": "Target", "left": ["Manual handoffs", "Slow feedback"], "right": ["Shared context", "Fast learning"]}),
+        SlideSpec(10, "turn", "comparison", "The target model removes two constraints", {"left_title": "Current", "right_title": "Target", "left": ["Manual handoffs", "Slow iteration"], "right": ["Shared context", "Fast learning"]}),
         SlideSpec(11, "evidence", "quadrant", "Four opportunity zones guide priority", {"items": ["Defend", "Improve", "Expand", "Create"]}),
         SlideSpec(12, "evidence", "data-table", "The scorecard makes trade-offs explicit", {"columns": ["Option", "Impact", "Effort"], "rows": [["A", "High", "Low"], ["B", "Medium", "Medium"]]}),
         SlideSpec(13, "turn", "quote", "A principle anchors the choice", {"quote": "Make the important path easy to see and easy to change.", "speaker": "Design principle"}),

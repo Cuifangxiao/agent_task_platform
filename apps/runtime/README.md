@@ -22,9 +22,11 @@ apps/runtime/
 │   └── grpc.py              #   Servicer 薄壳(错误边界) + GrpcServer 生命周期
 ├── handler/                 # 编排层: proto <-> core contract 的转换
 │   ├── container.py         #   AgentHandlers + build_agent_handlers(手写 DI)
-│   └── provider_handler.py
+│   ├── provider_handler.py  #   Provider/Text proto <-> core
+│   └── ppt_handler.py       #   PPT AgentEvent proto <-> core
 ├── core/                    # 领域内核: 零 proto/grpc 依赖, 可独立单测
 │   ├── provider/            #   contract.py(Input/Output DTO) + service.py(业务)
+│   ├── deck/                #   PPT contract、线性 pipeline、本地渲染与导出
 │   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
 │   ├── llm/                 #   模型接入层: 各 provider 客户端(统一 BaseLLMClient 接口)
 │   ├── rag/  memory/  tools/
@@ -65,11 +67,13 @@ cp .env.example .env                 # 按需填密钥
 
 ## PPT 生成运行依赖
 
-Deck 生成链路以 SVG 为作者源：每页权威文件写入
-`DECK_ARTIFACTS_DIR/{request_id}/svg_output/page-{n}.svg`，浏览器产物写入 `previews/`，
-质量报告写入 `reports/`，最终原生 PPTX 写入 `exports/deck.pptx`。导出时会把本次
-`svg_output/` 冻结到 `backup/<timestamp>/svg_output/`。未配置 `DECK_ARTIFACTS_DIR` 时默认写入
-`apps/runtime/artifacts/decks`。
+PPT 使用独立的 gRPC 服务端流：Go 发送一次 `GeneratePpt` 请求，Runtime 按
+`brief -> outline -> style -> design_lock -> write_slides -> export` 顺序执行本地生成，并持续返回
+`AgentEvent`。每个请求从头执行单向流水线，期间不暂停等待人工输入；运行状态只通过事件流返回。
+
+模型节点固定为 `brief`、`outline`、`style`、`writer`、`designer`。模型配置来自 Go 请求，
+Runtime 不读取业务数据库。生成过程中产生的 SVG、HTML、预览和最终 PPTX 都写入
+`DECK_ARTIFACTS_DIR/{task_id}/`；未配置时默认写入 `apps/runtime/artifacts/decks`。
 
 部署时安装 Python 依赖后，还需要安装 Playwright Chromium:
 
@@ -77,18 +81,14 @@ Deck 生成链路以 SVG 为作者源：每页权威文件写入
 .venv/bin/python -m playwright install chromium
 ```
 
-如果运行环境缺少 Chromium，服务会降级为 Pillow 预览与整页截图导出，并在事件流中发 warning。
-生产环境建议随服务镜像放置 `core/deck/design_system/fonts/` 下的 Noto Sans SC 字体资产。
-
-Deck workflow 使用 `core/deck/checkpoint.py::PersistentSQLiteSaver` 持久化 LangGraph checkpoint，默认数据库位于 artifacts 目录下的 `deck-checkpoints.sqlite3`。Go 层负责持久化 Job/Event 并独立消费 gRPC；Python 流中断不会再被 HTTP 请求 context 直接取消。
-
-统一事件协议版本为 `event_version=1`，stage 包含 `brief`、`outline`、`outline_review`、`style`、`style_review`、`writer`、`designer`、`validate`、`review_vlm`、`repair`、`coherence`、`export`。页面按顺序端到端生成；每页 Content Editor 与 SVG Artist 共用最新锁和前页视觉签名。Designer 和 Coherence 都会调用各自绑定模型。VLM 模型必须声明图片输入能力，否则产生明确的 `vlm_image_unsupported` must-fix。
-
-内容 normalization 不再裁切标题、正文、bullet 或表格。原始与最终 spec 分别保存为 `sources/spec.raw.json`、`sources/spec.final.json`；修复预算耗尽仍有 must-fix 时 artifact 标记 `needs_review`。整页图片降级会写入 warnings/degraded，前端会提示文字不可编辑。
+若 Go 与 Runtime 位于不同容器，`python_agent.artifacts_dir` 和 `DECK_ARTIFACTS_DIR`
+必须挂载到同一个物理目录。Runtime 在事件中只返回任务目录内的相对路径；绝对路径、HTTP URL、
+鉴权和下载边界都由 Go 处理。完整流程见仓库根目录的 `docs/PPT_GENERATION_PIPELINE.md`。
 
 ## proto 代码生成
 
-proto 唯一真源在仓库根 `contracts/proto/v1/provider/provider.proto`，在仓库根目录执行：
+proto 真源在仓库根 `contracts/proto/v1/provider/provider.proto` 和
+`contracts/proto/ppt/ppt_agent.proto`，在仓库根目录执行：
 
 ```bash
 make proto        # 同时生成 Go(contracts/gen/go/) 和 Python(apps/runtime/api/) 代码

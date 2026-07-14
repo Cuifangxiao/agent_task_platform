@@ -65,30 +65,30 @@ test('SSE and downloads remain raw response channels', async (context) => {
   ]
   context.mock.method(globalThis, 'fetch', async () => responses.shift() as Response)
 
-  const stream = await client().openStream('/presentations/jobs/job-1/events')
+  const stream = await client().openStream('/ppt/tasks/task-1/events')
   assert.equal(await new Response(stream).text(), 'event: progress\ndata: {"step":1}\n\n')
 
-  const download = await client().download('/presentations/artifacts/request-1')
+  const download = await client().download('/ppt/tasks/task-1/file')
   assert.equal(download.filename, 'deck.pptx')
   assert.equal(await download.blob.text(), 'binary-content')
 })
 
-test('canonical presentation conversation deletion uses DELETE and unwraps the response', async (context) => {
+test('canonical PPT task cancellation uses POST and unwraps the response', async (context) => {
   let requestedPath = ''
   let requestedMethod = ''
   context.mock.method(globalThis, 'fetch', async (input, init) => {
     requestedPath = String(input)
     requestedMethod = init?.method ?? ''
-    return new Response(JSON.stringify({ data: { deleted: true, id: 42 }, meta: { request_id: 'request-3' } }), {
+    return new Response(JSON.stringify({ data: { task_id: 'task-42', status: 'cancelled' }, meta: { request_id: 'request-3' } }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     })
   })
 
   assert.deepEqual(
-    await client().request('/presentations/conversations/42', { method: 'DELETE' }),
-    { deleted: true, id: 42 },
+    await client().request('/ppt/tasks/task-42/cancel', { method: 'POST' }),
+    { task_id: 'task-42', status: 'cancelled' },
   )
-  assert.equal(requestedPath, '/api/v1/presentations/conversations/42')
-  assert.equal(requestedMethod, 'DELETE')
+  assert.equal(requestedPath, '/api/v1/ppt/tasks/task-42/cancel')
+  assert.equal(requestedMethod, 'POST')
 })

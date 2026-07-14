@@ -5,6 +5,7 @@ from PIL import Image
 from pptx import Presentation
 
 from core.deck.export import DeckExporter
+from core.deck.contract import EventType
 import core.deck.pipeline.export as export_pipeline
 from core.deck.pipeline.export import _attach_source_notes
 from core.deck.spec import DeckSpec, SlideSpec, default_theme
@@ -101,7 +102,7 @@ def test_source_provenance_is_written_into_speaker_notes():
     assert "Revenue was 40% after the launch." in slide.notes
 
 
-def test_must_fix_and_degraded_export_are_reported_as_needs_review(tmp_path, monkeypatch):
+def test_export_reports_diagnostics_without_blocking_delivery(tmp_path, monkeypatch):
     request_id = "33333333-3333-4333-8333-333333333333"
     slides_dir = tmp_path / request_id / "slides"
     slides_dir.mkdir(parents=True)
@@ -120,14 +121,15 @@ def test_must_fix_and_degraded_export_are_reported_as_needs_review(tmp_path, mon
         },
         DeckExporter(tmp_path, UnavailableBrowserSession()),
     )
-    artifact = next(event for event in emitted if event["event_type"] == "artifact")
-    assert result["quality_status"] == "needs_review"
+    artifact = next(event for event in emitted if event.type is EventType.ARTIFACT_READY)
     assert result["export_degraded"] is True
-    assert artifact["payload"]["needs_review"] is True
-    assert artifact["payload"]["degraded"] is True
+    assert artifact.resources[0].relative_path == "exports/deck.pptx"
     manifest_path = tmp_path / request_id / "reports" / "generation-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema"] == "deck-generation-manifest"
-    assert manifest["quality"]["status"] == "needs_review"
+    assert manifest["quality"] == {"must_fix_count": 1, "issue_count": 1}
     assert manifest["pages"][0]["title"] == "Title"
     assert result["generation_manifest"] == manifest
+    quality = json.loads((tmp_path / request_id / "reports" / "quality-report.json").read_text(encoding="utf-8"))
+    assert quality["must_fix_count"] == 1
+    assert "status" not in quality

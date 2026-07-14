@@ -35,7 +35,7 @@ def validate_svg_page(svg: str, *, page: int, theme: ThemeTokens, expected_spec_
     try:
         root = ET.fromstring(svg)
     except ET.ParseError as exc:
-        return [_issue(page, "invalid_xml", f"SVG XML is invalid: {exc}.", "Regenerate the page SVG.")]
+        return [_issue(page, "invalid_xml", f"SVG XML is invalid: {exc}.", "Create a valid page SVG.")]
 
     issues: list[ValidationIssue] = []
     if _local_name(root.tag) != "svg":
@@ -44,7 +44,7 @@ def validate_svg_page(svg: str, *, page: int, theme: ThemeTokens, expected_spec_
 
     issues.extend(_validate_canvas(root, page))
     if expected_spec_hash and root.get("data-spec-hash") != expected_spec_hash:
-        issues.append(_issue(page, "spec_drift", "SVG was not generated from the active design-contract revision.", "Regenerate the page from the frozen spec hash."))
+        issues.append(_issue(page, "spec_drift", "SVG does not match the active design contract.", "Render the page from the frozen spec hash."))
     allowed_fonts = {
         _font_name(theme.fonts.get("display")),
         _font_name(theme.fonts.get("body")),
@@ -111,7 +111,7 @@ def _validate_canvas(root: ET.Element, page: int) -> list[ValidationIssue]:
     except ValueError:
         parsed = []
     if len(parsed) != 4 or any(abs(a - b) > 0.01 for a, b in zip(parsed, expected, strict=False)):
-        issues.append(_issue(page, "viewbox", f"SVG viewBox must be 0 0 {CANVAS_WIDTH} {CANVAS_HEIGHT}.", "Regenerate using the locked 16:9 canvas."))
+        issues.append(_issue(page, "viewbox", f"SVG viewBox must be 0 0 {CANVAS_WIDTH} {CANVAS_HEIGHT}.", "Use the locked 16:9 canvas."))
     for name, expected_value in (("width", CANVAS_WIDTH), ("height", CANVAS_HEIGHT)):
         try:
             value = float(str(root.get(name) or ""))

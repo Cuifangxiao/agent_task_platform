@@ -32,7 +32,13 @@ class DeckProjectPaths:
         request_id = str(request_id or "").strip()
         if not request_id or Path(request_id).name != request_id:
             raise ValueError("request_id must be one safe path segment")
-        return cls((Path(output_root) / request_id).resolve())
+        output_root = Path(output_root).resolve()
+        root = (output_root / request_id).resolve()
+        try:
+            root.relative_to(output_root)
+        except ValueError as exc:
+            raise ValueError("request_id must stay inside the artifact directory") from exc
+        return cls(root)
 
     @property
     def sources(self) -> Path:
@@ -118,14 +124,14 @@ class DeckProjectPaths:
     def notes_total(self) -> Path:
         return self.notes / "total.md"
 
-    def svg(self, page: int, *, version: int | None = None) -> Path:
-        return self.svg_output / _page_filename(page, ".svg", version=version)
+    def svg(self, page: int) -> Path:
+        return self.svg_output / _page_filename(page, ".svg")
 
-    def preview_html(self, page: int, *, version: int | None = None) -> Path:
-        return self.previews / _page_filename(page, ".html", version=version)
+    def preview_html(self, page: int) -> Path:
+        return self.previews / _page_filename(page, ".html")
 
-    def preview_png(self, page: int, *, version: int | None = None) -> Path:
-        return self.previews / _page_filename(page, ".png", version=version)
+    def preview_png(self, page: int) -> Path:
+        return self.previews / _page_filename(page, ".png")
 
     def preview_background(self, page: int) -> Path:
         return self.previews / f"page-{_positive_page(page):03d}_bg.png"
@@ -152,11 +158,8 @@ class DeckProjectPaths:
         return path.resolve().relative_to(self.root).as_posix()
 
 
-def _page_filename(page: int, suffix: str, *, version: int | None) -> str:
-    stem = f"page-{_positive_page(page):03d}"
-    if version is not None and int(version) > 1:
-        stem += f"_v{int(version)}"
-    return stem + suffix
+def _page_filename(page: int, suffix: str) -> str:
+    return f"page-{_positive_page(page):03d}{suffix}"
 
 
 def _positive_page(page: int) -> int:

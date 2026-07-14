@@ -6,7 +6,6 @@ import re
 from typing import Any
 
 from langgraph.config import get_stream_writer
-from langgraph.types import interrupt
 
 import core.deck.events as events
 from core.deck.pipeline.helpers import component_from_layout, emit_agent
@@ -30,50 +29,7 @@ def generate_outline(state: DeckGraphState, llm_registry: dict[str, Any]) -> dic
     outline_markdown = normalize_outline_markdown("".join(parts), state)
     plan = outline_markdown_to_plan(outline_markdown, state)
     writer(events.outline_ready(outline_markdown))
-    return {"outline_markdown": outline_markdown, "plan": plan, "outline_action": ""}
-
-
-def review_outline(state: DeckGraphState) -> dict[str, Any]:
-    writer = get_stream_writer()
-    outline_markdown = str(state.get("outline_markdown") or "").strip()
-    if str(state.get("generation_mode") or "") == "quick":
-        writer(events.stage_progress("outline_review", "Quick mode approved the generated outline", {"status": "done"}))
-        return {"outline_action": "style"}
-    writer(events.stage_progress("outline_review", "Waiting for outline confirmation"))
-    plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
-    brief = state.get("brief") if isinstance(state.get("brief"), dict) else {}
-    decision = interrupt(
-        {
-            "stage": "outline_review",
-            "outline_markdown": outline_markdown,
-            "review_summary": {
-                "page_count": len(plan.get("slides") or []),
-                "audience": str(brief.get("audience") or ""),
-                "goal": str(brief.get("goal") or ""),
-                "language": str(brief.get("language") or "zh"),
-            },
-            "allowed_actions": ["approve_outline", "regenerate_outline"],
-            "editable": True,
-        }
-    )
-
-    if isinstance(decision, dict):
-        action = str(decision.get("action") or "approve_outline").strip().lower()
-        if action == "regenerate_outline":
-            payload = decision.get("payload") if isinstance(decision.get("payload"), dict) else {}
-            feedback = str(decision.get("feedback") or payload.get("feedback") or "").strip()
-            return {"outline_action": "regenerate", "outline_feedback": feedback}
-        if action in {"continue", "approve", "approved", "approve_outline"}:
-            edited_outline = decision.get("outline_markdown") or decision.get("content")
-            if isinstance(edited_outline, str) and edited_outline.strip():
-                edited_outline = normalize_outline_markdown(edited_outline, state)
-                return {
-                    "outline_markdown": edited_outline,
-                    "plan": outline_markdown_to_plan(edited_outline, state),
-                    "outline_action": "style",
-                    "outline_feedback": "",
-                }
-    return {"outline_action": "style", "outline_feedback": ""}
+    return {"outline_markdown": outline_markdown, "plan": plan}
 
 
 def outline_prompt(state: DeckGraphState) -> str:
@@ -82,7 +38,6 @@ def outline_prompt(state: DeckGraphState) -> str:
             "deck_title_hint": state.get("deck_title", ""),
             "user_description": state.get("user_description", ""),
             "brief": state.get("brief") or {},
-            "outline_feedback": state.get("outline_feedback") or "",
         },
         uploaded_file_text=state.get("uploaded_file_text", ""),
     )
@@ -105,7 +60,7 @@ def outline_markdown_to_plan(markdown: str, state: DeckGraphState) -> dict[str, 
 
 
 def parse_outline_slides(markdown: str) -> list[dict[str, Any]]:
-    """Parse the confirmed narrative and page-level art-direction hints.
+    """Parse the generated narrative and page-level art-direction hints.
 
     Markdown remains editable by users, while this normalized structure becomes
     the input to the Art Director and template-layout selection.
@@ -233,5 +188,4 @@ __all__ = [
     "outline_markdown_to_plan",
     "outline_prompt",
     "parse_outline_slides",
-    "review_outline",
 ]

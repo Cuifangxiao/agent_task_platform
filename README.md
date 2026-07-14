@@ -1,6 +1,6 @@
 # Agent Task Platform
 
-Agent Task Platform 是一个面向 AI Agent 工作流的多应用项目。目前提供统一的用户会话、Provider/模型配置、Agent 节点配置、文本流式生成，以及可恢复的 PPT 生成任务。Web、Go API 和 Python Runtime 分开部署；对外 HTTP API 以 `/api/v1` 为唯一推荐入口，Go 与 Python 之间使用仓库内统一维护的 gRPC 协议。
+Agent Task Platform 是一个面向 AI Agent 工作流的多应用项目。目前提供统一的用户会话、Provider/模型配置、Agent 节点配置、文本流式生成，以及不中断的 PPT 生成流水线。Web、Go API 和 Python Runtime 分开部署；对外 HTTP API 以 `/api/v1` 为唯一推荐入口，Go 与 Python 之间使用仓库内统一维护的 gRPC 协议。
 
 完整的 HTTP 与内部 gRPC 契约见 [docs/API.md](docs/API.md)。
 
@@ -10,8 +10,8 @@ Agent Task Platform 是一个面向 AI Agent 工作流的多应用项目。目�
 - Provider 目录、凭据连通性测试、按用户隔离的模型配置，以及文本、多模态、生图三类模型能力分类。
 - Agent 定义与节点级模型绑定；节点可覆盖 temperature 和 max tokens。
 - 文本生成 SSE。
-- PPT 后台 Job：持久化状态、事件、操作、会话与版本化产物；支持刷新恢复、SSE 续传、取消、大纲/风格确认、设计规范锁定、原生 SVG 导出和单页重做。
-- MySQL 增量迁移与启动时任务恢复。
+- PPT 内存任务：Go 调用 Python gRPC 服务端流，Python 连续生成，Go 将统一事件转为 SSE；支持取消和本地产物下载。
+- MySQL 增量迁移；PPT 任务、事件和 checkpoint 不落库，进程中断后重新创建任务。
 - Vue 3 管理界面和 PPT 生成工作台。
 
 ## 总体架构
@@ -22,7 +22,7 @@ flowchart LR
     W -->|"同源代理 /api"| A["apps/api · Go"]
     A --> M[("MySQL")]
     A --> R[("Redis")]
-    A -->|"provider.v1 gRPC"| P["apps/runtime · Python"]
+    A -->|"provider.v1 + ppt.agent gRPC"| P["apps/runtime · Python"]
     P --> L["LLM Providers"]
     P --> F["Shared artifacts"]
     A --> F
@@ -31,7 +31,7 @@ flowchart LR
     G["migrations/mysql"] --> A
 ```
 
-浏览器只访问 Go API。Go 负责认证、权限、持久化、公开接口和后台任务生命周期；Python Runtime 负责 Provider 调用与 PPT 工作流。PPT 文件由两个进程通过同一目录读写：Runtime 生成，API 在校验用户所有权后下载。
+浏览器只访问 Go API。Go 负责认证、权限、公开接口、PPT 任务的进程内状态和 SSE；Python Runtime 负责 Provider 调用与 PPT 工作流。PPT 文件由两个进程通过同一目录读写：Runtime 生成，API 在校验任务所有者后下载。
 
 ## 目录结构
 
@@ -79,64 +79,29 @@ flowchart LR
 
 `apps/api` 是公开边界。Router 只定义版本、鉴权和兼容策略；各模块包含 DTO、Handler、Service、Repository/Port；`internal/app/container.go` 是唯一的依赖装配位置；`platform` 实现数据库、缓存和 gRPC 等技术适配。
 
-`apps/runtime` 不直接暴露公网 HTTP。`server` 处理 gRPC 生命周期和异常边界，`handler` 只转换协议对象，`core` 不依赖 gRPC/protobuf，因而可以独立测试。PPT 工作流的 checkpoint 和产物默认写入 `apps/runtime/artifacts`。
+`apps/runtime` 不直接暴露公网 HTTP。`server` 处理 gRPC 生命周期和异常边界，`handler` 只转换协议对象，`core` 不依赖 gRPC/protobuf，因而可以独立测试。PPT 产物默认写入 `apps/runtime/artifacts/decks`；当前工作流不使用 checkpoint。
 
 `apps/web` 使用 `/api/v1`，开发服务器将 `/api` 原样代理到 `127.0.0.1:8080`。生产环境应由同源网关转发 `/api/v1`，或另外配置所需的跨域策略。
 
 `contracts` 是 Go/Python 共享协议的唯一真源。生成代码可以提交，但不能手工修改。`migrations` 由 API 启动时统一执行；`deploy` 当前只启动 MySQL 和 Redis，不包含三个应用进程。
 
-## PPT 质量优先流程
+## PPT 生成流程
 
-完整的阶段职责、目录所有权、质量门和模型建议见 [PPT 生成流程](docs/PPT_GENERATION_PIPELINE.md)。
-
-```text
-素材/图片解析 → brief → 叙事大纲（节奏、版式意图、可视化、证据）→ 用户编辑/确认
-→ Template Curator 从 11 套目录中筛选 6 套静态封面（八项确认 + 模板策略）→ 用户选择
-→ Art Director 编译 Design Spec、执行锁、逐页蓝图、实际模板 SVG 与资产清单
-→ 逐页顺序执行：Content Editor 写语义内容 → SVG Artist 生成完整页面
-→ SVG 静态门禁 ↔ 定向回修 → Chromium PNG → VLM 美术复核 ↔ 重做问题页
-→ 跨页连贯性与重复构图检查 → SVG 转原生 PowerPoint 形状 → PPTX 结构校验
-```
-
-- `svg_output/page-{n}.svg` 是唯一权威页面源；`previews/` 的 HTML/PNG 只用于浏览器预览和视觉复核。
-- 主题选择只复制仓库内预生成的静态模板封面，不调用 Designer、不启动 Chromium；真正的 SVG 绘制从用户确认模板后开始。
-- 正常路径由 Designer 模型直接生成完整 SVG；固定组件渲染器只做显式失败兜底，并以 must-fix 标记为 `needs_review`，不会伪装成高质量成功。
-- 模板不是导出时叠加的背景：每页蓝图会携带实际 `template_svg_source`、`layout_id` 和来源信息，并作为 SVG Artist 的直接输入。
-- `design-spec.json` 是权威设计规格，`spec-lock.json` 是机器执行锁；可读版本写入 `design-spec.md` 与 `spec-lock.md`。
-- SVG 仅允许可安全映射到 DrawingML 的 `rect/circle/ellipse/line/polyline/polygon/text/g/image` 子集，禁止脚本、网络外链、`foreignObject`、filter 和任务目录之外的本地文件引用。
-- 相邻页面会传递视觉签名，避免连续复用相同卡片网格、分栏和几何构图；模板一致性与页面节奏变化同时受控。
-- 页数与逐页蓝图在 `spec-lock.json` 后冻结；每页按“写内容 → 读锁 → 画 SVG → 静态门禁 → 预览”完整执行后才进入下一页，锁定后不再自动拆页。
-- 导出优先生成可编辑的 PowerPoint 形状和文本框；旧任务或单页转换失败时仍保留原 HTML/PNG 混合导出作为兼容降级。
-- SVG 结构错误、内容/数字丢失、字体漂移、越界、模板漂移和重复构图属于硬门禁；VLM 继续检查层级、构图、留白、对比度、素材质量和整体美术完成度。
-- `designer` 节点需要输出完整 SVG，建议绑定代码/长文本能力较好的模型并将 `max_tokens` 配到至少 8K；`review` 节点必须绑定声明支持图片输入的多模态模型。
-
-每个请求的主要产物位于 `apps/runtime/artifacts/decks/{request_id}/`：
+完整的通信契约、事件、失败语义、目录约束和本地验证方法见 [PPT 生成流水线](docs/PPT_GENERATION_PIPELINE.md)。
 
 ```text
-design-spec.json
-design-spec.md
-spec-lock.json
-spec-lock.md
-page-blueprints.json
-asset-manifest.json
-template-manifest.json
-templates/page-{n}.svg
-templates/catalog/{template_id}/direction_{n}.png
-images/*
-sources/spec.raw.json
-sources/spec.final.json
-sources/source-chunks.json
-sources/fact-ledger.json
-svg_output/page-{n}.svg
-previews/page-{n}.html
-previews/page-{n}.png
-notes/total.md
-reports/quality-report.json
-reports/generation-manifest.json
-reports/export-manifest.json
-exports/deck.pptx
-backup/<timestamp>/svg_output/*
+POST 创建任务
+  → Go 解析 brief / outline / style / writer / designer 五个模型节点
+  → Python 运行线性本地生成流水线并持续发送 AgentEvent
+  → Go 在内存中更新任务并通过 SSE 广播
+  → Python 写入最终 PPTX，发送 TASK_COMPLETED，结束 gRPC 流
 ```
+
+- 使用独立的 `contracts/proto/ppt/ppt_agent.proto` 服务端流协议。
+- 没有 outline/style 人工确认、review/coherence/repair 循环、事件数据库、checkpoint、resume 或版本字段。
+- SSE 晚连接时会重放当前进程内缓存的已有事件，但 API 重启后任务消失。
+- 每个任务的产物位于 `apps/runtime/artifacts/decks/{task_id}/`；Go 与 Python 必须共享这个物理目录。
+- Python 只返回任务目录内的相对路径；Go 负责鉴权、路径边界校验和文件下载。
 
 ## 依赖方向
 
@@ -359,7 +324,7 @@ curl http://127.0.0.1:8080/api/v1/health
 
 1. 先在 `apps/runtime/core` 定义与实现不依赖 protobuf 的输入、输出和领域逻辑。
 2. 在 `handler` 增加 core contract 与 proto 的转换，在 `server/grpc.py` 增加薄的 RPC 委托和错误边界。
-3. 修改 `contracts/proto/v1/provider/provider.proto`，然后从仓库根目录重新生成两端代码：
+3. Provider RPC 修改 `contracts/proto/v1/provider/provider.proto`；PPT RPC 修改 `contracts/proto/ppt/ppt_agent.proto`。然后从仓库根目录重新生成两端代码：
 
    ```bash
    make proto
@@ -377,7 +342,7 @@ curl http://127.0.0.1:8080/api/v1/health
 
 ## 生成共享协议
 
-协议真源：`contracts/proto/v1/provider/provider.proto`。
+协议真源：`contracts/proto/v1/provider/provider.proto` 与 `contracts/proto/ppt/ppt_agent.proto`。
 
 ```bash
 make proto          # 同时生成 Go 与 Python
@@ -385,13 +350,12 @@ make proto-go
 make proto-python
 ```
 
-生成目标分别是 `contracts/gen/go/v1/provider` 和 `apps/runtime/api`。`make proto` 使用 Unix 风格的 `rm`、`mkdir`、`perl`，Windows 建议在 Git Bash 或 WSL 中运行。
+生成目标分别位于 `contracts/gen/go/v1/provider`、`contracts/gen/go/pptagent` 和 `apps/runtime/api`。`make proto` 使用 Unix 风格的 `rm`、`mkdir`、`perl`，Windows 建议在 Git Bash 或 WSL 中运行。
 
 ## 数据与安全说明
 
 - 模型 API Key 存在 MySQL 中，HTTP 响应只返回掩码和 `has_api_key`；生产部署应进一步使用数据库/应用层加密与密钥管理。
 - `jwt.secret`、数据库密码和本地 `.env`/`config.yaml` 不应提交。
-- Artifact 下载会校验 `request_id` 所属 Job 的 `user_id`，不能仅凭 UUID 跨用户读取。
-- HTML 预览下载会拒绝危险标签、事件属性和外部 URL，并附加 CSP；仍建议通过受控同源页面展示。
+- Artifact 下载会校验当前内存任务的所有者，并限制路径始终位于该任务目录，不能仅凭 task ID 或文件名跨用户读取。
 - Runtime gRPC 当前使用明文内部连接，应只暴露在可信网络；跨主机部署应在网关/服务网格中提供传输保护。
 - `migrations/mysql/002_seed_admin.sql` 会写入开发用管理员账号；生产使用前应替换或移除默认凭据策略。

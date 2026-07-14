@@ -11,38 +11,69 @@ import (
 	"agent-task-platform/apps/api/internal/modules/modelconfig"
 )
 
-func (s *Service) resolveRuntimeModelConfigs(
-	ctx context.Context,
-	userID int64,
-	agentConfigID int64,
-) ([]RuntimeNodeModelConfig, error) {
+var pptModelNodes = [...]string{"brief", "outline", "style", "writer", "designer"}
+
+func (s *Service) resolveRuntimeModelConfigs(ctx context.Context, userID, agentConfigID int64) ([]RuntimeModelConfig, error) {
 	config, err := s.resolvePPTAgentConfig(ctx, userID, agentConfigID)
 	if err != nil {
 		return nil, err
 	}
-	return s.runtimeModelsFromConfigByValue(ctx, userID, config)
+	bindings := make(map[string]agentconfig.NodeBinding, len(config.NodeBindings))
+	for _, binding := range config.NodeBindings {
+		bindings[strings.ToLower(strings.TrimSpace(binding.NodeKey))] = binding
+	}
+
+	models := make([]RuntimeModelConfig, 0, len(pptModelNodes))
+	for _, nodeKey := range pptModelNodes {
+		binding, ok := bindings[nodeKey]
+		if !ok {
+			return nil, fmt.Errorf("%w: agent config missing node binding %q", ErrInvalidRequest, nodeKey)
+		}
+		config, err := s.modelConfigRepo.GetByID(ctx, userID, binding.ModelConfigID)
+		if err != nil {
+			if errors.Is(err, modelconfig.ErrNotFound) {
+				return nil, fmt.Errorf("%w: model for node %q", ErrModelConfigNotFound, nodeKey)
+			}
+			return nil, err
+		}
+		if config.Status != modelconfig.StatusActive {
+			return nil, fmt.Errorf("%w: node %q", ErrModelConfigInactive, nodeKey)
+		}
+		if config.ModelType == modelconfig.ModelTypeImage {
+			return nil, fmt.Errorf("%w: node %q requires a text or multimodal model", ErrInvalidRequest, nodeKey)
+		}
+
+		temperature := config.Temperature
+		if binding.Temperature != nil {
+			temperature = *binding.Temperature
+		}
+		maxTokens := config.MaxTokens
+		if binding.MaxTokens != nil {
+			maxTokens = *binding.MaxTokens
+		}
+		if maxTokens <= 0 {
+			return nil, fmt.Errorf("%w: max tokens for node %q must be positive", ErrInvalidRequest, nodeKey)
+		}
+		options, err := decodeProviderOptions(config.ProviderOptions)
+		if err != nil {
+			return nil, fmt.Errorf("%w: provider options for node %q: %v", ErrInvalidRequest, nodeKey, err)
+		}
+		models = append(models, RuntimeModelConfig{
+			NodeKey:            nodeKey,
+			Provider:           config.Provider,
+			Model:              config.ModelName,
+			APIKey:             config.APIKey,
+			BaseURL:            config.BaseURL,
+			ProviderOptions:    options,
+			Temperature:        temperature,
+			MaxTokens:          maxTokens,
+			SupportsImageInput: modelConfigSupportsImageInput(config, options),
+		})
+	}
+	return models, nil
 }
 
-func (s *Service) runtimeModelsFromConfigByValue(
-	ctx context.Context,
-	userID int64,
-	config *agentconfig.AgentConfig,
-) ([]RuntimeNodeModelConfig, error) {
-	if config == nil {
-		return nil, fmt.Errorf("%w: agent config is required", ErrInvalidRequest)
-	}
-	agent, err := s.agentConfigRepo.GetAgentByID(ctx, config.AgentID)
-	if err != nil {
-		return nil, err
-	}
-	return s.runtimeModelsFromConfig(ctx, userID, config, agent)
-}
-
-func (s *Service) resolvePPTAgentConfig(
-	ctx context.Context,
-	userID int64,
-	agentConfigID int64,
-) (*agentconfig.AgentConfig, error) {
+func (s *Service) resolvePPTAgentConfig(ctx context.Context, userID, agentConfigID int64) (*agentconfig.AgentConfig, error) {
 	if agentConfigID > 0 {
 		config, err := s.agentConfigRepo.GetConfigByID(ctx, userID, agentConfigID)
 		if err != nil {
@@ -64,7 +95,6 @@ func (s *Service) resolvePPTAgentConfig(
 	if err != nil {
 		return nil, err
 	}
-
 	var fallback *agentconfig.AgentConfig
 	for _, config := range configs {
 		if config == nil || config.AgentKey != agentconfig.AgentKeyPPT || config.Status != agentconfig.StatusActive {
@@ -77,99 +107,41 @@ func (s *Service) resolvePPTAgentConfig(
 			fallback = config
 		}
 	}
-	if fallback != nil {
-		return fallback, nil
+	if fallback == nil {
+		return nil, ErrAgentConfigNotFound
 	}
-
-	return nil, ErrAgentConfigNotFound
+	return fallback, nil
 }
 
-func (s *Service) runtimeModelsFromConfig(
-	ctx context.Context,
-	userID int64,
-	agentConfig *agentconfig.AgentConfig,
-	agent *agentconfig.AgentDefinition,
-) ([]RuntimeNodeModelConfig, error) {
-	requiredNodes := modelNodeKeys(agent.Nodes)
-	byNode := make(map[string]agentconfig.NodeBinding, len(agentConfig.NodeBindings))
-	for _, binding := range agentConfig.NodeBindings {
-		byNode[binding.NodeKey] = binding
+func decodeProviderOptions(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]any{}, nil
 	}
-
-	runtimeModels := make([]RuntimeNodeModelConfig, 0, len(requiredNodes))
-	for _, nodeKey := range requiredNodes {
-		binding, ok := byNode[nodeKey]
-		if !ok {
-			fallbackKey := legacyModelNodeFallback(nodeKey)
-			if fallbackKey != "" {
-				binding, ok = byNode[fallbackKey]
-			}
-		}
-		if !ok {
-			return nil, fmt.Errorf("%w: agent config missing node binding '%s'", ErrInvalidRequest, nodeKey)
-		}
-
-		config, err := s.modelConfigRepo.GetByID(ctx, userID, binding.ModelConfigID)
-		if err != nil {
-			if errors.Is(err, modelconfig.ErrNotFound) {
-				return nil, fmt.Errorf("%w: model config for node '%s' was not found", ErrModelConfigNotFound, nodeKey)
-			}
-			return nil, err
-		}
-		if config.Status != modelconfig.StatusActive {
-			return nil, fmt.Errorf("%w: model config for node '%s' is inactive", ErrModelConfigInactive, nodeKey)
-		}
-		if config.ModelType == modelconfig.ModelTypeImage {
-			return nil, fmt.Errorf("%w: image model config for node '%s' is not supported", ErrInvalidRequest, nodeKey)
-		}
-
-		temperature := config.Temperature
-		if binding.Temperature != nil {
-			temperature = *binding.Temperature
-		}
-		maxTokens := config.MaxTokens
-		if binding.MaxTokens != nil {
-			maxTokens = *binding.MaxTokens
-		}
-
-		runtimeModels = append(runtimeModels, RuntimeNodeModelConfig{
-			NodeKey:             nodeKey,
-			Provider:            config.Provider,
-			Model:               config.ModelName,
-			APIKey:              config.APIKey,
-			BaseURL:             config.BaseURL,
-			ProviderOptionsJSON: normalizedProviderOptions(config.ProviderOptions),
-			Temperature:         temperature,
-			MaxTokens:           maxTokens,
-			SupportsImageInput:  modelConfigSupportsImageInput(config),
-		})
+	var options map[string]any
+	if err := json.Unmarshal([]byte(raw), &options); err != nil {
+		return nil, err
 	}
-
-	return runtimeModels, nil
+	if options == nil {
+		options = map[string]any{}
+	}
+	return options, nil
 }
 
-func modelConfigSupportsImageInput(config *modelconfig.ModelConfig) bool {
-	if config == nil {
-		return false
-	}
-	if config.ModelType == modelconfig.ModelTypeImage {
-		return false
-	}
-	if value, configured := imageInputCapabilityOverride(config.ProviderOptions); configured {
+func modelConfigSupportsImageInput(config *modelconfig.ModelConfig, options map[string]any) bool {
+	if value, ok := options["supports_image_input"].(bool); ok {
 		return value
+	}
+	if value, ok := options["supports_vision"].(bool); ok {
+		return value
+	}
+	if config == nil || config.ModelType == modelconfig.ModelTypeImage {
+		return false
 	}
 	if config.ModelType == modelconfig.ModelTypeMultimodal {
 		return true
 	}
-	return supportsImageInput(config.ModelName, config.ProviderOptions)
-}
-
-func supportsImageInput(modelName string, providerOptions string) bool {
-	if value, configured := imageInputCapabilityOverride(providerOptions); configured {
-		return value
-	}
-
-	name := strings.ToLower(modelName)
+	name := strings.ToLower(config.ModelName)
 	if strings.Contains(name, "qwen") && (strings.Contains(name, "-vl") || strings.Contains(name, "vl-")) {
 		return true
 	}
@@ -179,48 +151,4 @@ func supportsImageInput(modelName string, providerOptions string) bool {
 		}
 	}
 	return false
-}
-
-func imageInputCapabilityOverride(providerOptions string) (bool, bool) {
-	var options map[string]any
-	if json.Unmarshal([]byte(normalizedProviderOptions(providerOptions)), &options) == nil {
-		if value, ok := options["supports_image_input"].(bool); ok {
-			return value, true
-		}
-		if value, ok := options["supports_vision"].(bool); ok {
-			return value, true
-		}
-	}
-	return false, false
-}
-
-func legacyModelNodeFallback(nodeKey string) string {
-	switch strings.ToLower(strings.TrimSpace(nodeKey)) {
-	case "brief":
-		return "outline"
-	case "style", "writer", "designer", "coherence":
-		return "slides"
-	case "repair":
-		return "designer"
-	default:
-		return ""
-	}
-}
-
-func modelNodeKeys(nodes []agentconfig.NodeDefinition) []string {
-	keys := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		if node.RequiresModel {
-			keys = append(keys, node.Key)
-		}
-	}
-	return keys
-}
-
-func normalizedProviderOptions(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "{}"
-	}
-	return value
 }

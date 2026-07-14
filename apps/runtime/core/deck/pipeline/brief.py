@@ -43,6 +43,12 @@ def prepare_brief(state: DeckGraphState, llm_registry: dict[str, Any] | None = N
     else:
         record_fallback()
         writer(events.stage_progress("brief", "使用了确定性素材提取"))
+    expected_slide_count = int(state.get("expected_slide_count") or 0)
+    if expected_slide_count > 0:
+        brief["suggested_pages"] = clamp_slide_count(expected_slide_count)
+    requested_language = str(state.get("language") or "").strip()
+    if requested_language:
+        brief["language"] = requested_language
     writer(
         events.fact_sheet_ready(
             {

@@ -3,8 +3,10 @@
 #   contracts/gen/go/       -> generated Go client
 #   apps/runtime/api/       -> generated Python client
 
-PROTO_DIR  := contracts/proto/v1/provider
-GO_OUT     := contracts/gen/go/v1/provider
+PROVIDER_PROTO_DIR := contracts/proto/v1/provider
+PPT_PROTO_DIR := contracts/proto/ppt
+PROVIDER_GO_OUT := contracts/gen/go/v1/provider
+PPT_GO_OUT := contracts/gen/go/pptagent
 PY_OUT     := apps/runtime/api
 RUNTIME_DIR := apps/runtime
 WEB_DIR     := apps/web
@@ -18,20 +20,30 @@ RUNTIME_PY ?= .venv/Scripts/python.exe
 proto: proto-go proto-python
 
 proto-go:
-	rm -rf $(GO_OUT) && mkdir -p $(GO_OUT)
+	rm -rf $(PROVIDER_GO_OUT) $(PPT_GO_OUT) && mkdir -p $(PROVIDER_GO_OUT) $(PPT_GO_OUT)
 	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m grpc_tools.protoc \
-	  --proto_path=../../$(PROTO_DIR) \
-	  --go_out=paths=source_relative:../../$(GO_OUT) \
-	  --go-grpc_out=paths=source_relative:../../$(GO_OUT) \
-	  ../../$(PROTO_DIR)/provider.proto
+	  --proto_path=../../$(PROVIDER_PROTO_DIR) \
+	  --go_out=paths=source_relative:../../$(PROVIDER_GO_OUT) \
+	  --go-grpc_out=paths=source_relative:../../$(PROVIDER_GO_OUT) \
+	  ../../$(PROVIDER_PROTO_DIR)/provider.proto
+	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m grpc_tools.protoc \
+	  --proto_path=../../$(PPT_PROTO_DIR) \
+	  --go_out=paths=source_relative:../../$(PPT_GO_OUT) \
+	  --go-grpc_out=paths=source_relative:../../$(PPT_GO_OUT) \
+	  ../../$(PPT_PROTO_DIR)/ppt_agent.proto
 
 proto-python:
 	rm -f $(PY_OUT)/*_pb2*.py
 	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m grpc_tools.protoc \
-	  --proto_path=../../$(PROTO_DIR) \
+	  --proto_path=../../$(PROVIDER_PROTO_DIR) \
 	  --python_out=api --grpc_python_out=api \
-	  ../../$(PROTO_DIR)/provider.proto
+	  ../../$(PROVIDER_PROTO_DIR)/provider.proto
+	cd $(RUNTIME_DIR) && $(RUNTIME_PY) -m grpc_tools.protoc \
+	  --proto_path=../../$(PPT_PROTO_DIR) \
+	  --python_out=api --grpc_python_out=api \
+	  ../../$(PPT_PROTO_DIR)/ppt_agent.proto
 	perl -i -pe 's/^import (\w+_pb2)( as \w+)?$$/from . import $$1$$2/' $(PY_OUT)/provider_pb2_grpc.py
+	perl -i -pe 's/^import (\w+_pb2)( as \w+)?$$/from . import $$1$$2/' $(PY_OUT)/ppt_agent_pb2_grpc.py
 
 fmt:
 	gofmt -w apps/api contracts/gen/go

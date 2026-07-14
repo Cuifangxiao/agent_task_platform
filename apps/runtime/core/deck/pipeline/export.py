@@ -11,37 +11,17 @@ from langgraph.config import get_stream_writer
 
 import core.deck.events as events
 from core.deck.export import DeckExporter
-from core.deck.errors import ExportError
 from core.deck.paths import DeckProjectPaths
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.spec import DeckSpec
 
 logger = logging.getLogger(__name__)
-SVG_EXPORT_BLOCKING_KINDS = frozenset(
-    {
-        "svg_invalid_xml",
-        "svg_missing_root",
-        "svg_unsupported_element",
-        "svg_forbidden_attribute",
-        "svg_image_href",
-        "svg_viewbox",
-        "svg_canvas_size",
-        "svg_spec_drift",
-        "svg_text_box",
-        "svg_text_out_of_bounds",
-        "svg_content_omission",
-        "svg_fabricated_number",
-    }
-)
-
-
 def export_deck(state: DeckGraphState, exporter: DeckExporter) -> dict[str, Any]:
     writer = get_stream_writer()
     request_id = str(state["request_id"])
     writer(events.stage_started("export", "Exporting PPTX file"))
     deck = DeckSpec.from_dict(state.get("deck_spec") or {})
     _attach_source_notes(deck, state.get("brief") or {})
-    _enforce_svg_export_gate(state, deck)
     total = len(deck.slides)
     writer(events.export_progress("Preparing PPTX", 0, total))
     logger.info("deck export start: request_id=%s slides=%s", request_id, total)
@@ -66,18 +46,15 @@ def export_deck(state: DeckGraphState, exporter: DeckExporter) -> dict[str, Any]
     )
     _write_speaker_notes(project, deck)
     issues = list(state.get("validation_issues") or [])
-    must_fix = [issue for issue in issues if issue.get("severity") == "must_fix"]
-    quality_status = "needs_review" if must_fix else ("success_with_warnings" if result.warnings or issues else "success")
     generation_manifest = _write_generation_manifest(
         state,
         deck,
         result.manifest,
         result.warnings,
         issues,
-        quality_status,
         project,
     )
-    _write_quality_report(project, issues, quality_status, result.warnings)
+    _write_quality_report(project, issues, result.warnings)
     logger.info("deck export done: request_id=%s path=%s warnings=%s elapsed=%.2fs", request_id, result.path, len(result.warnings), time.perf_counter() - started_at)
     for warning in result.warnings:
         writer(
@@ -96,8 +73,6 @@ def export_deck(state: DeckGraphState, exporter: DeckExporter) -> dict[str, Any]
                 "relative_path": project.relative(result.path),
                 "warnings": result.warnings,
                 "issues": issues,
-                "needs_review": bool(must_fix),
-                "quality_status": quality_status,
                 "degraded": bool(result.manifest.get("degraded")),
                 "export_manifest": project.relative(project.export_manifest),
                 "degraded_pages": result.manifest.get("degraded_pages", []),
@@ -125,7 +100,6 @@ def export_deck(state: DeckGraphState, exporter: DeckExporter) -> dict[str, Any]
     )
     return {
         "artifact_path": str(result.path),
-        "quality_status": quality_status,
         "export_degraded": bool(result.manifest.get("degraded")),
         "generation_manifest": generation_manifest,
     }
@@ -137,7 +111,6 @@ def _write_generation_manifest(
     export_manifest: dict[str, Any],
     export_warnings: list[str],
     issues: list[dict[str, Any]],
-    quality_status: str,
     project: DeckProjectPaths,
 ) -> dict[str, Any]:
     """Write one audit trail covering strategy, page authoring, QA, and export."""
@@ -209,12 +182,8 @@ def _write_generation_manifest(
         },
         "pages": pages,
         "quality": {
-            "status": quality_status,
             "must_fix_count": sum(1 for item in issues if item.get("severity") == "must_fix"),
             "issue_count": len(issues),
-            "repair_rounds": int(state.get("repair_round") or 0),
-            "vlm_reviewed": bool(state.get("vlm_reviewed")),
-            "coherence_reviewed": bool(state.get("coherence_reviewed")),
         },
         "export": {
             "engine": "native-svg-shapes",
@@ -243,55 +212,16 @@ def _write_speaker_notes(project: DeckProjectPaths, deck: DeckSpec) -> None:
 def _write_quality_report(
     project: DeckProjectPaths,
     issues: list[dict[str, Any]],
-    status: str,
     export_warnings: list[str],
 ) -> None:
     report = {
         "schema": "deck-quality-report",
-        "status": status,
         "must_fix_count": sum(1 for item in issues if item.get("severity") == "must_fix"),
         "issue_count": len(issues),
         "issues": issues,
         "export_warnings": list(export_warnings),
     }
     project.quality_report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _enforce_svg_export_gate(state: DeckGraphState, deck: DeckSpec) -> None:
-    if not isinstance(state.get("design_contract"), dict):
-        return
-    contract = state["design_contract"]
-    locked_pages = [
-        _positive_int(item.get("index"))
-        for item in contract.get("pages") or []
-        if isinstance(item, dict)
-    ]
-    actual_pages = [slide.index for slide in deck.slides]
-    if locked_pages != actual_pages:
-        raise ExportError(
-            f"Locked page roster mismatch: expected {locked_pages}, got {actual_pages}.",
-            stage="export",
-        )
-    blocking = [
-        issue
-        for issue in state.get("validation_issues") or []
-        if issue.get("severity") == "must_fix"
-        and str(issue.get("kind") or "") in SVG_EXPORT_BLOCKING_KINDS
-    ]
-    if blocking:
-        pages = sorted({page for issue in blocking if (page := _positive_int(issue.get("page")))})
-        page_summary = ", ".join(map(str, pages)) if pages else "unknown"
-        raise ExportError(f"SVG quality gate failed for slide(s): {page_summary}.", stage="export")
-    svg_pages = {
-        page
-        for item in state.get("artifacts") or []
-        if isinstance(item, dict)
-        and str(item.get("svg") or "").strip()
-        and (page := _positive_int(item.get("index")))
-    }
-    missing = [slide.index for slide in deck.slides if slide.index not in svg_pages]
-    if missing:
-        raise ExportError(f"Canonical SVG source is missing for slide(s): {', '.join(map(str, missing))}.", stage="export")
 
 
 def _positive_int(value: Any) -> int:

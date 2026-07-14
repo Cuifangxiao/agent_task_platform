@@ -9,7 +9,7 @@ from core.deck.rendering.browser import BrowserRenderer, BrowserSession
 from core.deck.spec import SlideSpec, default_theme
 
 
-def test_render_slide_writes_authoritative_and_history_files(tmp_path, monkeypatch):
+def test_render_slide_writes_one_canonical_preview(tmp_path, monkeypatch):
     request_id = "req"
     slide = SlideSpec(
         index=1,
@@ -29,19 +29,16 @@ def test_render_slide_writes_authoritative_and_history_files(tmp_path, monkeypat
         request_id,
         slide,
         '<section class="slide"><h1 data-text>Updated slide</h1></section>',
-        version=2,
         theme=default_theme(),
     )
 
     previews_dir = tmp_path / request_id / "previews"
-    assert artifact.html_rel == "previews/page-001_v2.html"
-    assert artifact.png_rel == "previews/page-001_v2.png"
+    assert artifact.html_rel == "previews/page-001.html"
+    assert artifact.png_rel == "previews/page-001.png"
     assert (previews_dir / "page-001.html").exists()
     assert (previews_dir / "page-001.png").exists()
-    assert (previews_dir / "page-001_v2.html").exists()
-    assert (previews_dir / "page-001_v2.png").exists()
-    assert (previews_dir / "page-001.html").read_text(encoding="utf-8") == (previews_dir / "page-001_v2.html").read_text(encoding="utf-8")
-    assert (previews_dir / "page-001.png").read_bytes() == (previews_dir / "page-001_v2.png").read_bytes()
+    assert not list(previews_dir.glob("*_v*.html"))
+    assert not list(previews_dir.glob("*_v*.png"))
 
 
 def test_browser_session_reuses_one_browser_and_closes_idempotently(tmp_path, monkeypatch):
