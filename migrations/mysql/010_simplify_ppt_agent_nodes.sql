@@ -30,6 +30,7 @@ SET node_schema = JSON_ARRAY(
         'description', 'Render slide content into local SVG, HTML previews, and PPT assets.',
         'requires_model', true
     )
+)
 WHERE agent_key = 'ppt_agent';
 
 DELETE binding
