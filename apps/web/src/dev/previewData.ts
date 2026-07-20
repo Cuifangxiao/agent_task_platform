@@ -180,7 +180,7 @@ export const previewAgentConfigs: AgentConfig[] = [
 export const previewLogs: RequestLogEntry[] = [
   { id: 1, time: '08:42:18', method: 'GET', path: '/api/v1/ppt/tasks/preview-101/file', status: 200, note: '下载生成结果' },
   { id: 2, time: '08:35:04', method: 'POST', path: '/api/v1/ppt/tasks', status: 202, note: '创建 PPT 任务' },
-  { id: 3, time: '08:23:12', method: 'GET', path: '/api/v1/ppt/tasks/preview-102/events', status: 200, note: '订阅生成进度' },
+  { id: 3, time: '08:23:12', method: 'WS', path: '/api/v1/ppt/ws', status: 101, note: '复用连接订阅生成进度' },
   { id: 4, time: '08:16:47', method: 'PATCH', path: '/api/agent-configs/1', status: 200, note: '更新默认工作流' },
   { id: 5, time: '07:58:31', method: 'POST', path: '/api/providers/credential-tests', status: 200, note: '测试模型凭证' },
   { id: 6, time: '07:46:09', method: 'POST', path: '/api/v1/ppt/tasks', status: 422, note: '资料格式校验失败' },

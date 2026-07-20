@@ -1,4 +1,4 @@
-from core.deck.pipeline.slides import relevant_source_context
+from core.deck.agents.generation.graph import relevant_source_context
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.spec import COMPONENTS, DeckSpec, SlideSpec, default_theme
 

@@ -15,7 +15,7 @@ from typing import Any, Iterable
 from core.deck.runtime_metrics import record_model_call, record_model_response, record_retry, record_token_usage
 
 
-PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 logger = logging.getLogger(__name__)
 _LLM_LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("deck_llm_log_context", default={})
 

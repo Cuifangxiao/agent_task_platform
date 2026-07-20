@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 import json
 
-import core.deck.pipeline.slides as slides_pipeline
-from core.deck.pipeline.style import build_style_options
+import core.deck.agents.generation.graph as generation_graph
+from core.deck.agents.design.graph import build_style_options
 from core.deck.design import get_template_pack, template_preview_path, template_svg_source
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.rendering.artist import build_svg_artist_prompt, render_svg_artwork, resolve_page_blueprint, validate_artist_svg
@@ -220,7 +220,7 @@ def test_artist_gate_rejects_pages_that_ignore_locked_geometry():
 
 def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch):
     emitted = []
-    monkeypatch.setattr(slides_pipeline, "get_stream_writer", lambda: emitted.append)
+    monkeypatch.setattr(generation_graph, "get_stream_writer", lambda: emitted.append)
     writer_llm = StaticJSONLLM(
         {
             "index": 1,
@@ -254,7 +254,7 @@ def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch)
         },
     }
 
-    result = slides_pipeline.write_and_design_slides(
+    result = generation_graph.write_and_design_slides(
         state,
         {"writer": writer_llm, "designer": designer_llm},
         HTMLSlideRenderer(),
@@ -268,7 +268,7 @@ def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch)
 
 
 def test_slide_pipeline_falls_back_after_one_invalid_designer_call(monkeypatch):
-    monkeypatch.setattr(slides_pipeline, "get_stream_writer", lambda: lambda _event: None)
+    monkeypatch.setattr(generation_graph, "get_stream_writer", lambda: lambda _event: None)
     writer_llm = StaticJSONLLM(
         {
             "index": 1,
@@ -288,7 +288,7 @@ def test_slide_pipeline_falls_back_after_one_invalid_designer_call(monkeypatch):
         "plan": {"title": "Growth report", "narrative": "Explain", "slides": [{"index": 1, "title": "Market growth", "role": "evidence", "component": "content-basic"}]},
     }
 
-    result = slides_pipeline.write_and_design_slides(
+    result = generation_graph.write_and_design_slides(
         state,
         {"writer": writer_llm, "designer": designer_llm},
         HTMLSlideRenderer(),

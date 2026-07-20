@@ -60,6 +60,8 @@ export function createApiClient(options: ApiClientOptions) {
     deleteAgentConfig: (id: number) =>
       http.request<{ message: string }>(`/agent-configs/${id}`, { method: 'DELETE', auth: true }),
 
-    presentations: createPresentationApi(http),
+    presentations: createPresentationApi(http, {
+      getAccessToken: () => options.getSession()?.access_token ?? '',
+    }),
   }
 }

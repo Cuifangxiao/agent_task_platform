@@ -1,21 +1,58 @@
-"""Export node that writes the final PPTX artifact."""
+"""Postprocessor graph: assemble and publish the final PPTX artifact."""
 
 from __future__ import annotations
 
 import logging
 import json
+from pathlib import Path
 import time
 from typing import Any
 
 from langgraph.config import get_stream_writer
+from langgraph.graph import END, START, StateGraph
 
 import core.deck.events as events
+from core.deck.instrumentation import instrument_node, run_phase_graph
 from core.deck.export import DeckExporter
 from core.deck.paths import DeckProjectPaths
-from core.deck.pipeline.state import DeckGraphState
+from core.deck.rendering.browser import BrowserSession
+from core.deck.state import DeckGraphState
 from core.deck.spec import DeckSpec
 
 logger = logging.getLogger(__name__)
+
+
+class Postprocessor:
+    """PPTX export phase."""
+
+    def __init__(
+        self,
+        output_dir: Path,
+        browser_session: BrowserSession | None = None,
+        *,
+        exporter: DeckExporter | None = None,
+    ) -> None:
+        self.output_dir = Path(output_dir)
+        self.exporter = exporter or DeckExporter(self.output_dir, browser_session)
+        self.graph = self.compile_graph()
+
+    def export(self, state: DeckGraphState) -> dict[str, Any]:
+        return export_deck(state, self.exporter)
+
+    def compile_graph(self):
+        builder = StateGraph(DeckGraphState)
+        builder.add_node("export", instrument_node("export", self.export, {}))
+        builder.add_edge(START, "export")
+        builder.add_edge("export", END)
+        return builder.compile()
+
+    def run(self, state: DeckGraphState) -> dict[str, Any]:
+        return run_phase_graph(self.graph, state)
+
+
+# ─────────────────────────────── export node ─────────────────────────────────
+
+
 def export_deck(state: DeckGraphState, exporter: DeckExporter) -> dict[str, Any]:
     writer = get_stream_writer()
     request_id = str(state["request_id"])
@@ -253,3 +290,6 @@ def _attach_source_notes(deck: DeckSpec, brief: dict[str, Any]) -> None:
             citations.append(f"{source_id} — {location}: {excerpt}".strip())
         if citations:
             slide.notes = (slide.notes.strip() + "\n\nSource details:\n" + "\n".join(citations)).strip()
+
+
+__all__ = ["Postprocessor", "export_deck"]

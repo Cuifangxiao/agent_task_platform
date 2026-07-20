@@ -111,9 +111,9 @@ func TestCanonicalRouteTable(t *testing.T) {
 		"PATCH /api/v1/agent-configs/:id",
 		"DELETE /api/v1/agent-configs/:id",
 		"POST /api/v1/text-generations",
+		"GET /api/v1/ppt/ws",
 		"POST /api/v1/ppt/tasks",
 		"GET /api/v1/ppt/tasks/:task_id",
-		"GET /api/v1/ppt/tasks/:task_id/events",
 		"POST /api/v1/ppt/tasks/:task_id/cancel",
 		"GET /api/v1/ppt/tasks/:task_id/file",
 		"GET /api/v1/ppt/tasks/:task_id/artifacts/*asset_path",
@@ -125,6 +125,9 @@ func TestCanonicalRouteTable(t *testing.T) {
 		}
 	}
 	for route := range registered {
+		if route == "GET /api/v1/ppt/tasks/:task_id/events" {
+			t.Errorf("PPT SSE route is still registered: %s", route)
+		}
 		if strings.Contains(route, "/presentations/") || strings.Contains(route, "/ppt-agent/") {
 			t.Errorf("obsolete PPT route is still registered: %s", route)
 		}

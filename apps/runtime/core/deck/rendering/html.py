@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import html
 import hashlib
-import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from core.deck.rendering.charts import chart_is_valid, render_chart_svg
 from core.deck.rendering.svg import SVGSlideRenderer
-from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec, ThemeTokens, default_theme
+from core.deck.spec import CANVAS_HEIGHT, CANVAS_WIDTH, DeckSpec, SlideSpec, ThemeTokens
 
 
 DESIGN_SYSTEM_DIR = Path(__file__).resolve().parent.parent / "design_system"
@@ -154,18 +153,6 @@ class HTMLSlideRenderer:
             ]
         )
         return "\n".join(lines)
-
-
-def load_theme_presets() -> list[ThemeTokens]:
-    path = DESIGN_SYSTEM_DIR / "presets.json"
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return [default_theme()]
-    if not isinstance(raw, list):
-        return [default_theme()]
-    presets = [ThemeTokens.from_dict(item) for item in raw if isinstance(item, dict)]
-    return presets or [default_theme()]
 
 
 def _cover(slide: SlideSpec) -> str:

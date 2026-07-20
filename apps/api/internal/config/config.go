@@ -101,9 +101,13 @@ func (c *Config) setDefaults() {
 	if c.MySQL.Charset == "" {
 		c.MySQL.Charset = "utf8mb4"
 	}
-	if c.MySQL.Loc == "" {
-		c.MySQL.Loc = "Local"
-	}
+	// Durable PPT run timestamps are scanned into time.Time. go-sql-driver
+	// requires parseTime=true for DATETIME columns, so this is a mandatory
+	// runtime invariant rather than an optional tuning flag.
+	c.MySQL.ParseTime = true
+	// DATETIME has no timezone. Pin the driver location so deployments in
+	// different host timezones never reinterpret durable run timestamps.
+	c.MySQL.Loc = "UTC"
 	if c.Redis.Host == "" {
 		c.Redis.Host = "127.0.0.1"
 	}

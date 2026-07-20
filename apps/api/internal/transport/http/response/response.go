@@ -86,6 +86,14 @@ func Conflict(c *gin.Context, message string) {
 	fail(c, http.StatusConflict, "conflict", message, nil)
 }
 
+func ConflictCode(c *gin.Context, code, message string) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "conflict"
+	}
+	fail(c, http.StatusConflict, code, message, nil)
+}
+
 func PayloadTooLarge(c *gin.Context, message string) {
 	fail(c, http.StatusRequestEntityTooLarge, "payload_too_large", message, nil)
 }

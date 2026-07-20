@@ -6,8 +6,8 @@ from pptx import Presentation
 
 from core.deck.export import DeckExporter
 from core.deck.contract import EventType
-import core.deck.pipeline.export as export_pipeline
-from core.deck.pipeline.export import _attach_source_notes
+import core.deck.agents.postprocessor.graph as postprocessor_graph
+from core.deck.agents.postprocessor.graph import _attach_source_notes
 from core.deck.spec import DeckSpec, SlideSpec, default_theme
 
 
@@ -110,8 +110,8 @@ def test_export_reports_diagnostics_without_blocking_delivery(tmp_path, monkeypa
     (slides_dir / "1.html").write_text('<section class="slide"><h1 data-text>Title</h1></section>', encoding="utf-8")
     deck = DeckSpec(title="D", narrative="", audience="", goal="", language="en", theme=default_theme(), slides=[SlideSpec(index=1, role="evidence", component="content-basic", title="Title", content={"body": "Body"})])
     emitted = []
-    monkeypatch.setattr(export_pipeline, "get_stream_writer", lambda: emitted.append)
-    result = export_pipeline.export_deck(
+    monkeypatch.setattr(postprocessor_graph, "get_stream_writer", lambda: emitted.append)
+    result = postprocessor_graph.export_deck(
         {
             "request_id": request_id,
             "deck_spec": deck.to_dict(),

@@ -6,7 +6,7 @@
 http://<api-host>:<port>/api/v1
 ```
 
-除进程探针 `GET /healthz` 外，业务接口全部位于 `/api/v1`。PPT 只有 `/api/v1/ppt/tasks` 这一套接口；旧 conversations/jobs/actions/generate/resume 路由已经删除。
+除进程探针 `GET /healthz` 外，业务接口全部位于 `/api/v1`。PPT 使用 `/api/v1/ppt/tasks` HTTP 接口和 `/api/v1/ppt/ws` WebSocket；旧 conversations/jobs/actions/generate/resume 路由已经删除。
 
 ## 1. 通用约定
 
@@ -14,13 +14,13 @@ http://<api-host>:<port>/api/v1
 
 - 普通请求/响应：`application/json; charset=utf-8`。
 - 文件上传：`multipart/form-data`。
-- 流式响应：`text/event-stream`。
+- 文本生成流：`text/event-stream`；PPT 实时通道使用 WebSocket JSON text frame。
 - Artifact 下载：按文件返回二进制，不套 JSON envelope。
 - 所有时间字符串均为 RFC 3339；Go DTO 中的 `time.Time` 也按 RFC 3339 JSON 格式序列化。
 
 ### 1.2 成功响应
 
-除 SSE 和文件下载外，所有 `/api/v1` 成功响应都使用：
+除 WebSocket upgrade、SSE 和文件下载外，所有 `/api/v1` 成功响应都使用：
 
 ```json
 {
@@ -35,7 +35,7 @@ http://<api-host>:<port>/api/v1
 
 ### 1.3 错误响应
 
-`/api/v1` 错误统一为：
+HTTP `/api/v1` 错误（包括 WebSocket upgrade 之前的失败）统一为：
 
 ```json
 {
@@ -58,7 +58,10 @@ http://<api-host>:<port>/api/v1
 | 401 | `unauthorized` | 缺少、格式错误、过期或失效的 access token/session |
 | 404 | `not_found` | 路由或当前用户可见范围内的资源不存在 |
 | 405 | `method_not_allowed` | 路径存在，但 HTTP 方法不支持 |
-| 409 | `conflict` | 用户名或配置名称冲突 |
+| 409 | `conflict` | 通用资源冲突，例如名称重复或对终态 Task 取消 |
+| 409 | `client_request_conflict` | PPT `client_request_id` 已用于不同请求 |
+| 409 | `thread_run_conflict` | PPT thread 已有未退出的生成 worker |
+| 409 | `run_not_ready` | PPT Run 已创建但本地 worker 正在完成初始化；可重试 |
 | 413 | `payload_too_large` | PPT request body、单文件或文件总量超限 |
 | 415 | `unsupported_media_type` | PPT 源文件扩展名不受支持 |
 | 500 | `internal_error` | 服务内部错误或依赖不可用 |
@@ -75,7 +78,7 @@ X-Request-ID: d9cf50dce0e546414a63bcf4ed05b1c7
 
 ### 1.5 鉴权与会话
 
-除健康检查和注册/登录/刷新外，canonical 路由都要求：
+除健康检查、注册/登录/刷新和 WebSocket upgrade 外，canonical HTTP 路由都要求：
 
 ```http
 Authorization: Bearer <access_token>
@@ -87,6 +90,8 @@ Authorization: Bearer <access_token>
 2. access token 的 JTI 不在 Redis 黑名单；
 3. Redis 中同一 `user_id + device` 的 session 仍为 active；
 4. JWT 中的 `session_id` 与 Redis session 一致。
+
+`GET /api/v1/ppt/ws` 使用 WebSocket subprotocol 携带同一 access token，验证项目不变；详见 10.1。
 
 同一用户在同一 `device` 再次登录会用新 session 覆盖该设备原 session。refresh token 不放在 Authorization header，而是放入刷新接口 JSON body。
 
@@ -116,11 +121,12 @@ Authorization: Bearer <access_token>
 | DELETE | `/api/v1/agent-configs/:id` | 是 | `{message}` |
 | POST | `/api/v1/text-generations` | 是 | 文本 SSE |
 | POST | `/api/v1/ppt/tasks` | 是 | `PptTask`（202） |
+| GET | `/api/v1/ppt/tasks` | 是 | `PptTask[]` |
 | GET | `/api/v1/ppt/tasks/:task_id` | 是 | `PptTask` |
-| GET | `/api/v1/ppt/tasks/:task_id/events` | 是 | 进程内可重放 PPT SSE |
 | POST | `/api/v1/ppt/tasks/:task_id/cancel` | 是 | `PptTask` |
 | GET | `/api/v1/ppt/tasks/:task_id/file` | 是 | PPTX 文件 |
 | GET | `/api/v1/ppt/tasks/:task_id/artifacts/*asset_path` | 是 | 指定任务产物 |
+| GET | `/api/v1/ppt/ws` | 是（WS subprotocol） | WebSocket upgrade |
 
 ## 3. 健康检查
 
@@ -512,20 +518,26 @@ data: {"request_id":"...","done":true,"sequence":1}
 
 ## 9. PPT Task
 
-PPT 使用进程内 Task，不再使用 Conversation、Job、Action 或恢复接口。创建成功只表示 Go 已接受任务并启动后台 goroutine；实际结果通过任务查询和 SSE 获得。
+PPT 使用持久化 Run，不再使用旧 Conversation、Job、Action 或恢复接口。MySQL 保存 Run 快照和完整 canonical 事件；Go `TaskHub` 负责当前进程的 worker 控制、短期热缓存与实时广播。列表、详情和产物使用 HTTP，实时快照与事件使用单条 WebSocket 连接。
 
 ### 9.1 `PptTask`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `task_id` | UUID string | 任务 ID，也是任务产物目录名 |
+| `schema_version` | string | 当前为 `"1"` |
+| `event_id` | UUID string | 最近已应用事件 ID；首个事件前为空字符串 |
+| `thread_id` | string | Go 侧逻辑分组与同线程 worker 互斥 ID；当前不承载 Python 上下文 |
+| `run_id` | UUID string | 本次生成 Run ID，也是产物目录名 |
+| `task_id` | UUID string | `run_id` 的兼容别名，两者始终相等 |
+| `client_request_id` | string，可省略 | 客户端幂等键 |
+| `agent_config_id` | integer | 创建请求中的 Agent 配置 ID；`0` 表示自动选择 |
+| `description` | string | 已 trim 的 PPT 需求 |
 | `status` | string | `running`、`succeeded`、`failed`、`cancelled` |
 | `stage` | string | 当前稳定阶段 |
 | `message` | string | 最近事件的用户可读说明 |
 | `last_event_sequence` | uint64 | 当前任务最后一个事件序号 |
 | `result` | `FinalResult`，可省略 | 成功结果 |
 | `error` | `ErrorDetail`，可省略 | 失败或取消详情 |
-| `events_url` | string | 本任务 SSE 地址 |
 | `file_url` | string，可省略 | 最终 PPTX 下载地址 |
 | `created_at`、`updated_at` | RFC3339 string | 时间 |
 | `finished_at` | RFC3339 string，可省略 | 进入终态的时间 |
@@ -536,12 +548,14 @@ PPT 使用进程内 Task，不再使用 Conversation、Job、Action 或恢复接
 
 `POST /api/v1/ppt/tasks`
 
-成功返回 `202 Accepted` 和 `PptTask`。服务先完整校验描述和五个模型节点绑定，再创建内存任务；校验失败不会留下 Task。
+成功返回 `202 Accepted` 和 `PptTask`。服务先完整校验描述和五个模型节点绑定，再把初始 Run 提交到 MySQL，注册本地 worker 后返回；输入或模型校验失败不会留下 Run，持久化失败也不会启动 Python Runtime。
 
 JSON 请求不支持附件：
 
 ```json
 {
+  "thread_id": "5a5f7de4-1c1c-4aeb-8da3-c6994c2b723b",
+  "client_request_id": "web-create-019f7e80",
   "agent_config_id": 1,
   "description": "生成一份介绍 Agent Task Platform 架构的演示文稿",
   "options": {
@@ -555,6 +569,8 @@ JSON 请求不支持附件：
 
 | 字段 | 必填 | 约束/行为 |
 | --- | --- | --- |
+| `thread_id` | 否 | 最长 128 字符；省略时由 Go 生成 UUID |
+| `client_request_id` | 否 | 最长 128 字符；建议每次用户创建意图生成一个稳定值 |
 | `agent_config_id` | 否 | 正整数；省略或 0 时选择当前用户默认 active PPT 配置，否则选择首个可用配置 |
 | `description` | 是 | trim 后非空，最多 5000 个 Unicode 字符 |
 | `options.language` | 否 | 空值默认 `zh-CN` |
@@ -566,6 +582,8 @@ JSON 请求不支持附件：
 
 | 表单字段 | 必填 | 说明 |
 | --- | --- | --- |
+| `thread_id` | 否 | 规则同 JSON |
+| `client_request_id` | 否 | 规则同 JSON |
 | `agent_config_id` | 否 | 正整数；规则同 JSON |
 | `description` | 是 | PPT 需求 |
 | `language` | 否 | 语言 |
@@ -582,83 +600,120 @@ JSON 请求不支持附件：
 .png .jpg .jpeg .webp
 ```
 
-空文件返回 `400`，不支持的扩展名返回 `415`。单个文件最多 20 MiB，文件内容合计最多 100 MiB，multipart request body 最多 101 MiB；超限返回 `413`。Go 读取附件后计算 SHA-256，并把字节内容直接放入本次内部 gRPC 请求，不为附件建立数据库记录。
+空文件返回 `400`，不支持的扩展名返回 `415`。单个文件最多 20 MiB，文件内容合计最多 100 MiB，multipart request body 最多 101 MiB；超限返回 `413`。Go 读取附件后计算 SHA-256，摘要参与持久化幂等指纹，并把字节内容直接放入本次内部 gRPC 请求；当前不持久化附件原文。
 
 PPT Agent 配置必须 active，并且恰好能解析 `brief`、`outline`、`style`、`writer`、`designer` 五个 active 文本/多模态模型。任一节点缺失、模型停用或 `max_tokens <= 0` 都拒绝创建任务。
 
-### 9.3 查询任务
+`client_request_id` 在当前用户内是 MySQL 唯一的持久幂等键：同一键与完全相同的规范化请求会跨请求、跨 API 重启返回原 Task；同一键换了 thread、需求、配置、附件或 options 会返回 `409 client_request_conflict`。同一用户的同一 `thread_id` 同时只允许一个尚未退出的 worker，数据库唯一约束与本地 Hub 共同保护该规则；冲突返回 `409 thread_run_conflict`，不同 thread 可并行。当前 thread 仍只用于 Go 侧分组和互斥，不是 Python checkpoint。
+
+### 9.3 列表与查询任务
+
+`GET /api/v1/ppt/tasks?thread_id=<id>&limit=<1..100>`
+
+返回当前用户的 `PptTask[]`，按 `created_at` 倒序。`thread_id` 可选；`limit` 默认 20，最大 100。
 
 `GET /api/v1/ppt/tasks/:task_id`
 
-返回当前 Go 进程中的任务快照。任务从未存在、已经被惰性清理、API 已重启或不属于当前用户时均返回 `404`。
+返回 MySQL 中当前用户可见的持久化任务快照。API 重启和 TaskHub 热缓存清理不会删除历史；任务从未存在或不属于当前用户时返回 `404`。
 
 ### 9.4 取消任务
 
 `POST /api/v1/ppt/tasks/:task_id/cancel`
 
-无 body。服务先发布一个 `TASK_FAILED` 终态事件，其中 `error.code` 为 `TASK_CANCELLED`，把 Task 状态设为 `cancelled`，再取消 Python gRPC context。取消是终态，不支持 resume；对已经结束的任务取消返回 `409 conflict`。
+无 body。服务先在同一数据库事务中写入 `TASK_FAILED` 终态事件并更新 Run 快照，其中 `error.code` 为 `TASK_CANCELLED`、状态为 `cancelled`；事务提交后才广播 WS 事件并取消 Python gRPC context。创建事务到本地 cancel function 安装完成使用同一 run transition lock，因此并发取消会等待初始化完成，不会丢失取消意图；极端初始化异常可返回可重试的 `409 run_not_ready`。取消是终态，不支持 resume；对已经结束的任务取消返回 `409 conflict`。
 
-## 10. PPT Event SSE
+## 10. PPT canonical WebSocket v1
 
-### 10.1 订阅与进程内重放
+PPT 前端不使用 SSE，而是通过 `GET /api/v1/ppt/ws` 升级一条长连接，在其上 multiplex 多个 run。`POST /api/v1/text-generations` 的文本 SSE 是独立接口，不属于此协议。
 
-`GET /api/v1/ppt/tasks/:task_id/events`
+### 10.1 握手、鉴权与 envelope
 
-可以通过以下任一方式传入已消费序号：
+浏览器不能为 WebSocket 握手任意设置 `Authorization`，因此需同时传入两个 subprotocol：
 
-```http
-Last-Event-ID: 12
+```js
+new WebSocket("wss://api.example.com/api/v1/ppt/ws", [
+  "agent-task-v1",
+  "bearer." + accessToken
+])
 ```
 
-```text
-GET /api/v1/ppt/tasks/:task_id/events?after=12
+Go 在 upgrade 前取出 access token，复用普通 JWT、Redis blacklist 与 session 校验，并且只回显 `agent-task-v1`，不回显 bearer subprotocol。鉴权失败时在 upgrade 前返回 HTTP `401`。当前 upgrader 使用 Gorilla 的默认同源检查。浏览器在 native `open` 后仍等待 `connection.ready`；当前 Web 客户端等待 8 秒仍未收到时会关闭并退避重连。
+
+客户端和服务端都使用 canonical JSON envelope：
+
+```json
+{
+  "schema_version": "1",
+  "type": "run.subscribe",
+  "request_id": "cmd-9a6b",
+  "payload": {"run_id": "<uuid>", "after": 12}
+}
 ```
 
-两者同时出现时取较大的有效无符号整数。服务先重放内存中 `sequence > after` 的事件，再发送实时事件；终态事件发送后关闭 SSE。约每 15 秒发送一次 `: heartbeat` 注释保持连接。
+`schema_version` 当前必须是 `"1"`。每个客户端 command 都必须有 1–128 字符的 `request_id`，并在连接最近 4096 个 request ID 的去重窗口内唯一；服务端用它关联 ack/error/snapshot/event。服务端 envelope 另外始终包含 RFC3339 `created_at`。只接受最大 64 KiB 的 JSON text frame；envelope 和 run command payload 的未知字段、额外 JSON 值会被拒绝。
 
-这不是数据库续传：Task 和全部事件仅存在当前 Go 进程，API 重启后不能查询或重放。结束任务当前约保留一小时并惰性清理，这个时间窗口不构成持久化保证。
+### 10.2 Client commands
 
-### 10.2 SSE 帧
+| `type` | `payload` | 行为 |
+| --- | --- | --- |
+| `run.subscribe` | `{run_id, after?}` | 订阅或替换该 run 的现有订阅；`after` 默认 0 |
+| `run.unsubscribe` | `{run_id}` | 只停止该连接上的订阅，不取消 run |
+| `run.cancel` | `{run_id}` | 显式取消 run，不要求先订阅 |
+| `ping` | 任意 JSON，通常 `{}` | 应用层心跳，服务原样放入 `pong.payload` |
 
-SSE `event` 是 EventType 的小写形式，`id` 等于 `sequence`：
+单连接最多同时订阅 32 个 run。客户端应在 90 秒读超时内发送 command；当前 Web 客户端每 25 秒发送 `ping`。
 
-```text
-id: 3
-event: step_progress
-data: {"task_id":"...","sequence":3,"created_at":"...","type":"STEP_PROGRESS","stage":"GENERATING_PAGES","message":"正在生成第 2/8 页","progress":{"current":2,"total":8,"percent":25,"unit":"page"}}
-```
+### 10.3 Server frames
 
-每个 `AgentEvent` 包含：
+| `type` | `payload` | 说明 |
+| --- | --- | --- |
+| `connection.ready` | `{connection_id, schema_version}` | upgrade 完成后的首个服务端帧 |
+| `command.ack` | `{command, run_id?}` | command 已成功处理 |
+| `run.snapshot` | `PptTask` | 订阅或取消后的完整快照 |
+| `run.event` | `AgentEvent` | MySQL 历史重放或当前进程实时事件 |
+| `command.error` | `{code,message,command?,run_id?,retryable,last_event_sequence?}` | command 失败；连接通常继续可用 |
+| `pong` | 客户端 `ping.payload` | 应用层心跳响应 |
+
+`run.subscribe` 成功后的顺序是 `command.ack` → `run.snapshot` → 所有 `sequence > after` 的 `run.event` → 实时 `run.event`。`after` 只是事件游标；客户端不能用 snapshot 的 `last_event_sequence` 跳过尚未收到的事件。收到终态事件后服务只移除该 run 订阅，WebSocket 仍保持并可继续承载其他 run。
+
+终态 snapshot 也不能单独证明 replay 已消费完成：本地 event cursor 小于 snapshot watermark 时，客户端继续保留重订阅意图；只有 cursor 已追上 watermark，或实际应用了终态 event，才结束该 run 的期望订阅。
+
+Run 快照和 canonical 事件以 MySQL 为权威；TaskHub 只提供当前进程的 live fan-out。断线、API 重启或热缓存淘汰后，客户端都按每个 run 已处理的最大 event `sequence` 重发 `run.subscribe {after}`，服务可从 `ppt_run_events` 连续补发。若 `after` 大于服务端 watermark，会返回可重试的 `event_cursor_ahead` 和 `last_event_sequence`；当前 Web 客户端会将该 run 的 cursor 重置为 0，全量回放后重建投影。发送队列溢出或订阅流中断时，服务端使用 close code `1013` 要求客户端重连续传。
+
+### 10.4 `AgentEvent`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `task_id` | string | Task UUID |
-| `sequence` | uint64 | Task 内从 1 开始严格递增；是排序游标，不是版本号 |
+| `schema_version` | string | 当前为 `"1"` |
+| `event_id` | UUID string | 事件唯一 ID |
+| `thread_id` | string | 所属 thread |
+| `run_id` | UUID string | 所属 run |
+| `task_id` | UUID string | `run_id` 兼容别名 |
+| `sequence` | uint64 | run 内从 1 开始严格递增；排序与续传游标 |
 | `created_at` | RFC3339 string | 事件时间 |
+| `channel` | string | `lifecycle`、`updates` 或 `artifacts` |
 | `type` | string | 事件类型 |
 | `stage` | string | 稳定前端阶段 |
 | `message` | string | 可直接展示的说明 |
 | `progress` | object，可省略 | `current`、`total`、`percent`、`unit` |
 | `resources` | array，可省略 | 本事件就绪的文件资源 |
 | `page` | object，可省略 | `page_id`、`page_index`、`page_count`、`title` |
-| `error` | object，可省略 | `code`、`message`、`retryable`；Runtime 调试详情不会转发给客户端 |
+| `error` | object，可省略 | `code`、`message`、`retryable`；Runtime debug 不对外转发 |
 | `final_result` | object，可省略 | `ppt_file`、`slide_count`、`elapsed_ms` |
 
-### 10.3 事件类型
-
-| `type` | SSE event | 含义 |
+| `type` | `channel` | 含义 |
 | --- | --- | --- |
-| `TASK_STARTED` | `task_started` | Python 已开始处理 |
-| `STEP_STARTED` | `step_started` | 一个可展示步骤开始 |
-| `STEP_PROGRESS` | `step_progress` | 页、资源或步骤进度 |
-| `STEP_COMPLETED` | `step_completed` | 一个可展示步骤完成 |
-| `ARTIFACT_READY` | `artifact_ready` | 一个或多个中间产物可下载 |
-| `TASK_COMPLETED` | `task_completed` | PPTX 已完成；终态 |
-| `TASK_FAILED` | `task_failed` | 生成失败或取消；终态 |
+| `TASK_STARTED` | `lifecycle` | Python 已开始处理 |
+| `STEP_STARTED` | `updates` | 一个可展示步骤开始 |
+| `STEP_PROGRESS` | `updates` | 页、资源或步骤进度 |
+| `STEP_COMPLETED` | `updates` | 一个可展示步骤完成 |
+| `ARTIFACT_READY` | `artifacts` | 一个或多个中间产物可下载 |
+| `TASK_COMPLETED` | `lifecycle` | PPTX 已完成；终态 |
+| `TASK_FAILED` | `lifecycle` | 生成失败或取消；终态 |
 
-取消不引入独立的 `TASK_CANCELLED` 事件类型，而由 `TASK_FAILED + error.code=TASK_CANCELLED` 表示。Task 快照的 `status` 会是 `cancelled`。
+取消不引入独立的 `TASK_CANCELLED` 事件类型，而由 `TASK_FAILED + error.code=TASK_CANCELLED` 表示。Task 快照的 `status` 会是 `cancelled`。`run.cancel` 成功会返回 ack 和终态 snapshot；若已订阅该 run，还会收到终态 event。断开 WebSocket 或 `run.unsubscribe` 不会取消生成，只有显式 `run.cancel` 或 HTTP cancel 才会取消。
 
-### 10.4 稳定阶段
+### 10.5 稳定阶段
 
 | `stage` | 含义 |
 | --- | --- |
@@ -673,9 +728,13 @@ data: {"task_id":"...","sequence":3,"created_at":"...","type":"STEP_PROGRESS","s
 
 阶段是稳定外部契约，不等同于 Python 函数名。失败事件会保留发生故障时的阶段。
 
-### 10.5 失败收口
+### 10.6 错误与失败收口
+
+`command.error.code` 的稳定值包括：`invalid_message`、`invalid_command`、`unsupported_schema_version`、`unsupported_command`、`unsupported_data_type`、`duplicate_request_id`、`subscription_limit_exceeded`、`run_not_found`、`run_not_ready`、`event_cursor_ahead`、`run_already_finished` 和 `internal_error`。`run_not_ready` 与 `event_cursor_ahead` 可重试；客户端应以 `retryable` 决定是否重连/重试，不应依赖 `message` 文案。
 
 流开始前的无效 Python 请求使用标准 gRPC status。Go 无法建立 Runtime 流时发布 `TASK_FAILED/PYTHON_RUNTIME_UNAVAILABLE`；未收到终态就异常断流或提前 EOF 时发布 `TASK_FAILED/PYTHON_STREAM_LOST`。这两类错误均可标记 `retryable: true`，但“重试”是重新创建 Task，不是恢复旧 Task。
+
+合法 Runtime 事件若因 MySQL 故障无法可靠提交，不会先向 WS 广播；数据库恢复后收口为可重试的 `TASK_FAILED/EVENT_PERSISTENCE_FAILED`。worker 已退出但终态仍未落库时，当前单实例进程会后台重试 `GO_WORKER_EXITED` 终态并释放 worker guard，进程重启仍由 `SERVER_RESTARTED` 做最终兜底。文件不存在或 size/hash 不匹配则收口为可重试的 `TASK_FAILED/ARTIFACT_NOT_READY`，不会提交对应 ready/success 事件。
 
 ## 11. PPT 产物下载
 
@@ -706,9 +765,19 @@ Go 的 `python_agent.artifacts_dir` 与 Python 的 `DECK_ARTIFACTS_DIR` 必须�
 
 ## 12. PPT 当前持久化边界
 
-PPT Task、事件、进度、错误和中间状态不写 MySQL，也不使用 LangGraph checkpointer。SSE 缓冲、订阅和取消函数都在 Go `TaskHub` 中；进程退出即丢失。Python 不提供 review、action、pause、resume、repair 或版本化 artifact 接口。
+MySQL 现在持久化：
 
-MySQL 仍用于用户、登录相关数据、模型配置和 Agent 节点绑定；“PPT 不落库”不代表服务不依赖 MySQL/Redis。
+- `ppt_runs`：owner、thread、幂等指纹、请求摘要、当前状态/阶段、水位、成功结果、错误和 worker 生命周期；
+- `ppt_run_events`：每个经过 Go 校验和脱敏的 canonical `AgentEvent`，按 `(run_id, sequence)` 连续保存；
+- 事件插入和 Run 快照推进位于同一事务，数据库提交成功后才允许 WebSocket 广播；
+- `ARTIFACT_READY` / `TASK_COMPLETED` 落库前，Go 会从下载使用的同一 artifact root 打开相关文件，确认其为非空普通文件，并在 Runtime 提供 size/hash 时逐项核对；失败会改写为 `TASK_FAILED/ARTIFACT_NOT_READY`。
+
+WebSocket 的 `connection.ready`、command、ack、ping/pong 等传输帧不写数据库。TaskHub 中的订阅、取消函数和热 replay 仍是进程内状态，但终态历史、查询、幂等和事件重放不再依赖其一小时 TTL。
+
+当前 Python Runtime 没有 checkpointer 或 durable queue，所以 API 启动时会把上一个单实例进程遗留的 active Run 收口：仍为 `running` 的 Run 追加 `TASK_FAILED/SERVER_RESTARTED`，已有终态但 worker 尚未释放的 Run 只释放互斥槽。该策略适用于当前单 API 实例；滚动部署或多实例 worker 仍需 `worker_instance_id + lease + fencing token`，不能把本实现视为跨实例接管。
+
+PPTX、预览和中间资源仍存放在本地/共享 `python_agent.artifacts_dir`，MySQL 只保存相对路径、大小和 hash 等事件元数据。数据库记录存在不代表文件在跨主机或卷清理后仍存在；生产多主机场景需要对象存储。Python 仍不提供 review、action、pause、resume、repair 或版本化 artifact 接口。
+
 ## 13. 内部 gRPC 协议
 
 ### 13.1 服务与生成物
@@ -779,7 +848,7 @@ rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
 
 | 字段 | Proto 类型 | 说明 |
 | --- | --- | --- |
-| `task_id` | `string` | Go 生成的 Task UUID |
+| `task_id` | `string` | Go 生成的 Run UUID；当前 `task_id == run_id` |
 | `description` | `string` | PPT 需求 |
 | `attachments` | repeated `InputResource` | 内联输入附件 |
 | `models` | repeated `ModelConfig` | 五个节点的最终模型配置 |
@@ -803,7 +872,7 @@ rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
 | `max_tokens` | `int32` | 节点最终参数 |
 | `supports_image_input` | `bool` | 模型图片输入能力 |
 
-`PptOptions` 包含 `language`、`expected_slide_count`、`aspect_ratio`、`template_id`。请求不包含用户会话、checkpoint、当前阶段、resume 数据、review action 或版本号。
+`PptOptions` 包含 `language`、`expected_slide_count`、`aspect_ratio`、`template_id`。公开 Task 的 `thread_id` 当前不在 `GeneratePptRequest` proto 中；Go 只用它做列表分组和单 thread worker 互斥，调用 Python 时仍传 `task_id=run_id`。因此 Python 不具有 thread checkpoint 语义。请求也不包含用户会话、当前阶段、resume 数据、review action 或版本号。
 
 ### 13.5 PPT 事件与资源
 
@@ -833,10 +902,10 @@ rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
 | `size_bytes` | `uint64` | 文件大小 |
 | `sha256` | `string` | 可选摘要 |
 
-Python 不返回公开 URL。Go 把相对路径转换为当前用户可访问的 Task 下载 URL，并在 SSE 边界移除 `ErrorDetail.debug_message`。成功流必须以 `TASK_COMPLETED` 结束，失败流尽量以 `TASK_FAILED` 结束；Go 会为无终态断流补发失败事件。
+Python 不返回公开 URL。Go 把相对路径转换为当前用户可访问的 Task 下载 URL，并在 Go canonicalization / WebSocket 边界移除 `ErrorDetail.debug_message`、补齐 `schema_version`、`event_id`、`thread_id`、`run_id`、`task_id` 和 `channel`。成功流必须以 `TASK_COMPLETED` 结束，失败流尽量以 `TASK_FAILED` 结束；Go 会为无终态断流补发失败事件。
 
 ## 14. 进程探针与已删除接口
 
 `GET /healthz` 是唯一不带 `/api/v1` 的路由，仅供容器和负载均衡器探测进程；业务健康检查可使用 `GET /api/v1/health`。旧的 `/login`、`/providers` 等无前缀业务路由没有注册。
 
-旧 `/ppt-agent/*` 与 `/api/v1/presentations/*` 路由没有兼容层，也没有 resume/action 替代语义；PPT 客户端必须直接使用 `/api/v1/ppt/tasks`。
+旧 `/ppt-agent/*` 与 `/api/v1/presentations/*` 路由没有兼容层，也没有 resume/action 替代语义；PPT 客户端必须直接使用 `/api/v1/ppt/tasks` 与 `/api/v1/ppt/ws`。

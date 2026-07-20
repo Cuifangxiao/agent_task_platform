@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertCircle, Loader2, Paperclip, Send, Square, X } from '@lucide/vue'
+import { AlertCircle, Loader2, Paperclip, Send, X } from '@lucide/vue'
 
 import type { AgentConfig } from '@/types'
 
@@ -9,7 +9,7 @@ defineProps<{
   configs: AgentConfig[]
   error: string
   files: File[]
-  running: boolean
+  submitting: boolean
   text: string
   uploadState: string
 }>()
@@ -17,7 +17,6 @@ defineProps<{
 const emit = defineEmits<{
   addFiles: [files: File[]]
   removeFile: [index: number]
-  stop: []
   submit: []
   updateConfigId: [value: string]
   updateText: [value: string]
@@ -36,7 +35,7 @@ function onFilesSelected(event: Event) {
       <div class="composer-box">
         <textarea
           :value="text"
-          :disabled="running"
+          :disabled="submitting"
           rows="4"
           placeholder="例如：帮我做一份 AI Agent 平台 MVP 汇报，面向投资人，风格简洁专业，控制在 10 页左右。"
           @input="$emit('updateText', ($event.target as HTMLTextAreaElement).value)"
@@ -47,7 +46,7 @@ function onFilesSelected(event: Event) {
               <Paperclip :size="14" />
               <span>{{ file.name }}</span>
             </div>
-            <button class="chip-close" type="button" :disabled="running" @click="$emit('removeFile', index)">
+            <button class="chip-close" type="button" :disabled="submitting" @click="$emit('removeFile', index)">
               <X :size="14" />
             </button>
           </div>
@@ -62,13 +61,13 @@ function onFilesSelected(event: Event) {
 
       <div class="composer-toolbar">
         <div class="composer-actions">
-          <label class="btn ghost file-picker" :class="{ disabled: running }">
+          <label class="btn ghost file-picker" :class="{ disabled: submitting }">
             <Paperclip :size="16" />
             添加资料
             <input
               type="file"
               multiple
-              :disabled="running"
+              :disabled="submitting"
               accept=".pdf,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.docx,.png,.jpg,.jpeg,.webp,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp"
               @change="onFilesSelected"
             />
@@ -77,7 +76,7 @@ function onFilesSelected(event: Event) {
             <span>使用配置</span>
             <select
               :value="configId"
-              :disabled="running"
+              :disabled="submitting"
               @change="$emit('updateConfigId', ($event.target as HTMLSelectElement).value)"
             >
               <option v-for="config in configs" :key="config.id" :value="String(config.id)">
@@ -92,14 +91,10 @@ function onFilesSelected(event: Event) {
           <span v-if="uploadState" class="chat-note">{{ uploadState }}</span>
         </div>
         <div class="composer-toolbar-actions">
-          <button v-if="running" class="btn ghost" type="button" @click="$emit('stop')">
-            <Square :size="18" />
-            取消任务
-          </button>
           <button class="btn primary send-btn" type="submit" :disabled="!canSubmit">
-            <Loader2 v-if="running" class="spin" :size="18" />
+            <Loader2 v-if="submitting" class="spin" :size="18" />
             <Send v-else :size="17" />
-            <span>{{ running ? '生成中' : '创建任务' }}</span>
+            <span>{{ submitting ? '正在提交' : '创建任务' }}</span>
           </button>
         </div>
       </div>

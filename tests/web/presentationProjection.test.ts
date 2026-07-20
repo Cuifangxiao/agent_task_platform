@@ -10,12 +10,16 @@ import {
 } from '../../apps/web/src/features/presentations/lib/taskProjection.ts'
 import type { PptAgentEvent } from '../../apps/web/src/features/presentations/types.ts'
 
-test('a typed SSE block becomes one canonical task event', () => {
+test('a typed transport event becomes one canonical task event', () => {
   const event = normalizeTaskEvent({
     id: 12,
     event: 'STEP_PROGRESS',
     data: {
-      task_id: 'task-123',
+      schema_version: '1',
+      event_id: 'event-12',
+      thread_id: 'thread-123',
+      run_id: 'run-123',
+      task_id: 'run-123',
       sequence: 99,
       type: 'STEP_PROGRESS',
       stage: 'GENERATING_PAGES',
@@ -26,10 +30,35 @@ test('a typed SSE block becomes one canonical task event', () => {
   })
 
   assert.equal(event?.sequence, 12)
-  assert.equal(event?.task_id, 'task-123')
+  assert.equal(event?.schema_version, '1')
+  assert.equal(event?.event_id, 'event-12')
+  assert.equal(event?.thread_id, 'thread-123')
+  assert.equal(event?.run_id, 'run-123')
+  assert.equal(event?.task_id, 'run-123')
   assert.equal(event?.type, 'STEP_PROGRESS')
   assert.equal(event?.page?.page_index, 3)
   assert.equal(progressLabel(event as PptAgentEvent), '3/10 页')
+})
+
+test('legacy events receive a stable fallback event id and run_id can identify the task', () => {
+  const legacy = normalizeTaskEvent({
+    id: 3,
+    event: 'TASK_STARTED',
+    data: { task_id: 'task-legacy', sequence: 3, message: 'started' },
+  })
+  const runOnly = normalizeTaskEvent({
+    id: 1,
+    event: 'TASK_STARTED',
+    data: { run_id: 'run-only', sequence: 1, message: 'started' },
+  })
+
+  assert.equal(legacy?.event_id, 'task-legacy:3')
+  assert.equal(runOnly?.task_id, 'run-only')
+  assert.equal(normalizeTaskEvent({
+    id: 4,
+    event: 'TASK_STARTED',
+    data: { task_id: 'task-4', run_id: 'run-4', sequence: 4 },
+  }), null)
 })
 
 test('malformed stream data is rejected instead of entering UI state', () => {

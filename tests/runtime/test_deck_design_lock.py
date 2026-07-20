@@ -1,11 +1,11 @@
 import json
 from types import SimpleNamespace
 
-import core.deck.pipeline.design_lock as design_lock
+import core.deck.agents.design.graph as design_lock
 from core.deck.contract import EventType, PptStage
-from core.deck.pipeline.design_lock import build_design_contract, compile_design_package, freeze_design_contract, page_contract
-from core.deck.pipeline.outline import parse_outline_slides
-from core.deck.pipeline.slides import apply_design_contract
+from core.deck.agents.design.graph import build_design_contract, compile_design_package, freeze_design_contract, page_contract
+from core.deck.agents.generation.graph import apply_design_contract
+from core.deck.agents.planning.graph import parse_outline_slides
 from core.deck.spec import SlideSpec, default_theme
 
 

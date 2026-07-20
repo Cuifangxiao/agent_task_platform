@@ -9,10 +9,10 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"agent-task-platform/apps/api/internal/modules/auth"
 	"agent-task-platform/apps/api/internal/shared/actor"
+	"agent-task-platform/apps/api/internal/transport/http/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,6 +21,8 @@ func TestCreateTaskBindsMultipartAttachments(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("thread_id", "thread-42")
+	_ = writer.WriteField("client_request_id", "request-42")
 	_ = writer.WriteField("agent_config_id", "42")
 	_ = writer.WriteField("description", "Generate a platform overview")
 	_ = writer.WriteField("language", "zh-CN")
@@ -41,7 +43,7 @@ func TestCreateTaskBindsMultipartAttachments(t *testing.T) {
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	if service.created.Description != "Generate a platform overview" || service.created.AgentConfigID != 42 {
+	if service.created.ThreadID != "thread-42" || service.created.ClientRequestID != "request-42" || service.created.Description != "Generate a platform overview" || service.created.AgentConfigID != 42 {
 		t.Fatalf("unexpected request: %#v", service.created)
 	}
 	if service.created.Options.ExpectedSlideCount != 8 || len(service.created.Attachments) != 1 {
@@ -53,33 +55,44 @@ func TestCreateTaskBindsMultipartAttachments(t *testing.T) {
 	}
 }
 
-func TestSubscribeTaskWritesReplayAsSSEAndStopsAtTerminal(t *testing.T) {
+func TestListTasksPassesOwnerThreadAndLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	now := time.Now().UTC()
-	service := &fakeTaskService{subscription: &Subscription{
-		Replay: []AgentEvent{
-			{TaskID: "task-1", Sequence: 1, CreatedAt: now, Type: EventTaskStarted, Stage: StagePreparing, Message: "started"},
-			{TaskID: "task-1", Sequence: 2, CreatedAt: now, Type: EventTaskCompleted, Stage: StageFinished, Message: "done"},
-		},
-		Events: closedEventChannel(),
-		Close:  func() {},
-	}}
-	handler := NewHandler(service)
+	service := &fakeTaskService{tasks: []*Task{{
+		SchemaVersion: CurrentSchemaVersion,
+		ThreadID:      "thread-1",
+		RunID:         "run-1",
+		TaskID:        "run-1",
+		Description:   "Architecture deck",
+		AgentConfigID: 42,
+	}}}
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
-	context.Params = gin.Params{{Key: "task_id", Value: "task-1"}}
-	context.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ppt/tasks/task-1/events", nil)
-	context.Set(auth.ContextKeyClaims, &auth.Claims{UserID: 7})
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ppt/tasks?thread_id=thread-1&limit=7", nil)
+	context.Set(auth.ContextKeyClaims, &auth.Claims{UserID: 9})
 
-	handler.SubscribeTask(context)
-	output := recorder.Body.String()
-	for _, expected := range []string{"id: 1", "event: task_started", `"type":"TASK_STARTED"`, "id: 2", "event: task_completed"} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("SSE output missing %q: %s", expected, output)
+	NewHandler(service).ListTasks(context)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if service.listedOwner != 9 || service.listedThread != "thread-1" || service.listedLimit != 7 {
+		t.Fatalf("unexpected list arguments: owner=%d thread=%q limit=%d", service.listedOwner, service.listedThread, service.listedLimit)
+	}
+	for _, expected := range []string{`"run_id":"run-1"`, `"description":"Architecture deck"`, `"agent_config_id":42`} {
+		if !strings.Contains(recorder.Body.String(), expected) {
+			t.Fatalf("list response missing %q: %s", expected, recorder.Body.String())
 		}
 	}
-	if strings.Contains(strings.ToLower(output), "version") || strings.Contains(strings.ToLower(output), "review") {
-		t.Fatalf("obsolete protocol leaked into SSE: %s", output)
+}
+
+func TestListTasksRejectsInvalidLimit(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ppt/tasks?limit=101", nil)
+	context.Set(auth.ContextKeyClaims, &auth.Claims{UserID: 9})
+
+	NewHandler(&fakeTaskService{}).ListTasks(context)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -102,35 +115,37 @@ func TestCreateTaskRejectsUnsupportedAttachment(t *testing.T) {
 	}
 }
 
-func TestSubscribeTaskDoesNotSendLiveEventsBehindCursor(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	events := make(chan AgentEvent, 1)
-	events <- AgentEvent{TaskID: "task-1", Sequence: 3, Type: EventStepProgress, Stage: StagePlanning, Message: "stale"}
-	close(events)
-	service := &fakeTaskService{subscription: &Subscription{Events: events, Close: func() {}}}
-	recorder := httptest.NewRecorder()
-	context, _ := gin.CreateTestContext(recorder)
-	context.Params = gin.Params{{Key: "task_id", Value: "task-1"}}
-	context.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ppt/tasks/task-1/events?after=100", nil)
-	context.Set(auth.ContextKeyClaims, &auth.Claims{UserID: 7})
-
-	NewHandler(service).SubscribeTask(context)
-	if strings.Contains(recorder.Body.String(), "stale") {
-		t.Fatalf("SSE emitted an event behind the requested cursor: %s", recorder.Body.String())
+func TestCreateConflictsExposeStableCodes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "idempotency", err: ErrClientRequestConflict, code: "client_request_conflict"},
+		{name: "thread", err: ErrThreadRunConflict, code: "thread_run_conflict"},
+		{name: "worker initializing", err: ErrTaskNotReady, code: "run_not_ready"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			response.MarkVersioned(context)
+			NewHandler(&fakeTaskService{}).respondError(context, test.err)
+			if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), `"code":"`+test.code+`"`) {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
-}
-
-func closedEventChannel() <-chan AgentEvent {
-	channel := make(chan AgentEvent)
-	close(channel)
-	return channel
 }
 
 type fakeTaskService struct {
 	created      CreateTaskRequest
 	task         *Task
+	tasks        []*Task
 	subscription *Subscription
 	err          error
+	listedOwner  int64
+	listedThread string
+	listedLimit  int
 }
 
 func (service *fakeTaskService) CreateTask(_ context.Context, _ actor.User, request CreateTaskRequest) (*Task, error) {
@@ -139,6 +154,12 @@ func (service *fakeTaskService) CreateTask(_ context.Context, _ actor.User, requ
 }
 func (service *fakeTaskService) GetTask(context.Context, int64, string) (*Task, error) {
 	return service.task, service.err
+}
+func (service *fakeTaskService) ListTasks(_ context.Context, ownerID int64, threadID string, limit int) ([]*Task, error) {
+	service.listedOwner = ownerID
+	service.listedThread = threadID
+	service.listedLimit = limit
+	return service.tasks, service.err
 }
 func (service *fakeTaskService) SubscribeTask(context.Context, int64, string, uint64) (*Subscription, error) {
 	return service.subscription, service.err

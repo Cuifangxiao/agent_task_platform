@@ -1,5 +1,5 @@
-from core.deck.pipeline.brief import build_brief, normalize_brief
-from core.deck.pipeline.style import theme_is_valid
+from core.deck.agents.design.graph import theme_is_valid
+from core.deck.agents.planning.graph import build_brief, normalize_brief
 from core.deck.quality.rules import validate_dom_result
 from core.deck.spec import ThemeTokens
 

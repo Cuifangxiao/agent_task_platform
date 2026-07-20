@@ -47,8 +47,7 @@ class FailingGraph:
 def _service(monkeypatch, tmp_path, graph):
     monkeypatch.setenv("DECK_ARTIFACTS_DIR", str(tmp_path))
     monkeypatch.setattr("core.deck.service.build_ppt_llms", lambda _inp: {})
-    monkeypatch.setattr("core.deck.service.build_ppt_graph", lambda *_args: graph)
-    return DeckService()
+    return DeckService(graph_factory=lambda *_args: graph)
 
 
 def test_service_sequences_events_and_emits_one_last_success_terminal(monkeypatch, tmp_path):
@@ -87,3 +86,78 @@ def test_service_failure_is_the_only_terminal_and_is_last(monkeypatch, tmp_path)
     assert result[-1].stage is PptStage.PLANNING
     assert result[-1].message == "PPT generation failed"
     assert result[-1].error.debug_message == "private pipeline details"
+
+
+def test_service_builds_fresh_graph_and_browser_session_for_each_request(monkeypatch, tmp_path):
+    class TrackingBrowserSession:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    calls = []
+
+    def factory(llms, output_dir, browser_session):
+        calls.append((llms, output_dir, browser_session))
+        return SuccessfulGraph()
+
+    monkeypatch.setenv("DECK_ARTIFACTS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "core.deck.service.build_ppt_llms",
+        lambda inp: {"task_id": inp.task_id},
+    )
+    monkeypatch.setattr("core.deck.service.BrowserSession", TrackingBrowserSession)
+    service = DeckService(graph_factory=factory)
+
+    first = list(
+        service.generate_ppt(
+            GeneratePptInput(task_id="fresh-1", description="Create the first deck")
+        )
+    )
+    second = list(
+        service.generate_ppt(
+            GeneratePptInput(task_id="fresh-2", description="Create the second deck")
+        )
+    )
+
+    assert first[-1].type is EventType.TASK_COMPLETED
+    assert second[-1].type is EventType.TASK_COMPLETED
+    assert [call[0] for call in calls] == [
+        {"task_id": "fresh-1"},
+        {"task_id": "fresh-2"},
+    ]
+    assert [call[1] for call in calls] == [tmp_path.resolve(), tmp_path.resolve()]
+    assert calls[0][2] is not calls[1][2]
+    assert all(call[2].closed for call in calls)
+
+
+def test_service_uses_ppt_graph_when_no_factory_is_injected(monkeypatch, tmp_path):
+    class TrackingBrowserSession:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    calls = []
+
+    def ppt_graph(llms, output_dir, browser_session):
+        calls.append((llms, output_dir, browser_session))
+        return SuccessfulGraph()
+
+    monkeypatch.setenv("DECK_ARTIFACTS_DIR", str(tmp_path))
+    monkeypatch.setattr("core.deck.service.build_ppt_llms", lambda _inp: {"brief": object()})
+    monkeypatch.setattr("core.deck.service.BrowserSession", TrackingBrowserSession)
+    monkeypatch.setattr("core.deck.service.PptGraph", ppt_graph)
+
+    result = list(
+        DeckService().generate_ppt(
+            GeneratePptInput(task_id="default-graph", description="Use the default graph")
+        )
+    )
+
+    assert result[-1].type is EventType.TASK_COMPLETED
+    assert len(calls) == 1
+    assert calls[0][1] == tmp_path.resolve()
+    assert calls[0][2].closed is True

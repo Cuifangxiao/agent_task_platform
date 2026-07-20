@@ -4,7 +4,7 @@ from pathlib import Path
 from core.deck.spec import COMPONENTS
 from core.deck.spec import normalize_slide_spec
 from core.deck.quality import dedupe_issue_dicts, validate_html_static, validate_slide_spec
-from core.deck.pipeline.slides import split_slide_preserving_content
+from core.deck.agents.generation.graph import split_slide_preserving_content
 
 
 def test_normalize_slide_spec_accepts_legacy_slide_json_without_content_loss():

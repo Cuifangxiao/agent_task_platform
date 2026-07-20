@@ -13,10 +13,10 @@ import (
 
 var pptModelNodes = [...]string{"brief", "outline", "style", "writer", "designer"}
 
-func (s *Service) resolveRuntimeModelConfigs(ctx context.Context, userID, agentConfigID int64) ([]RuntimeModelConfig, error) {
+func (s *Service) resolveRuntimeModelConfigs(ctx context.Context, userID, agentConfigID int64) ([]RuntimeModelConfig, int64, error) {
 	config, err := s.resolvePPTAgentConfig(ctx, userID, agentConfigID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	bindings := make(map[string]agentconfig.NodeBinding, len(config.NodeBindings))
 	for _, binding := range config.NodeBindings {
@@ -27,20 +27,20 @@ func (s *Service) resolveRuntimeModelConfigs(ctx context.Context, userID, agentC
 	for _, nodeKey := range pptModelNodes {
 		binding, ok := bindings[nodeKey]
 		if !ok {
-			return nil, fmt.Errorf("%w: agent config missing node binding %q", ErrInvalidRequest, nodeKey)
+			return nil, 0, fmt.Errorf("%w: agent config missing node binding %q", ErrInvalidRequest, nodeKey)
 		}
 		config, err := s.modelConfigRepo.GetByID(ctx, userID, binding.ModelConfigID)
 		if err != nil {
 			if errors.Is(err, modelconfig.ErrNotFound) {
-				return nil, fmt.Errorf("%w: model for node %q", ErrModelConfigNotFound, nodeKey)
+				return nil, 0, fmt.Errorf("%w: model for node %q", ErrModelConfigNotFound, nodeKey)
 			}
-			return nil, err
+			return nil, 0, err
 		}
 		if config.Status != modelconfig.StatusActive {
-			return nil, fmt.Errorf("%w: node %q", ErrModelConfigInactive, nodeKey)
+			return nil, 0, fmt.Errorf("%w: node %q", ErrModelConfigInactive, nodeKey)
 		}
 		if config.ModelType == modelconfig.ModelTypeImage {
-			return nil, fmt.Errorf("%w: node %q requires a text or multimodal model", ErrInvalidRequest, nodeKey)
+			return nil, 0, fmt.Errorf("%w: node %q requires a text or multimodal model", ErrInvalidRequest, nodeKey)
 		}
 
 		temperature := config.Temperature
@@ -52,11 +52,11 @@ func (s *Service) resolveRuntimeModelConfigs(ctx context.Context, userID, agentC
 			maxTokens = *binding.MaxTokens
 		}
 		if maxTokens <= 0 {
-			return nil, fmt.Errorf("%w: max tokens for node %q must be positive", ErrInvalidRequest, nodeKey)
+			return nil, 0, fmt.Errorf("%w: max tokens for node %q must be positive", ErrInvalidRequest, nodeKey)
 		}
 		options, err := decodeProviderOptions(config.ProviderOptions)
 		if err != nil {
-			return nil, fmt.Errorf("%w: provider options for node %q: %v", ErrInvalidRequest, nodeKey, err)
+			return nil, 0, fmt.Errorf("%w: provider options for node %q: %v", ErrInvalidRequest, nodeKey, err)
 		}
 		models = append(models, RuntimeModelConfig{
 			NodeKey:            nodeKey,
@@ -70,7 +70,7 @@ func (s *Service) resolveRuntimeModelConfigs(ctx context.Context, userID, agentC
 			SupportsImageInput: modelConfigSupportsImageInput(config, options),
 		})
 	}
-	return models, nil
+	return models, config.ID, nil
 }
 
 func (s *Service) resolvePPTAgentConfig(ctx context.Context, userID, agentConfigID int64) (*agentconfig.AgentConfig, error) {

@@ -2,6 +2,13 @@ export interface PptCreateTaskPayload {
   agent_config_id: number
   description: string
   source_files?: File[]
+  thread_id?: string
+  client_request_id?: string
+}
+
+export interface PptTaskListOptions {
+  threadId?: string
+  limit?: number
 }
 
 export type PptTaskStatus = 'running' | 'succeeded' | 'failed' | 'cancelled'
@@ -71,7 +78,12 @@ export interface PptFinalResult {
 }
 
 export interface PptAgentEvent {
+  schema_version?: string | number
+  event_id?: string
+  thread_id?: string
+  run_id?: string
   task_id: string
+  channel?: 'lifecycle' | 'updates' | 'artifacts' | string
   sequence: number
   created_at?: string
   type: PptEventType
@@ -85,7 +97,14 @@ export interface PptAgentEvent {
 }
 
 export interface PptTask {
+  schema_version?: string | number
+  event_id?: string
+  thread_id?: string
+  run_id?: string
   task_id: string
+  client_request_id?: string
+  description?: string
+  agent_config_id?: number
   status: PptTaskStatus
   stage?: PptStage
   message?: string
@@ -96,7 +115,6 @@ export interface PptTask {
   created_at?: string
   updated_at?: string
   finished_at?: string
-  events_url?: string
   file_url?: string
 }
 

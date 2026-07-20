@@ -1,5 +1,3 @@
-import type { ParsedSseEvent } from '@/shared/api/sse'
-
 import type {
   PptAgentEvent,
   PptEventType,
@@ -8,6 +6,12 @@ import type {
   PptTask,
   PptTaskStatus,
 } from '../types'
+
+export interface RawPresentationEvent {
+  event?: string
+  id?: string | number
+  data: unknown
+}
 
 const TERMINAL_STATUSES = new Set<PptTaskStatus>(['succeeded', 'failed', 'cancelled'])
 const EVENT_TYPES = new Set<PptEventType>([
@@ -20,11 +24,14 @@ const EVENT_TYPES = new Set<PptEventType>([
   'TASK_FAILED',
 ])
 
-export function normalizeTaskEvent(event: ParsedSseEvent): PptAgentEvent | null {
+export function normalizeTaskEvent(event: RawPresentationEvent): PptAgentEvent | null {
   if (!isRecord(event.data)) return null
   const rawType = String(event.data.type || event.event || '').toUpperCase()
   const type = EVENT_TYPES.has(rawType as PptEventType) ? (rawType as PptEventType) : null
-  const taskId = String(event.data.task_id || '')
+  const rawTaskId = normalizedIdentifier(event.data.task_id)
+  const rawRunId = normalizedIdentifier(event.data.run_id)
+  if (rawTaskId && rawRunId && rawTaskId !== rawRunId) return null
+  const taskId = rawTaskId || rawRunId
   const sequence = Number(event.id ?? event.data.sequence)
   if (!type || !taskId || !Number.isInteger(sequence) || sequence <= 0) return null
 
@@ -40,7 +47,16 @@ export function normalizeTaskEvent(event: ParsedSseEvent): PptAgentEvent | null 
     : undefined
 
   return {
+    ...(typeof event.data.schema_version === 'string' || typeof event.data.schema_version === 'number'
+      ? { schema_version: event.data.schema_version }
+      : {}),
+    event_id: normalizedIdentifier(event.data.event_id) || `${taskId}:${sequence}`,
+    ...(normalizedIdentifier(event.data.thread_id)
+      ? { thread_id: normalizedIdentifier(event.data.thread_id) }
+      : {}),
+    ...(normalizedIdentifier(event.data.run_id) ? { run_id: normalizedIdentifier(event.data.run_id) } : {}),
     task_id: taskId,
+    ...(typeof event.data.channel === 'string' ? { channel: event.data.channel } : {}),
     sequence,
     type,
     message: String(event.data.message || eventLabel(type)),
@@ -77,8 +93,29 @@ export function normalizeTaskEvent(event: ParsedSseEvent): PptAgentEvent | null 
   }
 }
 
-export function shouldAcceptTaskEvent(lastSequence: number, seen: Set<number>, sequence: number) {
-  return Number.isInteger(sequence) && sequence > lastSequence && !seen.has(sequence)
+export function taskEventIdentity(event: Pick<PptAgentEvent, 'event_id' | 'sequence'>) {
+  return event.event_id?.trim() || `sequence:${event.sequence}`
+}
+
+export function shouldAcceptTaskEvent(
+  lastSequence: number,
+  seen: ReadonlySet<string | number>,
+  eventOrSequence: number | Pick<PptAgentEvent, 'event_id' | 'sequence'>,
+) {
+  const sequence = typeof eventOrSequence === 'number' ? eventOrSequence : eventOrSequence.sequence
+  const identity = typeof eventOrSequence === 'number'
+    ? eventOrSequence
+    : taskEventIdentity(eventOrSequence)
+  return Number.isInteger(sequence) && sequence > lastSequence && !seen.has(identity)
+}
+
+export function eventBelongsToTask(
+  event: Pick<PptAgentEvent, 'task_id' | 'run_id'>,
+  task: Pick<PptTask, 'task_id' | 'run_id'>,
+) {
+  if (event.run_id && event.task_id !== event.run_id) return false
+  if (task.run_id && task.task_id !== task.run_id) return false
+  return (event.run_id || event.task_id) === (task.run_id || task.task_id)
 }
 
 export function isTerminalTask(task: PptTask | null | undefined) {
@@ -87,6 +124,19 @@ export function isTerminalTask(task: PptTask | null | undefined) {
 
 export function isRunningTask(task: PptTask | null | undefined) {
   return task?.status === 'running'
+}
+
+export function taskSnapshotWatermark(task: Pick<PptTask, 'last_event_sequence'>) {
+  const sequence = Number(task.last_event_sequence)
+  return Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : null
+}
+
+export function hasAppliedTaskSnapshot(
+  lastEventSequence: number,
+  task: Pick<PptTask, 'last_event_sequence'>,
+) {
+  const watermark = taskSnapshotWatermark(task)
+  return watermark !== null && lastEventSequence >= watermark
 }
 
 export function isCancelledTaskEvent(event: Pick<PptAgentEvent, 'type' | 'error'>) {
@@ -104,7 +154,7 @@ export function projectTaskEvent(task: PptTask, event: PptAgentEvent): PptTask {
   const eventStatus = taskStatusForEvent(event)
   const nextSequence = Math.max(task.last_event_sequence ?? 0, event.sequence)
 
-  // A task snapshot can reach us before an already-buffered SSE event. Keep the
+  // A task snapshot can reach us before an already-buffered run event. Keep the
   // authoritative terminal snapshot intact while still advancing the cursor.
   if (isTerminalTask(task) && eventStatus === 'running') {
     return { ...task, last_event_sequence: nextSequence }
@@ -112,6 +162,10 @@ export function projectTaskEvent(task: PptTask, event: PptAgentEvent): PptTask {
 
   return {
     ...task,
+    ...(event.schema_version !== undefined ? { schema_version: event.schema_version } : {}),
+    ...(event.event_id ? { event_id: event.event_id } : {}),
+    ...(event.thread_id ? { thread_id: event.thread_id } : {}),
+    ...(event.run_id ? { run_id: event.run_id } : {}),
     status: eventStatus,
     ...(event.stage ? { stage: event.stage } : {}),
     message: event.message,
@@ -120,12 +174,6 @@ export function projectTaskEvent(task: PptTask, event: PptAgentEvent): PptTask {
     ...(event.error ? { error: event.error } : {}),
     last_event_sequence: nextSequence,
   }
-}
-
-export function synchronizeTaskCursor(currentSequence: number, task: PptTask | null | undefined) {
-  const snapshotSequence = Number(task?.last_event_sequence)
-  if (!Number.isSafeInteger(snapshotSequence) || snapshotSequence <= 0) return Math.max(0, currentSequence)
-  return Math.max(currentSequence, snapshotSequence)
 }
 
 export function collectPagePreviews(events: PptAgentEvent[]): PptPagePreview[] {
@@ -233,6 +281,10 @@ function finiteNumber(value: unknown) {
 function optionalFiniteNumber(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? number : undefined
+}
+
+function normalizedIdentifier(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

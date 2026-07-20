@@ -1,7 +1,10 @@
 package app
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
+	"log/slog"
 
 	"agent-task-platform/apps/api/internal/config"
 	"agent-task-platform/apps/api/internal/modules/agentconfig"
@@ -20,7 +23,8 @@ import (
 )
 
 type container struct {
-	routes router.Dependencies
+	routes  router.Dependencies
+	startup func(context.Context) error
 }
 
 func buildContainer(
@@ -32,6 +36,7 @@ func buildContainer(
 	userRepo := user.NewRepository(db)
 	modelConfigRepo := modelconfig.NewRepository(db)
 	agentConfigRepo := agentconfig.NewRepository(db)
+	pptRunRepo := pptagent.NewRunRepository(db)
 	runtimeClient := pythonruntime.NewClient(grpcConn)
 
 	tokenManager := auth.NewManager(
@@ -52,10 +57,11 @@ func buildContainer(
 	)
 	agentConfigService := agentconfig.NewService(agentConfigRepo, modelConfigRepo)
 	textGenerationService := textgeneration.NewService(modelConfigRepo, runtimeClient)
-	presentationService := pptagent.NewService(
+	presentationService := pptagent.NewPersistentService(
 		modelConfigRepo,
 		agentConfigRepo,
 		runtimeClient,
+		pptRunRepo,
 		cfg.PythonAgent.ArtifactsDir,
 	)
 
@@ -70,6 +76,16 @@ func buildContainer(
 			ProviderCredentials: credential.NewHandler(providerCredentialService),
 			Tokens:              tokenManager,
 			Sessions:            sessionStore,
+		},
+		startup: func(ctx context.Context) error {
+			recovered, err := presentationService.RecoverInterruptedRuns(ctx)
+			if err != nil {
+				return fmt.Errorf("recover interrupted ppt runs: %w", err)
+			}
+			if recovered > 0 {
+				slog.Warn("recovered interrupted ppt runs", "count", recovered)
+			}
+			return nil
 		},
 	}
 }

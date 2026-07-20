@@ -7,14 +7,21 @@ import (
 )
 
 var (
-	ErrInvalidRequest      = errors.New("invalid ppt task request")
-	ErrTaskNotFound        = errors.New("ppt task not found")
-	ErrTaskAlreadyFinished = errors.New("ppt task is already finished")
-	ErrAgentConfigNotFound = errors.New("agent config not found")
-	ErrModelConfigNotFound = errors.New("model config not found")
-	ErrModelConfigInactive = errors.New("model config is inactive")
-	ErrArtifactNotFound    = errors.New("ppt artifact not found")
+	ErrInvalidRequest        = errors.New("invalid ppt task request")
+	ErrTaskNotFound          = errors.New("ppt task not found")
+	ErrTaskNotReady          = errors.New("ppt task worker is not ready")
+	ErrTaskAlreadyFinished   = errors.New("ppt task is already finished")
+	ErrEventCursorAhead      = errors.New("event cursor is ahead of the run")
+	ErrEventCommitUnknown    = errors.New("ppt event commit outcome is unknown")
+	ErrClientRequestConflict = errors.New("client_request_id was already used for a different request")
+	ErrThreadRunConflict     = errors.New("thread already has a running ppt task")
+	ErrAgentConfigNotFound   = errors.New("agent config not found")
+	ErrModelConfigNotFound   = errors.New("model config not found")
+	ErrModelConfigInactive   = errors.New("model config is inactive")
+	ErrArtifactNotFound      = errors.New("ppt artifact not found")
 )
+
+const CurrentSchemaVersion = "1"
 
 type EventType string
 
@@ -26,6 +33,14 @@ const (
 	EventArtifactReady EventType = "ARTIFACT_READY"
 	EventTaskCompleted EventType = "TASK_COMPLETED"
 	EventTaskFailed    EventType = "TASK_FAILED"
+)
+
+type EventChannel string
+
+const (
+	EventChannelLifecycle EventChannel = "lifecycle"
+	EventChannelUpdates   EventChannel = "updates"
+	EventChannelArtifacts EventChannel = "artifacts"
 )
 
 type Stage string
@@ -105,17 +120,22 @@ type FinalResult struct {
 }
 
 type AgentEvent struct {
-	TaskID      string        `json:"task_id"`
-	Sequence    uint64        `json:"sequence"`
-	CreatedAt   time.Time     `json:"created_at"`
-	Type        EventType     `json:"type"`
-	Stage       Stage         `json:"stage"`
-	Message     string        `json:"message"`
-	Progress    *Progress     `json:"progress,omitempty"`
-	Resources   []ResourceRef `json:"resources,omitempty"`
-	Page        *PageDetail   `json:"page,omitempty"`
-	Error       *ErrorDetail  `json:"error,omitempty"`
-	FinalResult *FinalResult  `json:"final_result,omitempty"`
+	SchemaVersion string        `json:"schema_version"`
+	EventID       string        `json:"event_id"`
+	ThreadID      string        `json:"thread_id"`
+	RunID         string        `json:"run_id"`
+	TaskID        string        `json:"task_id"` // Compatibility alias for run_id.
+	Sequence      uint64        `json:"sequence"`
+	CreatedAt     time.Time     `json:"created_at"`
+	Channel       EventChannel  `json:"channel"`
+	Type          EventType     `json:"type"`
+	Stage         Stage         `json:"stage"`
+	Message       string        `json:"message"`
+	Progress      *Progress     `json:"progress,omitempty"`
+	Resources     []ResourceRef `json:"resources,omitempty"`
+	Page          *PageDetail   `json:"page,omitempty"`
+	Error         *ErrorDetail  `json:"error,omitempty"`
+	FinalResult   *FinalResult  `json:"final_result,omitempty"`
 }
 
 func (event AgentEvent) Terminal() bool {
@@ -123,14 +143,20 @@ func (event AgentEvent) Terminal() bool {
 }
 
 type Task struct {
-	TaskID            string       `json:"task_id"`
+	SchemaVersion     string       `json:"schema_version"`
+	EventID           string       `json:"event_id"` // Most recently applied event; empty before the first event.
+	ThreadID          string       `json:"thread_id"`
+	RunID             string       `json:"run_id"`
+	TaskID            string       `json:"task_id"` // Compatibility alias for run_id.
+	ClientRequestID   string       `json:"client_request_id,omitempty"`
+	AgentConfigID     int64        `json:"agent_config_id"`
+	Description       string       `json:"description"`
 	Status            TaskStatus   `json:"status"`
 	Stage             Stage        `json:"stage"`
 	Message           string       `json:"message"`
 	LastEventSequence uint64       `json:"last_event_sequence"`
 	Result            *FinalResult `json:"result,omitempty"`
 	Error             *ErrorDetail `json:"error,omitempty"`
-	EventsURL         string       `json:"events_url"`
 	FileURL           string       `json:"file_url,omitempty"`
 	CreatedAt         time.Time    `json:"created_at"`
 	UpdatedAt         time.Time    `json:"updated_at"`
@@ -140,10 +166,12 @@ type Task struct {
 }
 
 type CreateTaskRequest struct {
-	AgentConfigID int64
-	Description   string
-	Attachments   []InputResource
-	Options       PptOptions
+	ThreadID        string
+	ClientRequestID string
+	AgentConfigID   int64
+	Description     string
+	Attachments     []InputResource
+	Options         PptOptions
 }
 
 type InputResource struct {
@@ -174,7 +202,9 @@ type PptOptions struct {
 }
 
 type RuntimeRequest struct {
-	TaskID      string
+	ThreadID    string
+	RunID       string
+	TaskID      string // Compatibility alias for run_id.
 	Description string
 	Attachments []InputResource
 	Models      []RuntimeModelConfig

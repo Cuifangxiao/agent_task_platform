@@ -12,7 +12,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from core.deck.design import get_template_pack, template_svg_source, visualization_svg_source
-from core.deck.pipeline.llm import invoke_text_with_retries, load_node_prompt
+from core.deck.llm import invoke_text_with_retries, load_node_prompt
 from core.deck.quality.issues import ValidationIssue, dedupe_issues, issues_to_dicts
 from core.deck.quality.svg import validate_svg_page
 from core.deck.rendering.svg import SVGSlideRenderer

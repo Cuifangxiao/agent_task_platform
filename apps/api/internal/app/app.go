@@ -91,6 +91,11 @@ func New(configPath string) (*Application, error) {
 			if len(applied) > 0 {
 				logger.Info("mysql migrations applied", "migrations", applied)
 			}
+			if container.startup != nil {
+				if err := container.startup(ctx); err != nil {
+					return err
+				}
+			}
 			return nil
 		},
 	}, nil

@@ -32,6 +32,12 @@ jwt:
 	if cfg.MySQL.Address() != "127.0.0.1:3306" {
 		t.Fatalf("unexpected mysql address: %s", cfg.MySQL.Address())
 	}
+	if !cfg.MySQL.ParseTime {
+		t.Fatal("mysql parse_time must default to true for durable DATETIME scans")
+	}
+	if cfg.MySQL.Loc != "UTC" {
+		t.Fatalf("mysql location = %q, want UTC", cfg.MySQL.Loc)
+	}
 	if cfg.Redis.Address() != "127.0.0.1:6379" {
 		t.Fatalf("unexpected redis address: %s", cfg.Redis.Address())
 	}

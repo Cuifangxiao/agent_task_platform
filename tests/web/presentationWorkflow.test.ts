@@ -1,18 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { pptTaskArtifactPath, pptTaskEventRequest, pptTaskPath } from '../../apps/web/src/features/presentations/lib/taskRoutes.ts'
 import {
+  pptTaskArtifactPath,
+  pptTaskPath,
+  pptTasksListPath,
+} from '../../apps/web/src/features/presentations/lib/taskRoutes.ts'
+import {
+  eventBelongsToTask,
+  hasAppliedTaskSnapshot,
   isCancelledTaskEvent,
   isRunningTask,
   isTerminalTask,
   projectTaskEvent,
   shouldAcceptTaskEvent,
   stageLabel,
-  synchronizeTaskCursor,
+  taskEventIdentity,
   taskStatusForEvent,
+  taskSnapshotWatermark,
 } from '../../apps/web/src/features/presentations/lib/taskProjection.ts'
 import {
+  createPresentationId,
+  createPresentationSubmissionAttempt,
   validatePresentationDescription,
   validateSourceFiles,
 } from '../../apps/web/src/features/presentations/lib/presentationUtils.ts'
@@ -67,31 +76,86 @@ test('a buffered non-terminal event cannot overwrite an authoritative terminal s
   assert.equal(projected.last_event_sequence, 9)
 })
 
-test('task snapshots advance the reconnect cursor without moving it backwards', () => {
-  const snapshot = { task_id: 'task-1', status: 'running', last_event_sequence: 8 } as PptTask
-  assert.equal(synchronizeTaskCursor(3, snapshot), 8)
-  assert.equal(synchronizeTaskCursor(10, snapshot), 10)
-  assert.equal(synchronizeTaskCursor(3, { task_id: 'task-1', status: 'running' }), 3)
-})
-
-test('replayed SSE sequences are rejected while a newer event advances the cursor', () => {
+test('replayed run-event sequences are rejected while a newer event advances the cursor', () => {
   const seen = new Set([3, 4])
   assert.equal(shouldAcceptTaskEvent(4, seen, 4), false)
   assert.equal(shouldAcceptTaskEvent(4, seen, 3), false)
   assert.equal(shouldAcceptTaskEvent(4, seen, 5), true)
 })
 
-test('SSE reconnect request carries both after and Last-Event-ID', () => {
+test('terminal snapshots only converge after the local event cursor reaches their watermark', () => {
+  const terminal = { task_id: 'run-1', status: 'succeeded', last_event_sequence: 9 } as PptTask
+  assert.equal(taskSnapshotWatermark(terminal), 9)
+  assert.equal(hasAppliedTaskSnapshot(8, terminal), false)
+  assert.equal(hasAppliedTaskSnapshot(9, terminal), true)
+  assert.equal(hasAppliedTaskSnapshot(10, terminal), true)
+  assert.equal(hasAppliedTaskSnapshot(0, { task_id: 'legacy', status: 'succeeded' }), false)
+})
+
+test('event ids deduplicate each run and canonical task/run aliases must agree', () => {
+  const seen = new Set(['event-4'])
+  assert.equal(shouldAcceptTaskEvent(3, seen, { sequence: 4, event_id: 'event-4' }), false)
+  assert.equal(shouldAcceptTaskEvent(3, seen, { sequence: 4, event_id: 'event-5' }), true)
+  assert.equal(taskEventIdentity({ sequence: 5 }), 'sequence:5')
+  assert.equal(
+    eventBelongsToTask(
+      { task_id: 'legacy-task-id', run_id: 'run-1' },
+      { task_id: 'run-1', run_id: 'run-1' },
+    ),
+    false,
+  )
+  assert.equal(
+    eventBelongsToTask(
+      { task_id: 'run-1', run_id: 'run-1' },
+      { task_id: 'run-1', run_id: 'run-1' },
+    ),
+    true,
+  )
+})
+
+test('HTTP task routes cover list, snapshots, and artifacts', () => {
+  assert.equal(pptTasksListPath(), '/ppt/tasks')
+  assert.equal(
+    pptTasksListPath({ threadId: 'thread / 1', limit: 20.8 }),
+    '/ppt/tasks?thread_id=thread+%2F+1&limit=20',
+  )
   assert.equal(pptTaskPath('task/1'), '/ppt/tasks/task%2F1')
-  assert.deepEqual(pptTaskEventRequest('task/1', 7), {
-    path: '/ppt/tasks/task%2F1/events?after=7',
-    headers: { 'Last-Event-ID': '7' },
-  })
-  assert.deepEqual(pptTaskEventRequest('task-1'), {
-    path: '/ppt/tasks/task-1/events',
-    headers: undefined,
-  })
   assert.equal(pptTaskArtifactPath('task-1', 'previews/page 1.png'), '/ppt/tasks/task-1/artifacts/previews/page%201.png')
+})
+
+test('new PPT submissions get RFC 4122 ids even without crypto.randomUUID', () => {
+  const generated = createPresentationId(null)
+  assert.match(generated, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  assert.notEqual(createPresentationId(), createPresentationId())
+})
+
+test('a failed identical create attempt reuses ids while changed input gets fresh ids', () => {
+  let sequence = 0
+  const createId = () => `id-${++sequence}`
+  const input = {
+    agentConfigId: 7,
+    description: '生成一份季度汇报',
+    sourceFiles: [{ name: 'metrics.csv', size: 42, type: 'text/csv', lastModified: 123 }],
+  }
+  const first = createPresentationSubmissionAttempt(input, null, createId)
+  const identicalRetry = createPresentationSubmissionAttempt({
+    ...input,
+    sourceFiles: [{ ...input.sourceFiles[0] }],
+  }, first, createId)
+  assert.equal(identicalRetry, first)
+  assert.deepEqual(
+    { threadId: identicalRetry.threadId, clientRequestId: identicalRetry.clientRequestId },
+    { threadId: 'id-1', clientRequestId: 'id-2' },
+  )
+
+  const changed = createPresentationSubmissionAttempt({
+    ...input,
+    description: '生成一份年度汇报',
+  }, first, createId)
+  assert.deepEqual(
+    { threadId: changed.threadId, clientRequestId: changed.clientRequestId },
+    { threadId: 'id-3', clientRequestId: 'id-4' },
+  )
 })
 
 test('stable pipeline stages have readable labels', () => {

@@ -14,7 +14,7 @@ mysql:
   database: agent_task_platform
   charset: utf8mb4
   parse_time: true
-  loc: Local
+  loc: UTC
 
 redis:
   host: 127.0.0.1

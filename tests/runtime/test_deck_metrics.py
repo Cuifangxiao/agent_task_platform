@@ -1,9 +1,9 @@
 import json
 from types import SimpleNamespace
 
-import core.deck.pipeline as pipeline
+import core.deck.instrumentation as instrumentation
 from core.deck.contract import EventType, PptStage
-from core.deck.pipeline.llm import invoke_json_with_retries
+from core.deck.llm import invoke_json_with_retries
 from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
 
 
@@ -37,7 +37,7 @@ def test_actual_model_tokens_retries_and_fallbacks_are_collected():
 
 def test_instrumented_node_emits_one_typed_completion_event(monkeypatch):
     emitted = []
-    monkeypatch.setattr(pipeline, "get_stream_writer", lambda: emitted.append)
+    monkeypatch.setattr(instrumentation, "get_stream_writer", lambda: emitted.append)
 
     class UsageLLM:
         def invoke(self, _messages):
@@ -47,7 +47,7 @@ def test_instrumented_node_emits_one_typed_completion_event(monkeypatch):
         invoke_json_with_retries(UsageLLM(), system="system", user="user", attempts=1)
         return {"value": 1}
 
-    wrapped = pipeline._instrumented(
+    wrapped = instrumentation.instrument_node(
         "writer",
         node,
         {"__metadata__": {"writer": {"provider": "openai", "model": "gpt-test"}}},

@@ -3,69 +3,276 @@ package pptagent
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
-const subscriberBuffer = 64
+const (
+	subscriberBuffer     = 64
+	defaultTaskListLimit = 20
+	maxTaskListLimit     = 100
+)
 
 type taskStream struct {
 	task        Task
 	events      []AgentEvent
 	subscribers map[chan AgentEvent]struct{}
+	workerAlive bool
 }
 
-// TaskHub is the only task state store used by the MVP pipeline. It keeps a
-// short replay buffer so a browser can connect after POST /tasks returns.
+type idempotencyKey struct {
+	ownerID         int64
+	clientRequestID string
+}
+
+type idempotencyRecord struct {
+	taskID      string
+	fingerprint string
+}
+
+// TaskHub owns process-local worker controls and live WebSocket fan-out. When a
+// RunRepository is configured, MySQL is the durable source of truth and this
+// hub is only a bounded hot cache.
 type TaskHub struct {
-	mu    sync.Mutex
-	tasks map[string]*taskStream
-	ttl   time.Duration
+	mu          sync.Mutex
+	tasks       map[string]*taskStream
+	idempotency map[idempotencyKey]idempotencyRecord
+	ttl         time.Duration
 }
 
 func NewTaskHub(ttl time.Duration) *TaskHub {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	return &TaskHub{tasks: make(map[string]*taskStream), ttl: ttl}
+	return &TaskHub{
+		tasks:       make(map[string]*taskStream),
+		idempotency: make(map[idempotencyKey]idempotencyRecord),
+		ttl:         ttl,
+	}
 }
 
 func (h *TaskHub) Create(taskID string, ownerID int64, now time.Time) (*Task, error) {
+	task, _, err := h.CreateRun(taskID, taskID, "", "", ownerID, now)
+	return task, err
+}
+
+// CreateRun atomically enforces idempotency and the one-active-run-per-thread
+// invariant. The bool result reports whether an existing idempotent run was
+// returned, in which case the caller must not start another runtime worker.
+func (h *TaskHub) CreateRun(runID, threadID, clientRequestID, fingerprint string, ownerID int64, now time.Time) (*Task, bool, error) {
+	return h.createRun(runID, threadID, clientRequestID, fingerprint, "", 0, ownerID, now)
+}
+
+func (h *TaskHub) CreateRunWithDetails(runID, threadID, clientRequestID, fingerprint, description string, agentConfigID, ownerID int64, now time.Time) (*Task, bool, error) {
+	return h.createRun(runID, threadID, clientRequestID, fingerprint, description, agentConfigID, ownerID, now)
+}
+
+func (h *TaskHub) createRun(runID, threadID, clientRequestID, fingerprint, description string, agentConfigID, ownerID int64, now time.Time) (*Task, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pruneLocked(now)
-	if taskID == "" || ownerID <= 0 {
-		return nil, fmt.Errorf("%w: task id and owner are required", ErrInvalidRequest)
+	runID = normalizeTaskID(runID)
+	threadID = strings.TrimSpace(threadID)
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if runID == "" || threadID == "" || ownerID <= 0 {
+		return nil, false, fmt.Errorf("%w: run id, thread id, and owner are required", ErrInvalidRequest)
 	}
-	if _, exists := h.tasks[taskID]; exists {
-		return nil, fmt.Errorf("%w: duplicate task id", ErrInvalidRequest)
+	if clientRequestID != "" {
+		if fingerprint == "" {
+			return nil, false, fmt.Errorf("%w: request fingerprint is required with client_request_id", ErrInvalidRequest)
+		}
+		if existing, err := h.lookupIdempotentLocked(ownerID, clientRequestID, fingerprint); err != nil || existing != nil {
+			return existing, existing != nil, err
+		}
+	}
+	if _, exists := h.tasks[runID]; exists {
+		return nil, false, fmt.Errorf("%w: duplicate run id", ErrInvalidRequest)
+	}
+	for _, candidate := range h.tasks {
+		if candidate.task.ownerID == ownerID && candidate.task.ThreadID == threadID && candidate.workerAlive {
+			return nil, false, fmt.Errorf("%w: thread_id=%s", ErrThreadRunConflict, threadID)
+		}
 	}
 	stream := &taskStream{
 		task: Task{
-			TaskID:    taskID,
-			Status:    TaskRunning,
-			Stage:     StagePreparing,
-			Message:   "PPT task created",
-			EventsURL: "/api/v1/ppt/tasks/" + taskID + "/events",
-			CreatedAt: now,
-			UpdatedAt: now,
-			ownerID:   ownerID,
+			SchemaVersion:   CurrentSchemaVersion,
+			ThreadID:        threadID,
+			RunID:           runID,
+			TaskID:          runID,
+			ClientRequestID: clientRequestID,
+			AgentConfigID:   agentConfigID,
+			Description:     strings.TrimSpace(description),
+			Status:          TaskRunning,
+			Stage:           StagePreparing,
+			Message:         "PPT task created",
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			ownerID:         ownerID,
 		},
 		subscribers: make(map[chan AgentEvent]struct{}),
+		workerAlive: true,
 	}
-	h.tasks[taskID] = stream
-	return cloneTask(&stream.task), nil
+	h.tasks[runID] = stream
+	if clientRequestID != "" {
+		h.idempotency[idempotencyKey{ownerID: ownerID, clientRequestID: clientRequestID}] = idempotencyRecord{
+			taskID:      runID,
+			fingerprint: fingerprint,
+		}
+	}
+	return cloneTask(&stream.task), false, nil
+}
+
+// Register installs a run that has already been committed to the durable
+// repository. It is intentionally separate from CreateRun so a database
+// uniqueness constraint, rather than process-local state, arbitrates
+// concurrent idempotency and same-thread creation.
+func (h *TaskHub) Register(task Task, fingerprint string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now().UTC()
+	h.pruneLocked(now)
+
+	task.RunID = normalizeTaskID(task.RunID)
+	if task.RunID == "" {
+		task.RunID = normalizeTaskID(task.TaskID)
+	}
+	task.TaskID = task.RunID
+	task.ThreadID = strings.TrimSpace(task.ThreadID)
+	task.ClientRequestID = strings.TrimSpace(task.ClientRequestID)
+	if task.RunID == "" || task.ThreadID == "" || task.ownerID <= 0 || task.Status != TaskRunning {
+		return fmt.Errorf("%w: durable run snapshot is invalid", ErrInvalidRequest)
+	}
+	if task.ClientRequestID != "" && strings.TrimSpace(fingerprint) == "" {
+		return fmt.Errorf("%w: request fingerprint is required with client_request_id", ErrInvalidRequest)
+	}
+	if _, exists := h.tasks[task.RunID]; exists {
+		return fmt.Errorf("%w: duplicate run id", ErrInvalidRequest)
+	}
+	for _, candidate := range h.tasks {
+		if candidate.task.ownerID == task.ownerID && candidate.task.ThreadID == task.ThreadID && candidate.workerAlive {
+			return fmt.Errorf("%w: thread_id=%s", ErrThreadRunConflict, task.ThreadID)
+		}
+	}
+
+	task.cancel = nil
+	h.tasks[task.RunID] = &taskStream{
+		task:        task,
+		subscribers: make(map[chan AgentEvent]struct{}),
+		workerAlive: true,
+	}
+	if task.ClientRequestID != "" {
+		h.idempotency[idempotencyKey{ownerID: task.ownerID, clientRequestID: task.ClientRequestID}] = idempotencyRecord{
+			taskID:      task.RunID,
+			fingerprint: fingerprint,
+		}
+	}
+	return nil
+}
+
+// DiscardUnstarted rolls back a local registration when durable creation
+// succeeded but the worker could not be initialized. No accepted event may
+// exist at this point.
+func (h *TaskHub) DiscardUnstarted(taskID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	taskID = normalizeTaskID(taskID)
+	stream, ok := h.tasks[taskID]
+	if !ok || len(stream.events) != 0 {
+		return
+	}
+	h.deleteTaskLocked(taskID)
+}
+
+// Invalidate evicts a run from the process-local hot layer. Durable state is
+// unaffected; callers can reload the run and its event history from the
+// repository on the next request. Any live subscribers are closed so they do
+// not remain attached to a snapshot that can no longer receive events.
+func (h *TaskHub) Invalidate(taskID string) {
+	h.mu.Lock()
+	taskID = normalizeTaskID(taskID)
+	var cancel context.CancelFunc
+	if stream, ok := h.tasks[taskID]; ok {
+		cancel = stream.task.cancel
+	}
+	h.deleteTaskLocked(taskID)
+	h.mu.Unlock()
+	// A non-terminal stream can no longer safely publish or be cancelled after
+	// eviction. Stop its runtime so the worker defer path commits a durable
+	// failure rather than letting an unreachable run continue in the background.
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (h *TaskHub) FindIdempotent(ownerID int64, clientRequestID, fingerprint string) (*Task, error) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" {
+		return nil, nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pruneLocked(time.Now().UTC())
+	return h.lookupIdempotentLocked(ownerID, clientRequestID, fingerprint)
 }
 
 func (h *TaskHub) SetCancel(taskID string, cancel context.CancelFunc) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	stream, ok := h.tasks[taskID]
+	stream, ok := h.tasks[normalizeTaskID(taskID)]
 	if !ok {
 		return ErrTaskNotFound
 	}
+	if stream.task.Status.Terminal() {
+		return ErrTaskAlreadyFinished
+	}
+	if cancel == nil {
+		return fmt.Errorf("%w: cancel function is required", ErrInvalidRequest)
+	}
 	stream.task.cancel = cancel
 	return nil
+}
+
+func (h *TaskHub) CancelFunc(ownerID int64, taskID string) (context.CancelFunc, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	stream, ok := h.tasks[normalizeTaskID(taskID)]
+	if !ok || stream.task.ownerID != ownerID {
+		return nil, ErrTaskNotFound
+	}
+	if stream.task.Status.Terminal() {
+		return nil, ErrTaskAlreadyFinished
+	}
+	if stream.task.cancel == nil {
+		return nil, ErrTaskNotReady
+	}
+	return stream.task.cancel, nil
+}
+
+// WorkerDone releases the per-thread execution guard only after the runtime
+// goroutine has actually stopped. A cancelled run may already be terminal in
+// the API while its Python stream is still unwinding.
+func (h *TaskHub) WorkerDone(taskID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if stream, ok := h.tasks[normalizeTaskID(taskID)]; ok {
+		stream.workerAlive = false
+	}
+}
+
+// WorkerAlive exposes the monotonic local worker guard. It is used only after
+// an authoritative terminal commit to decide whether the service must release
+// the durable active-thread slot itself or the worker defer still owns that
+// responsibility.
+func (h *TaskHub) WorkerAlive(ownerID int64, taskID string) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	stream, ok := h.tasks[normalizeTaskID(taskID)]
+	if !ok || stream.task.ownerID != ownerID {
+		return false, ErrTaskNotFound
+	}
+	return stream.workerAlive, nil
 }
 
 func (h *TaskHub) Get(ownerID int64, taskID string) (*Task, error) {
@@ -78,6 +285,43 @@ func (h *TaskHub) Get(ownerID int64, taskID string) (*Task, error) {
 	return cloneTask(&stream.task), nil
 }
 
+// List returns only the owner's tasks, optionally scoped to a thread, in
+// reverse chronological order. Limits are normalized here as a final safety
+// boundary even when callers have already validated query parameters.
+func (h *TaskHub) List(ownerID int64, threadID string, limit int) ([]*Task, error) {
+	if ownerID <= 0 {
+		return nil, fmt.Errorf("%w: owner is required", ErrInvalidRequest)
+	}
+	if limit <= 0 {
+		limit = defaultTaskListLimit
+	}
+	if limit > maxTaskListLimit {
+		limit = maxTaskListLimit
+	}
+	threadID = strings.TrimSpace(threadID)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pruneLocked(time.Now().UTC())
+	tasks := make([]*Task, 0, len(h.tasks))
+	for _, stream := range h.tasks {
+		if stream.task.ownerID != ownerID || (threadID != "" && stream.task.ThreadID != threadID) {
+			continue
+		}
+		tasks = append(tasks, cloneTask(&stream.task))
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].CreatedAt.Equal(tasks[j].CreatedAt) {
+			return tasks[i].RunID > tasks[j].RunID
+		}
+		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+	})
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	return tasks, nil
+}
+
 func (h *TaskHub) Publish(taskID string, event AgentEvent) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -85,57 +329,57 @@ func (h *TaskHub) Publish(taskID string, event AgentEvent) error {
 }
 
 func (h *TaskHub) publishLocked(taskID string, event AgentEvent) error {
+	taskID = normalizeTaskID(taskID)
 	stream, ok := h.tasks[taskID]
 	if !ok {
 		return ErrTaskNotFound
 	}
-	if stream.task.Status.Terminal() {
-		return ErrTaskAlreadyFinished
+	for _, previous := range stream.events {
+		if event.EventID != "" && previous.EventID == event.EventID {
+			return fmt.Errorf("%w: duplicate event id", ErrInvalidRequest)
+		}
 	}
-	if event.TaskID == "" {
-		event.TaskID = taskID
+	next, canonical, err := reduceTaskEvent(stream.task, event, time.Now().UTC())
+	if err != nil {
+		return err
 	}
-	if event.TaskID != taskID {
-		return fmt.Errorf("%w: event task id does not match", ErrInvalidRequest)
-	}
-	if err := validateAgentEvent(event); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidRequest, err)
-	}
-	if len(stream.events) == 0 && event.Type != EventTaskStarted && event.Type != EventTaskFailed {
-		return fmt.Errorf("%w: first event must start or fail the task", ErrInvalidRequest)
-	}
-	if len(stream.events) > 0 && event.Type == EventTaskStarted {
-		return fmt.Errorf("%w: task started event cannot repeat", ErrInvalidRequest)
-	}
-	expected := stream.task.LastEventSequence + 1
-	if event.Sequence != expected {
-		return fmt.Errorf("%w: event sequence %d, expected %d", ErrInvalidRequest, event.Sequence, expected)
-	}
-	receivedAt := time.Now().UTC()
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = receivedAt
-	}
+	h.commitLocked(stream, next, canonical)
+	return nil
+}
 
+// PublishCommitted mirrors a transaction that has already committed to the
+// durable repository. Subscribers are notified only after that commit.
+func (h *TaskHub) PublishCommitted(task Task, event AgentEvent) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	runID := normalizeTaskID(task.RunID)
+	stream, ok := h.tasks[runID]
+	if !ok {
+		return ErrTaskNotFound
+	}
+	if event.Sequence == stream.task.LastEventSequence && event.EventID == stream.task.EventID {
+		return nil
+	}
+	if task.ownerID != stream.task.ownerID || strings.TrimSpace(task.ThreadID) != stream.task.ThreadID ||
+		event.Sequence != stream.task.LastEventSequence+1 || task.LastEventSequence != event.Sequence ||
+		task.EventID != event.EventID || normalizeTaskID(event.RunID) != runID {
+		return fmt.Errorf("%w: committed event does not extend the local run", ErrInvalidRequest)
+	}
+	for _, previous := range stream.events {
+		if previous.EventID == event.EventID {
+			return fmt.Errorf("%w: duplicate event id", ErrInvalidRequest)
+		}
+	}
+	h.commitLocked(stream, task, event)
+	return nil
+}
+
+func (h *TaskHub) commitLocked(stream *taskStream, task Task, event AgentEvent) {
+	cancel := stream.task.cancel
 	stream.events = append(stream.events, event)
-	stream.task.Stage = event.Stage
-	stream.task.Message = event.Message
-	stream.task.LastEventSequence = event.Sequence
-	stream.task.UpdatedAt = receivedAt
-	switch event.Type {
-	case EventTaskCompleted:
-		stream.task.Status = TaskSucceeded
-		stream.task.Result = cloneFinalResult(event.FinalResult)
-		if event.FinalResult != nil {
-			stream.task.FileURL = event.FinalResult.PPTFile.URL
-		}
-		h.finishLocked(stream, receivedAt)
-	case EventTaskFailed:
-		stream.task.Status = TaskFailed
-		if event.Error != nil && event.Error.Code == "TASK_CANCELLED" {
-			stream.task.Status = TaskCancelled
-		}
-		stream.task.Error = cloneError(event.Error)
-		h.finishLocked(stream, receivedAt)
+	stream.task = task
+	if !task.Status.Terminal() {
+		stream.task.cancel = cancel
 	}
 
 	for subscriber := range stream.subscribers {
@@ -152,7 +396,6 @@ func (h *TaskHub) publishLocked(taskID string, event AgentEvent) error {
 			delete(stream.subscribers, subscriber)
 		}
 	}
-	return nil
 }
 
 func (h *TaskHub) Subscribe(ownerID int64, taskID string, after uint64) (*Subscription, error) {
@@ -161,6 +404,9 @@ func (h *TaskHub) Subscribe(ownerID int64, taskID string, after uint64) (*Subscr
 	stream, ok := h.tasks[taskID]
 	if !ok || stream.task.ownerID != ownerID {
 		return nil, ErrTaskNotFound
+	}
+	if after > stream.task.LastEventSequence {
+		return nil, fmt.Errorf("%w: after=%d last_event_sequence=%d", ErrEventCursorAhead, after, stream.task.LastEventSequence)
 	}
 	replay := make([]AgentEvent, 0, len(stream.events))
 	for _, event := range stream.events {
@@ -223,16 +469,54 @@ func (h *TaskHub) Cancel(ownerID int64, taskID string) (context.CancelFunc, erro
 	return cancel, err
 }
 
-func (h *TaskHub) finishLocked(stream *taskStream, finishedAt time.Time) {
-	stream.task.FinishedAt = &finishedAt
-	stream.task.cancel = nil
-}
-
 func (h *TaskHub) pruneLocked(now time.Time) {
 	for taskID, stream := range h.tasks {
-		if stream.task.FinishedAt != nil && now.Sub(*stream.task.FinishedAt) >= h.ttl {
-			delete(h.tasks, taskID)
+		if stream.task.FinishedAt != nil && !stream.workerAlive && now.Sub(*stream.task.FinishedAt) >= h.ttl {
+			h.deleteTaskLocked(taskID)
 		}
+	}
+}
+
+func (h *TaskHub) deleteTaskLocked(taskID string) {
+	if stream, ok := h.tasks[taskID]; ok {
+		for subscriber := range stream.subscribers {
+			close(subscriber)
+			delete(stream.subscribers, subscriber)
+		}
+		delete(h.tasks, taskID)
+	}
+	for key, record := range h.idempotency {
+		if record.taskID == taskID {
+			delete(h.idempotency, key)
+		}
+	}
+}
+
+func (h *TaskHub) lookupIdempotentLocked(ownerID int64, clientRequestID, fingerprint string) (*Task, error) {
+	key := idempotencyKey{ownerID: ownerID, clientRequestID: clientRequestID}
+	record, ok := h.idempotency[key]
+	if !ok {
+		return nil, nil
+	}
+	if record.fingerprint != fingerprint {
+		return nil, fmt.Errorf("%w: client_request_id=%s", ErrClientRequestConflict, clientRequestID)
+	}
+	stream, ok := h.tasks[record.taskID]
+	if !ok || stream.task.ownerID != ownerID {
+		delete(h.idempotency, key)
+		return nil, nil
+	}
+	return cloneTask(&stream.task), nil
+}
+
+func eventChannelForType(eventType EventType) EventChannel {
+	switch eventType {
+	case EventTaskStarted, EventTaskCompleted, EventTaskFailed:
+		return EventChannelLifecycle
+	case EventArtifactReady:
+		return EventChannelArtifacts
+	default:
+		return EventChannelUpdates
 	}
 }
 

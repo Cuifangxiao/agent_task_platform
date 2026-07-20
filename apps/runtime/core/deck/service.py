@@ -6,7 +6,7 @@ import hashlib
 import logging
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -27,8 +27,8 @@ from core.deck.contract import (
 from core.deck.errors import DeckError
 from core.deck.model_config import build_ppt_llms, describe_model_assignment
 from core.deck.paths import DeckProjectPaths, artifact_dir
-from core.deck.pipeline import build_ppt_graph
 from core.deck.rendering.browser import BrowserSession
+from core.deck.runner import PptGraph
 from core.deck.sources import (
     derive_deck_title,
     materialize_source_images,
@@ -41,7 +41,10 @@ logger = logging.getLogger(__name__)
 
 
 class DeckService:
-    """Run a fresh linear graph for every task."""
+    """Run a fresh, request-scoped PPT agent for every task."""
+
+    def __init__(self, graph_factory: Callable[..., Any] | None = None) -> None:
+        self._graph_factory = graph_factory
 
     def generate_ppt(self, inp: GeneratePptInput) -> Iterator[AgentEvent]:
         task_id = inp.task_id.strip()
@@ -116,10 +119,11 @@ class DeckService:
                 attachment_count,
             )
 
-            graph = build_ppt_graph(llms, artifact_dir(), browser_session)
+            graph_factory = self._graph_factory or PptGraph
+            graph_module = graph_factory(llms, artifact_dir(), browser_session)
             final_state: dict[str, Any] = {}
             ppt_resource: ResourceRef | None = None
-            for mode, data in graph.stream(initial_state, stream_mode=["custom", "values"]):
+            for mode, data in graph_module.stream(initial_state, stream_mode=["custom", "values"]):
                 if mode == "values":
                     if isinstance(data, dict):
                         final_state = data

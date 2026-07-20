@@ -1,23 +1,7 @@
 from core.deck.contract import GeneratePptInput, InputResource
-from core.deck.pipeline import build_ppt_graph
-from core.deck.pipeline.outline import outline_prompt
-from core.deck.pipeline.style import build_style_options, select_style_option
+from core.deck.agents.design.graph import build_style_options, select_style_option
+from core.deck.agents.planning.graph import outline_prompt
 from core.deck.sources import parse_uploaded_files_with_provenance
-
-
-def test_ppt_graph_is_one_linear_run(tmp_path):
-    graph = build_ppt_graph({}, tmp_path)
-    view = graph.get_graph()
-
-    assert {(edge.source, edge.target) for edge in view.edges} == {
-        ("__start__", "brief"),
-        ("brief", "outline"),
-        ("outline", "style"),
-        ("style", "design_lock"),
-        ("design_lock", "write_slides"),
-        ("write_slides", "export"),
-        ("export", "__end__"),
-    }
 
 
 def test_style_builds_only_first_recommendation_and_selects_it(tmp_path):

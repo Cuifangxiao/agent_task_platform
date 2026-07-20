@@ -1,29 +1,85 @@
-"""Slide writer loop, HTML rendering, and preview artifact events."""
+"""Generation graph: write, render, and validate all slides."""
 
 from __future__ import annotations
 
 import copy
 import logging
+from pathlib import Path
 import re
 import time
 from typing import Any
 
 from langgraph.config import get_stream_writer
+from langgraph.graph import END, START, StateGraph
 
 import core.deck.events as events
-from core.deck.pipeline.design_lock import page_contract
-from core.deck.pipeline.helpers import clamp_slide_count, component_from_layout, fallback_slide_title
-from core.deck.pipeline.llm import compose_context_prompt, invoke_json_with_retries, llm_for_node, llm_log_context, load_node_prompt
-from core.deck.pipeline.outline import parse_outline_slides
-from core.deck.pipeline.state import DeckGraphState
+from core.deck.agents.design.graph import page_contract
+from core.deck.helpers import clamp_slide_count, component_from_layout, fallback_slide_title
+from core.deck.instrumentation import instrument_node, run_phase_graph
+from core.deck.agents.planning.graph import parse_outline_slides
+from core.deck.llm import (
+    compose_context_prompt,
+    invoke_json_with_retries,
+    llm_for_node,
+    llm_log_context,
+    load_node_prompt,
+    normalize_llm_registry,
+)
 from core.deck.quality import issues_to_dicts, validate_slide_spec
 from core.deck.rendering.artist import render_svg_artwork
-from core.deck.rendering.browser import BrowserRenderer
+from core.deck.rendering.browser import BrowserRenderer, BrowserSession
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
 from core.deck.spec import COMPONENTS, DeckSpec, SlideSpec, ThemeTokens, default_theme, normalize_slide_spec
+from core.deck.state import DeckGraphState
 
 logger = logging.getLogger(__name__)
+
+
+class Generation:
+    """Slide authoring and rendering phase."""
+
+    def __init__(
+        self,
+        llms: Any,
+        output_dir: Path,
+        browser_session: BrowserSession | None = None,
+        *,
+        html_renderer: HTMLSlideRenderer | None = None,
+        browser_renderer: BrowserRenderer | None = None,
+    ) -> None:
+        self.llm_registry = normalize_llm_registry(llms)
+        self.output_dir = Path(output_dir)
+        self.html_renderer = html_renderer or HTMLSlideRenderer()
+        self.browser_renderer = browser_renderer or BrowserRenderer(
+            self.output_dir,
+            browser_session,
+        )
+        self.graph = self.compile_graph()
+
+    def write_slides(self, state: DeckGraphState) -> dict[str, Any]:
+        return write_and_design_slides(
+            state,
+            self.llm_registry,
+            self.html_renderer,
+            self.browser_renderer,
+        )
+
+    def compile_graph(self):
+        builder = StateGraph(DeckGraphState)
+        builder.add_node(
+            "write_slides",
+            instrument_node("writer", self.write_slides, self.llm_registry),
+        )
+        builder.add_edge(START, "write_slides")
+        builder.add_edge("write_slides", END)
+        return builder.compile()
+
+    def run(self, state: DeckGraphState) -> dict[str, Any]:
+        return run_phase_graph(self.graph, state)
+
+
+# ─────────────────────────────── write-slides node ───────────────────────────
 
 
 def write_and_design_slides(
@@ -560,3 +616,13 @@ def slide_event_payload(slide: dict[str, Any], *, status: str) -> dict[str, Any]
         "speaker_notes": slide.get("notes", ""),
         "status": status,
     }
+
+
+__all__ = [
+    "Generation",
+    "apply_design_contract",
+    "plan_slide_outlines",
+    "relevant_source_context",
+    "split_slide_preserving_content",
+    "write_and_design_slides",
+]

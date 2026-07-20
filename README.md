@@ -10,15 +10,15 @@ Agent Task Platform 是一个面向 AI Agent 工作流的多应用项目。目�
 - Provider 目录、凭据连通性测试、按用户隔离的模型配置，以及文本、多模态、生图三类模型能力分类。
 - Agent 定义与节点级模型绑定；节点可覆盖 temperature 和 max tokens。
 - 文本生成 SSE。
-- PPT 内存任务：Go 调用 Python gRPC 服务端流，Python 连续生成，Go 将统一事件转为 SSE；支持取消和本地产物下载。
-- MySQL 增量迁移；PPT 任务、事件和 checkpoint 不落库，进程中断后重新创建任务。
+- PPT 持久化 Run：Go 调用 Python gRPC 服务端流，规范化事件先写 MySQL，再通过一条 WebSocket 多路推送多个任务；支持游标重放、取消和本地产物下载。
+- MySQL 增量迁移；`ppt_runs` 保存任务快照/幂等/worker guard，`ppt_run_events` 保存完整 canonical 事件。Python checkpoint 尚未实现，执行中的任务遇 API 重启会收口为可重试失败。
 - Vue 3 管理界面和 PPT 生成工作台。
 
 ## 总体架构
 
 ```mermaid
 flowchart LR
-    B["Browser"] -->|"/api/v1 HTTP + SSE"| W["apps/web"]
+    B["Browser"] -->|"/api/v1 HTTP + text SSE + PPT WS"| W["apps/web"]
     W -->|"同源代理 /api"| A["apps/api · Go"]
     A --> M[("MySQL")]
     A --> R[("Redis")]
@@ -31,7 +31,7 @@ flowchart LR
     G["migrations/mysql"] --> A
 ```
 
-浏览器只访问 Go API。Go 负责认证、权限、公开接口、PPT 任务的进程内状态和 SSE；Python Runtime 负责 Provider 调用与 PPT 工作流。PPT 文件由两个进程通过同一目录读写：Runtime 生成，API 在校验任务所有者后下载。
+浏览器只访问 Go API。Go 负责认证、权限、公开接口、PPT Run/Event 的 MySQL 持久化，以及 TaskHub/WebSocket 实时广播；Python Runtime 负责 Provider 调用与 PPT 工作流。文本生成仍使用独立 SSE，PPT 实时链路只使用 WebSocket。PPT 文件由两个进程通过同一目录读写：Runtime 生成，API 根据持久化 owner/result 校验后下载。
 
 ## 目录结构
 
@@ -87,19 +87,21 @@ flowchart LR
 
 ## PPT 生成流程
 
-完整的通信契约、事件、失败语义、目录约束和本地验证方法见 [PPT 生成流水线](docs/PPT_GENERATION_PIPELINE.md)。
+当前通信、持久化、并发和失败语义以 [Agent Run / WebSocket 架构](docs/AGENT_RUN_STREAMING_ARCHITECTURE.md) 为准。
 
 ```text
 POST 创建任务
-  → Go 解析 brief / outline / style / writer / designer 五个模型节点
+  → Go 解析五个模型节点，并在 MySQL 创建 Run/幂等键/同 thread worker guard
   → Python 运行线性本地生成流水线并持续发送 AgentEvent
-  → Go 在内存中更新任务并通过 SSE 广播
-  → Python 写入最终 PPTX，发送 TASK_COMPLETED，结束 gRPC 流
+  → Go 校验事件，在同一事务写 Event + Run 快照，提交后通过 WS 广播
+  → Go 校验最终 PPTX 存在且 size/hash 匹配，再提交 TASK_COMPLETED
+  → worker 退出后释放同 thread guard；终态历史继续保留在 MySQL
 ```
 
 - 使用独立的 `contracts/proto/ppt/ppt_agent.proto` 服务端流协议。
-- 没有 outline/style 人工确认、review/coherence/repair 循环、事件数据库、checkpoint、resume 或版本字段。
-- SSE 晚连接时会重放当前进程内缓存的已有事件，但 API 重启后任务消失。
+- PPT 实时链路只使用一条可复用 WebSocket；每个 run 以独立 sequence 游标订阅和重放。
+- `ppt_runs` 保存快照与 worker 生命周期，`ppt_run_events` 保存完整 canonical 事件；API 重启后历史仍可查询和重放。
+- 没有 outline/style 人工确认、review/coherence/repair、durable queue、Python checkpoint、resume 或多实例 lease/fencing；重启时尚在执行的 run 会收口为 `SERVER_RESTARTED` 可重试失败。
 - 每个任务的产物位于 `apps/runtime/artifacts/decks/{task_id}/`；Go 与 Python 必须共享这个物理目录。
 - Python 只返回任务目录内的相对路径；Go 负责鉴权、路径边界校验和文件下载。
 
@@ -150,7 +152,7 @@ apps/api/config/config.example.yaml -> apps/api/config/config.yaml
 | `app` | `name`, `env` | 服务名；`env: production` 会启用 Gin release mode |
 | `server` | `host`, `port` | HTTP 监听地址，默认 `0.0.0.0:8080` |
 | `mysql` | `host`, `port`, `username`, `password`, `database` | MySQL 连接；`username`、`database` 必填 |
-| `mysql` | `charset`, `parse_time`, `loc` | DSN 参数，通常保持模板值 |
+| `mysql` | `charset`, `parse_time`, `loc` | `parse_time=true`、`loc=UTC` 是持久化 DATETIME 的强制不变量，加载配置时会固定 |
 | `redis` | `host`, `port`, `password`, `db` | 登录会话和 token 状态存储 |
 | `jwt` | `secret`, `issuer` | `secret` 必填，生产环境必须替换模板值 |
 | `jwt` | `access_expire_minutes`, `refresh_expire_hours` | 默认 30 分钟和 168 小时 |
@@ -356,6 +358,6 @@ make proto-python
 
 - 模型 API Key 存在 MySQL 中，HTTP 响应只返回掩码和 `has_api_key`；生产部署应进一步使用数据库/应用层加密与密钥管理。
 - `jwt.secret`、数据库密码和本地 `.env`/`config.yaml` 不应提交。
-- Artifact 下载会校验当前内存任务的所有者，并限制路径始终位于该任务目录，不能仅凭 task ID 或文件名跨用户读取。
+- Artifact 下载会按 MySQL 中的任务所有者授权，并限制路径始终位于该任务目录，不能仅凭 task ID 或文件名跨用户读取。
 - Runtime gRPC 当前使用明文内部连接，应只暴露在可信网络；跨主机部署应在网关/服务网格中提供传输保护。
 - `migrations/mysql/002_seed_admin.sql` 会写入开发用管理员账号；生产使用前应替换或移除默认凭据策略。

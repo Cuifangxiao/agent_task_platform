@@ -1,11 +1,13 @@
-"""Typed state for the uninterrupted PPT graph."""
+"""Typed state contracts shared by deck pipeline nodes and agent graphs."""
 
 from __future__ import annotations
 
 from typing import Any, TypedDict
 
 
-class DeckGraphState(TypedDict, total=False):
+class DeckInputState(TypedDict, total=False):
+    """Request-scoped inputs prepared before the graph starts."""
+
     task_id: str
     # Local rendering/export code uses request_id as its directory key. It is
     # always exactly equal to task_id; no second identifier is generated.
@@ -21,10 +23,20 @@ class DeckGraphState(TypedDict, total=False):
     language: str
     aspect_ratio: str
     template_id: str
+    generation_mode: str
+
+
+class DeckPlanningState(TypedDict, total=False):
+    """Brief and narrative planning outputs."""
+
     brief: dict[str, Any]
     outline_markdown: str
     plan: dict[str, Any]
-    style_options: list[dict[str, Any]]
+
+
+class DeckDesignState(TypedDict, total=False):
+    """Selected visual direction and its executable design contract."""
+
     theme: dict[str, Any]
     image_strategy: str
     art_direction: dict[str, Any]
@@ -34,14 +46,43 @@ class DeckGraphState(TypedDict, total=False):
     asset_manifest: dict[str, Any]
     template_manifest: dict[str, Any]
     design_contract: dict[str, Any]
+
+
+class DeckGenerationState(TypedDict, total=False):
+    """Slide authoring, rendering, and validation results."""
+
     slides: list[dict[str, Any]]
     raw_slides: list[dict[str, Any]]
     final_slides: list[dict[str, Any]]
     deck_spec: dict[str, Any]
     artifacts: list[dict[str, Any]]
     validation_issues: list[dict[str, Any]]
+
+
+class DeckOutputState(TypedDict, total=False):
+    """Final delivery metadata produced by the export stage."""
+
     artifact_path: str
+    export_degraded: bool
     generation_manifest: dict[str, Any]
 
 
-__all__ = ["DeckGraphState"]
+class DeckGraphState(
+    DeckInputState,
+    DeckPlanningState,
+    DeckDesignState,
+    DeckGenerationState,
+    DeckOutputState,
+    total=False,
+):
+    """Complete state shared by the assembled deck graph."""
+
+
+__all__ = [
+    "DeckDesignState",
+    "DeckGenerationState",
+    "DeckGraphState",
+    "DeckInputState",
+    "DeckOutputState",
+    "DeckPlanningState",
+]

@@ -1,11 +1,11 @@
-"""Small deterministic helpers shared by pipeline nodes."""
+"""Small deterministic helpers shared by concrete agent graphs."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import core.deck.events as events
-from core.deck.pipeline.state import DeckGraphState
+from core.deck.state import DeckGraphState
 
 
 def emit_agent(writer: Any, stage: str, agent: str, message: str) -> None:

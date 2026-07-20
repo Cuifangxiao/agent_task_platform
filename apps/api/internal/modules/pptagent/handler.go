@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"agent-task-platform/apps/api/internal/shared/actor"
 	"agent-task-platform/apps/api/internal/transport/http/httpctx"
@@ -29,7 +27,6 @@ const (
 	maxTotalAttachmentBytes = 100 << 20
 	maxMultipartBytes       = maxTotalAttachmentBytes + (1 << 20)
 	maxJSONBodyBytes        = 64 << 10
-	sseHeartbeatInterval    = 15 * time.Second
 )
 
 var (
@@ -40,6 +37,7 @@ var (
 type taskService interface {
 	CreateTask(context.Context, actor.User, CreateTaskRequest) (*Task, error)
 	GetTask(context.Context, int64, string) (*Task, error)
+	ListTasks(context.Context, int64, string, int) ([]*Task, error)
 	SubscribeTask(context.Context, int64, string, uint64) (*Subscription, error)
 	CancelTask(context.Context, int64, string) (*Task, error)
 	OpenArtifact(context.Context, int64, string, string) (*os.File, error)
@@ -86,61 +84,23 @@ func (h *Handler) GetTask(c *gin.Context) {
 	response.OK(c, task)
 }
 
-func (h *Handler) SubscribeTask(c *gin.Context) {
+func (h *Handler) ListTasks(c *gin.Context) {
 	claims, ok := httpctx.Claims(c)
 	if !ok {
 		response.Internal(c, "missing auth claims")
 		return
 	}
-	after := parseSequence(c.GetHeader("Last-Event-ID"))
-	if queryAfter := parseSequence(c.Query("after")); queryAfter > after {
-		after = queryAfter
+	limit, err := parseTaskListLimit(c.Query("limit"))
+	if err != nil {
+		response.BadRequest(c, "invalid request", err)
+		return
 	}
-	subscription, err := h.service.SubscribeTask(c.Request.Context(), claims.UserID, c.Param("task_id"), after)
+	tasks, err := h.service.ListTasks(c.Request.Context(), claims.UserID, c.Query("thread_id"), limit)
 	if err != nil {
 		h.respondError(c, err)
 		return
 	}
-	defer subscription.Close()
-
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-	c.Writer.Flush()
-	for _, event := range subscription.Replay {
-		if event.Sequence <= after {
-			continue
-		}
-		if !writeSSE(c, event) || event.Terminal() {
-			return
-		}
-		after = event.Sequence
-	}
-
-	heartbeat := time.NewTicker(sseHeartbeatInterval)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case <-c.Request.Context().Done():
-			return
-		case event, open := <-subscription.Events:
-			if !open {
-				return
-			}
-			if event.Sequence <= after {
-				continue
-			}
-			if !writeSSE(c, event) || event.Terminal() {
-				return
-			}
-			after = event.Sequence
-		case <-heartbeat.C:
-			_, _ = fmt.Fprint(c.Writer, ": heartbeat\n\n")
-			c.Writer.Flush()
-		}
-	}
+	response.OK(c, tasks)
 }
 
 func (h *Handler) CancelTask(c *gin.Context) {
@@ -206,37 +166,28 @@ func serveArtifact(c *gin.Context, file *os.File, downloadName string, attachmen
 	http.ServeContent(c.Writer, c.Request, downloadName, info.ModTime(), file)
 }
 
-func writeSSE(c *gin.Context, event AgentEvent) bool {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return false
-	}
-	eventName := strings.ToLower(string(event.Type))
-	if eventName == "" {
-		eventName = "message"
-	}
-	_, err = fmt.Fprintf(c.Writer, "id: %d\nevent: %s\ndata: %s\n\n", event.Sequence, eventName, data)
-	if err != nil {
-		return false
-	}
-	c.Writer.Flush()
-	return true
-}
-
 func bindCreateTask(c *gin.Context) (CreateTaskRequest, error) {
 	if strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data") {
 		return bindMultipartTask(c)
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBodyBytes)
 	var body struct {
-		AgentConfigID int64      `json:"agent_config_id"`
-		Description   string     `json:"description"`
-		Options       PptOptions `json:"options"`
+		ThreadID        string     `json:"thread_id"`
+		ClientRequestID string     `json:"client_request_id"`
+		AgentConfigID   int64      `json:"agent_config_id"`
+		Description     string     `json:"description"`
+		Options         PptOptions `json:"options"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		return CreateTaskRequest{}, err
 	}
-	return CreateTaskRequest{AgentConfigID: body.AgentConfigID, Description: body.Description, Options: body.Options}, nil
+	return CreateTaskRequest{
+		ThreadID:        body.ThreadID,
+		ClientRequestID: body.ClientRequestID,
+		AgentConfigID:   body.AgentConfigID,
+		Description:     body.Description,
+		Options:         body.Options,
+	}, nil
 }
 
 func bindMultipartTask(c *gin.Context) (CreateTaskRequest, error) {
@@ -260,9 +211,11 @@ func bindMultipartTask(c *gin.Context) (CreateTaskRequest, error) {
 		return CreateTaskRequest{}, err
 	}
 	return CreateTaskRequest{
-		AgentConfigID: agentConfigID,
-		Description:   c.PostForm("description"),
-		Attachments:   attachments,
+		ThreadID:        c.PostForm("thread_id"),
+		ClientRequestID: c.PostForm("client_request_id"),
+		AgentConfigID:   agentConfigID,
+		Description:     c.PostForm("description"),
+		Attachments:     attachments,
 		Options: PptOptions{
 			Language:           c.PostForm("language"),
 			ExpectedSlideCount: expectedSlideCount,
@@ -368,12 +321,15 @@ func parseOptionalUint32(raw string) (uint32, error) {
 	return uint32(value), nil
 }
 
-func parseSequence(raw string) uint64 {
-	value, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
-	if err != nil {
-		return 0
+func parseTaskListLimit(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return defaultTaskListLimit, nil
 	}
-	return value
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 || value > maxTaskListLimit {
+		return 0, fmt.Errorf("limit must be between 1 and %d", maxTaskListLimit)
+	}
+	return value, nil
 }
 
 func respondCreateError(c *gin.Context, err error) {
@@ -394,6 +350,12 @@ func (h *Handler) respondError(c *gin.Context, err error) {
 		response.BadRequest(c, err.Error(), nil)
 	case errors.Is(err, ErrTaskNotFound), errors.Is(err, ErrAgentConfigNotFound), errors.Is(err, ErrModelConfigNotFound), errors.Is(err, ErrArtifactNotFound):
 		response.NotFound(c, err.Error())
+	case errors.Is(err, ErrClientRequestConflict):
+		response.ConflictCode(c, "client_request_conflict", err.Error())
+	case errors.Is(err, ErrThreadRunConflict):
+		response.ConflictCode(c, "thread_run_conflict", err.Error())
+	case errors.Is(err, ErrTaskNotReady):
+		response.ConflictCode(c, "run_not_ready", err.Error())
 	case errors.Is(err, ErrTaskAlreadyFinished):
 		response.Conflict(c, err.Error())
 	default:

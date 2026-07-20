@@ -93,10 +93,20 @@ func registerV1(engine *gin.Engine, deps Dependencies) {
 
 	protected.POST("/text-generations", deps.TextGeneration.StreamText)
 
+	// Browser WebSockets authenticate through Sec-WebSocket-Protocol, so this
+	// route must translate that credential before entering the regular Auth
+	// middleware instead of inheriting the protected group directly.
+	v1.GET(
+		"/ppt/ws",
+		middleware.WebSocketSubprotocolAuth(),
+		middleware.Auth(deps.Tokens, deps.Sessions),
+		deps.Presentations.WebSocket,
+	)
+
 	ppt := protected.Group("/ppt")
 	ppt.POST("/tasks", deps.Presentations.CreateTask)
+	ppt.GET("/tasks", deps.Presentations.ListTasks)
 	ppt.GET("/tasks/:task_id", deps.Presentations.GetTask)
-	ppt.GET("/tasks/:task_id/events", deps.Presentations.SubscribeTask)
 	ppt.POST("/tasks/:task_id/cancel", deps.Presentations.CancelTask)
 	ppt.GET("/tasks/:task_id/file", deps.Presentations.DownloadFile)
 	ppt.GET("/tasks/:task_id/artifacts/*asset_path", deps.Presentations.DownloadArtifact)

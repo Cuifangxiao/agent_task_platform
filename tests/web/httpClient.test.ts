@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { createPresentationApi, toTaskFormData } from '../../apps/web/src/features/presentations/api.ts'
 import { ApiError, createHttpClient, toApiUrl } from '../../apps/web/src/shared/api/httpClient.ts'
+import type { SessionState } from '../../apps/web/src/types.ts'
 
-function client() {
+function client(authenticated = false) {
+  const session: SessionState | null = authenticated
+    ? {
+        access_token: 'test-access-token',
+        refresh_token: 'test-refresh-token',
+        token_type: 'Bearer',
+        session_id: 'test-session',
+        device: 'test',
+        access_expires_at: '',
+        refresh_expires_at: '',
+      }
+    : null
   return createHttpClient({
-    getSession: () => null,
+    getSession: () => session,
     setSession: () => undefined,
     onUnauthorized: () => undefined,
     onLog: () => undefined,
@@ -52,7 +65,7 @@ test('structured API errors preserve code, details, request id, and status', asy
   })
 })
 
-test('SSE and downloads remain raw response channels', async (context) => {
+test('text SSE and downloads remain raw response channels', async (context) => {
   const responses = [
     new Response('event: progress\ndata: {"step":1}\n\n', {
       status: 200,
@@ -65,7 +78,7 @@ test('SSE and downloads remain raw response channels', async (context) => {
   ]
   context.mock.method(globalThis, 'fetch', async () => responses.shift() as Response)
 
-  const stream = await client().openStream('/ppt/tasks/task-1/events')
+  const stream = await client().openStream('/text-generations', { method: 'POST' })
   assert.equal(await new Response(stream).text(), 'event: progress\ndata: {"step":1}\n\n')
 
   const download = await client().download('/ppt/tasks/task-1/file')
@@ -91,4 +104,40 @@ test('canonical PPT task cancellation uses POST and unwraps the response', async
   )
   assert.equal(requestedPath, '/api/v1/ppt/tasks/task-42/cancel')
   assert.equal(requestedMethod, 'POST')
+})
+
+test('presentation API lists tasks with filters and submits run correlation ids', async (context) => {
+  const requestedUrls: string[] = []
+  const requestedBodies: FormData[] = []
+  context.mock.method(globalThis, 'fetch', async (input, init) => {
+    requestedUrls.push(String(input))
+    if (init?.body instanceof FormData) requestedBodies.push(init.body)
+    const data = init?.method === 'POST'
+      ? { task_id: 'task-1', status: 'running' }
+      : []
+    return new Response(JSON.stringify({ data, meta: { request_id: 'request-ppt' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  })
+
+  const api = createPresentationApi(client(true))
+  assert.deepEqual(await api.listTasks?.({ threadId: 'thread / 1', limit: 20 }), [])
+  assert.equal(requestedUrls[0], '/api/v1/ppt/tasks?thread_id=thread+%2F+1&limit=20')
+
+  const payload = {
+    agent_config_id: 7,
+    description: '并行生成一份 PPT',
+    thread_id: 'thread-1',
+    client_request_id: 'request-1',
+  }
+  await api.createTask(payload)
+  assert.equal(requestedUrls[1], '/api/v1/ppt/tasks')
+  assert.equal(requestedBodies.length, 1)
+
+  const form = requestedBodies[0] ?? toTaskFormData(payload)
+  assert.equal(form.get('agent_config_id'), '7')
+  assert.equal(form.get('description'), '并行生成一份 PPT')
+  assert.equal(form.get('thread_id'), 'thread-1')
+  assert.equal(form.get('client_request_id'), 'request-1')
 })

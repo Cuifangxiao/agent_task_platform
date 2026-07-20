@@ -26,7 +26,11 @@ apps/runtime/
 │   └── ppt_handler.py       #   PPT AgentEvent proto <-> core
 ├── core/                    # 领域内核: 零 proto/grpc 依赖, 可独立单测
 │   ├── provider/            #   contract.py(Input/Output DTO) + service.py(业务)
-│   ├── deck/                #   PPT contract、线性 pipeline、本地渲染与导出
+│   ├── deck/                #   PPT contract、LangGraph agents、本地渲染与导出
+│   │   ├── agents/          #   四个 phase；节点实现和子图组装都在各自 graph.py
+│   │   ├── runner.py        #   PptGraph 主图，顺序组装四个 phase
+│   │   ├── llm.py           #   模型调用、prompt 与结构化输出工具
+│   │   └── state.py         #   主图与子图共享的状态 schema
 │   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
 │   ├── llm/                 #   模型接入层: 各 provider 客户端(统一 BaseLLMClient 接口)
 │   ├── rag/  memory/  tools/
@@ -67,9 +71,21 @@ cp .env.example .env                 # 按需填密钥
 
 ## PPT 生成运行依赖
 
-PPT 使用独立的 gRPC 服务端流：Go 发送一次 `GeneratePpt` 请求，Runtime 按
-`brief -> outline -> style -> design_lock -> write_slides -> export` 顺序执行本地生成，并持续返回
-`AgentEvent`。每个请求从头执行单向流水线，期间不暂停等待人工输入；运行状态只通过事件流返回。
+PPT 使用独立的 gRPC 服务端流。Go 发送一次 `GeneratePpt` 请求，Runtime 为该请求创建
+`core/deck/runner.py` 中的 `PptGraph`，持续返回 `AgentEvent`。主图按 phase 组装：
+
+- `Planning`：`brief -> outline`；
+- `Design`：`style -> design_lock`；
+- `Generation`：`write_slides`；
+- `Postprocessor`：`export`。
+
+每个 phase 都采用同一套直接结构：`__init__` 初始化依赖并设置 `self.graph`，节点方法和本 phase
+专属逻辑位于当前目录的 `graph.py`，`compile_graph()` 用原生 `StateGraph.add_node/add_edge` 组图，
+`run()` 执行子图；跨 phase 的埋点、模型调用和小型确定性 helper 位于 `deck/` 顶层公共模块。`PptGraph` 只负责
+`planning_phase -> design_phase -> generation_phase -> postprocessor_phase` 的顶层顺序和子图事件
+转发。扩展时新增一个同形态的 phase，并在 `runner.py` 中实例化和连接即可，无额外 component DSL。
+已有 phase 也可以通过 `PptGraph` 的同名构造参数直接替换。
+每个请求 fresh compile、从头单向执行，无 checkpointer、人工 review 或 resume。
 
 模型节点固定为 `brief`、`outline`、`style`、`writer`、`designer`。模型配置来自 Go 请求，
 Runtime 不读取业务数据库。生成过程中产生的 SVG、HTML、预览和最终 PPTX 都写入

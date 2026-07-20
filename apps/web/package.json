@@ -8,7 +8,7 @@
     "typecheck": "vue-tsc -b",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test --experimental-strip-types ../../tests/web/presentationWorkflow.test.ts ../../tests/web/presentationProjection.test.ts ../../tests/web/httpClient.test.ts ../../tests/web/modelPresentation.test.ts",
+    "test": "node --test --experimental-strip-types ../../tests/web/presentationWorkflow.test.ts ../../tests/web/presentationProjection.test.ts ../../tests/web/presentationWebSocket.test.ts ../../tests/web/httpClient.test.ts ../../tests/web/modelPresentation.test.ts",
     "test:presentation": "node --test --experimental-strip-types ../../tests/web/presentationWorkflow.test.ts"
   },
   "dependencies": {

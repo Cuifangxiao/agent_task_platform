@@ -1,15 +1,18 @@
 export const PPT_TASKS_PATH = '/ppt/tasks'
 
-export function pptTaskPath(taskId: string) {
-  return `${PPT_TASKS_PATH}/${encodeURIComponent(taskId)}`
+export function pptTasksListPath(options: { threadId?: string; limit?: number } = {}) {
+  const query = new URLSearchParams()
+  const threadId = options.threadId?.trim()
+  if (threadId) query.set('thread_id', threadId)
+  if (Number.isFinite(options.limit) && Number(options.limit) > 0) {
+    query.set('limit', String(Math.floor(Number(options.limit))))
+  }
+  const serialized = query.toString()
+  return serialized ? `${PPT_TASKS_PATH}?${serialized}` : PPT_TASKS_PATH
 }
 
-export function pptTaskEventRequest(taskId: string, after = 0) {
-  const cursor = Number.isFinite(after) && after > 0 ? Math.floor(after) : 0
-  return {
-    path: `${pptTaskPath(taskId)}/events${cursor ? `?after=${cursor}` : ''}`,
-    headers: cursor ? { 'Last-Event-ID': String(cursor) } : undefined,
-  }
+export function pptTaskPath(taskId: string) {
+  return `${PPT_TASKS_PATH}/${encodeURIComponent(taskId)}`
 }
 
 export function pptTaskArtifactPath(taskId: string, relativePath: string) {

@@ -28,10 +28,18 @@ const activePage = ref(previewPage ?? 'dashboard')
 const saving = ref(false)
 const designPreviewPresentationApi: PresentationApi = {
   createTask: async () => { throw new Error('设计预览中不能创建真实任务。') },
+  listTasks: async () => [],
   getTask: async () => { throw new Error('设计预览中没有真实任务。') },
-  subscribeTask: async () => {},
   cancelTask: async () => { throw new Error('设计预览中不能取消任务。') },
   downloadTaskFile: async () => { throw new Error('设计预览中没有可下载的文件。') },
+  createRealtimeClient: ({ onConnectionState }) => ({
+    connect: () => onConnectionState('closed'),
+    subscribe: async () => {},
+    unsubscribe: async () => {},
+    cancel: async () => {},
+    ping: async () => {},
+    close: () => {},
+  }),
 }
 
 interface FormActionCallbacks {

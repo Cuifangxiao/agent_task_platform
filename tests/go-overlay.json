@@ -6,10 +6,14 @@
     "apps/api/internal/modules/modelconfig/service_test.go": "tests/api/internal/modules/modelconfig/service_test.go",
     "apps/api/internal/modules/pptagent/handler_test.go": "tests/api/internal/modules/pptagent/handler_test.go",
     "apps/api/internal/modules/pptagent/hub_test.go": "tests/api/internal/modules/pptagent/hub_test.go",
+    "apps/api/internal/modules/pptagent/repository_test.go": "tests/api/internal/modules/pptagent/repository_test.go",
+    "apps/api/internal/modules/pptagent/service_persistence_test.go": "tests/api/internal/modules/pptagent/service_persistence_test.go",
     "apps/api/internal/modules/pptagent/service_test.go": "tests/api/internal/modules/pptagent/service_test.go",
+    "apps/api/internal/modules/pptagent/websocket_test.go": "tests/api/internal/modules/pptagent/websocket_test.go",
     "apps/api/internal/modules/textgeneration/service_test.go": "tests/api/internal/modules/textgeneration/service_test.go",
     "apps/api/internal/platform/mysql/migrations_test.go": "tests/api/internal/platform/mysql/migrations_test.go",
     "apps/api/internal/shared/validation/url_test.go": "tests/api/internal/shared/validation/url_test.go",
+    "apps/api/internal/transport/http/middleware/websocket_auth_test.go": "tests/api/internal/transport/http/middleware/websocket_auth_test.go",
     "apps/api/internal/transport/http/router/router_test.go": "tests/api/internal/transport/http/router/router_test.go"
   }
 }

@@ -26,7 +26,8 @@ func TestCreateTaskUsesIndependentContextAndCompletes(t *testing.T) {
 		t.TempDir(),
 		NewTaskHub(time.Hour),
 	)
-	requestContext, cancelRequest := context.WithCancel(context.Background())
+	requestContext := context.WithValue(context.Background(), requestContextKey("trace_id"), "trace-123")
+	requestContext, cancelRequest := context.WithCancel(requestContext)
 	task, err := service.CreateTask(requestContext, actor.User{UserID: 7}, CreateTaskRequest{Description: "Build an architecture deck"})
 	if err != nil {
 		t.Fatalf("CreateTask returned error: %v", err)
@@ -34,10 +35,22 @@ func TestCreateTaskUsesIndependentContextAndCompletes(t *testing.T) {
 	cancelRequest()
 
 	runtimeContext := <-runtime.contexts
+	if value := runtimeContext.Value(requestContextKey("trace_id")); value != "trace-123" {
+		t.Fatalf("task context lost request value: %#v", value)
+	}
 	select {
 	case <-runtimeContext.Done():
 		t.Fatal("task context was cancelled with the POST request")
 	case <-time.After(20 * time.Millisecond):
+	}
+	if task.SchemaVersion != CurrentSchemaVersion || task.EventID != "" || task.ThreadID == "" || task.RunID == "" || task.TaskID != task.RunID {
+		t.Fatalf("unexpected task envelope: %#v", task)
+	}
+	if task.Description != "Build an architecture deck" || task.AgentConfigID != 3 {
+		t.Fatalf("request metadata was not retained: %#v", task)
+	}
+	if runtime.request.ThreadID != task.ThreadID || runtime.request.RunID != task.RunID || runtime.request.TaskID != task.RunID {
+		t.Fatalf("runtime request did not receive thread/run aliases: %#v", runtime.request)
 	}
 	close(release)
 
@@ -48,6 +61,54 @@ func TestCreateTaskUsesIndependentContextAndCompletes(t *testing.T) {
 	if len(runtime.request.Models) != len(pptModelNodes) {
 		t.Fatalf("runtime received %d models, want %d", len(runtime.request.Models), len(pptModelNodes))
 	}
+}
+
+func TestCreateTaskIsIdempotentAndRejectsConflictingReuse(t *testing.T) {
+	release := make(chan struct{})
+	runtime := &gatedRuntime{release: release, contexts: make(chan context.Context, 2)}
+	service := NewService(
+		&stubModelRepo{config: activeModelConfig()},
+		&stubAgentRepo{config: activeAgentConfig()},
+		runtime,
+		t.TempDir(),
+		NewTaskHub(time.Hour),
+	)
+	request := CreateTaskRequest{
+		ThreadID:        "thread-1",
+		ClientRequestID: "request-1",
+		Description:     "Build an architecture deck",
+	}
+	first, err := service.CreateTask(context.Background(), actor.User{UserID: 7}, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-runtime.contexts
+	second, err := service.CreateTask(context.Background(), actor.User{UserID: 7}, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.RunID != first.RunID || second.ThreadID != first.ThreadID {
+		t.Fatalf("idempotent retry created a different task: first=%#v second=%#v", first, second)
+	}
+	select {
+	case <-runtime.contexts:
+		t.Fatal("idempotent retry started a second runtime worker")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	conflictingRequest := request
+	conflictingRequest.Description = "Build a different deck"
+	if _, err := service.CreateTask(context.Background(), actor.User{UserID: 7}, conflictingRequest); !errors.Is(err, ErrClientRequestConflict) {
+		t.Fatalf("conflicting idempotency reuse error = %v", err)
+	}
+	sameThreadRequest := request
+	sameThreadRequest.ClientRequestID = "request-2"
+	if _, err := service.CreateTask(context.Background(), actor.User{UserID: 7}, sameThreadRequest); !errors.Is(err, ErrThreadRunConflict) {
+		t.Fatalf("same-thread active run error = %v", err)
+	}
+
+	close(release)
+	waitForTask(t, service, 7, first.RunID, TaskSucceeded)
 }
 
 func TestRunTaskTurnsUnexpectedEOFIntoTerminalFailure(t *testing.T) {
@@ -237,6 +298,8 @@ type gatedRuntime struct {
 	release  <-chan struct{}
 	request  RuntimeRequest
 }
+
+type requestContextKey string
 
 func (runtime *gatedRuntime) GeneratePpt(ctx context.Context, request RuntimeRequest) (EventStream, error) {
 	if runtime.contexts == nil {
