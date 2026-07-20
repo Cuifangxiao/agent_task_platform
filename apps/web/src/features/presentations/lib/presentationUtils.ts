@@ -1,7 +1,7 @@
 const SUPPORTED_SOURCE_FILE = /\.(pdf|txt|md|markdown|csv|json|ya?ml|docx|png|jpe?g|webp)$/i
 const MAX_SOURCE_FILE_BYTES = 20 * 1024 * 1024
 const MAX_TOTAL_SOURCE_BYTES = 100 * 1024 * 1024
-const MAX_DESCRIPTION_CHARACTERS = 5_000
+export const MAX_DESCRIPTION_CHARACTERS = 5_000
 
 export interface PresentationSubmissionIdentity {
   agentConfigId: string | number

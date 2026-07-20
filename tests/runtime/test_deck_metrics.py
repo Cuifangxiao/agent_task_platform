@@ -1,8 +1,8 @@
 import json
+import logging
 from types import SimpleNamespace
 
 import core.deck.instrumentation as instrumentation
-from core.deck.contract import EventType, PptStage
 from core.deck.llm import invoke_json_with_retries
 from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
 
@@ -35,9 +35,12 @@ def test_actual_model_tokens_retries_and_fallbacks_are_collected():
     }
 
 
-def test_instrumented_node_emits_one_typed_completion_event(monkeypatch):
-    emitted = []
-    monkeypatch.setattr(instrumentation, "get_stream_writer", lambda: emitted.append)
+def test_instrumented_node_logs_metrics_without_emitting_a_completion_event(monkeypatch, caplog):
+    def fail_if_stream_writer_is_requested():
+        raise AssertionError("instrument_node must not emit public events")
+
+    monkeypatch.setattr(instrumentation, "get_stream_writer", fail_if_stream_writer_is_requested)
+    caplog.set_level(logging.INFO, logger=instrumentation.__name__)
 
     class UsageLLM:
         def invoke(self, _messages):
@@ -54,7 +57,9 @@ def test_instrumented_node_emits_one_typed_completion_event(monkeypatch):
     )
 
     assert wrapped({"task_id": "task-1"}) == {"value": 1}
-    assert len(emitted) == 1
-    assert emitted[0].type is EventType.STEP_COMPLETED
-    assert emitted[0].stage is PptStage.GENERATING_CONTENT
-    assert emitted[0].message == "writer completed"
+    assert "event=ppt_step_end" in caplog.text
+    assert "stage=writer" in caplog.text
+    assert "model_call_count=1" in caplog.text
+    assert "token_usage=17" in caplog.text
+    assert "retry_count=0" in caplog.text
+    assert "fallback_count=0" in caplog.text

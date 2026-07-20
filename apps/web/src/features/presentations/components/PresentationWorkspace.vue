@@ -1,6 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Download, FileOutput, Loader2, Presentation, Square, Wifi } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import {
+  Download,
+  FilePlus2,
+  Loader2,
+  MessageSquarePlus,
+  MessagesSquare,
+  Presentation,
+  Square,
+  Wifi,
+} from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
 import type { AgentConfig } from '@/types'
@@ -14,6 +23,7 @@ import {
   isCancelledTaskEvent,
   isRunningTask,
   isTerminalTask,
+  overallTaskProgress,
   projectTaskEvent,
   resolveResourceUrl,
   shouldAcceptTaskEvent,
@@ -25,6 +35,7 @@ import {
 import {
   createPresentationSubmissionAttempt,
   formatDateTime,
+  MAX_DESCRIPTION_CHARACTERS,
   validatePresentationDescription,
   validateSourceFiles,
 } from '../lib/presentationUtils'
@@ -32,14 +43,15 @@ import type { PresentationSubmissionAttempt } from '../lib/presentationUtils'
 import type { PptAgentEvent, PptCreateTaskPayload, PptTask, PreviewLightbox } from '../types'
 import type { PresentationWebSocketClient, PresentationWebSocketConnectionState } from '../websocket'
 import PagePreviewGrid from './PagePreviewGrid.vue'
+import PresentationConversation from './PresentationConversation.vue'
 import PresentationComposer from './PresentationComposer.vue'
 import PresentationPreviewDialog from './PresentationPreviewDialog.vue'
-import TaskEventTimeline from './TaskEventTimeline.vue'
 
 interface RunViewState {
   task: PptTask
   events: PptAgentEvent[]
   lastEventSequence: number
+  projectedEventSequence: number
   error: string
   connectionState: string
   cancelling: boolean
@@ -57,6 +69,11 @@ interface RunRuntimeState {
   historyHydrating: boolean
 }
 
+interface ComposerDraft {
+  text: string
+  files: File[]
+}
+
 const props = defineProps<{
   configs: AgentConfig[]
   api: PresentationApi
@@ -69,6 +86,8 @@ const selectedTaskId = ref('')
 const taskOrder = ref<string[]>([])
 const runs = reactive<Record<string, RunViewState>>({})
 const runtimeByTaskId = new Map<string, RunRuntimeState>()
+const composerDrafts = new Map<string, ComposerDraft>()
+const NEW_CONVERSATION_DRAFT_KEY = '__new_conversation__'
 let realtimeClient: PresentationWebSocketClient | null = null
 let realtimeState: PresentationWebSocketConnectionState = 'closed'
 let failedCreateAttempt: PresentationSubmissionAttempt | null = null
@@ -101,6 +120,7 @@ onBeforeUnmount(() => {
   realtimeClient?.close()
   realtimeClient = null
   for (const taskId of [...runtimeByTaskId.keys()]) clearRunResources(taskId)
+  composerDrafts.clear()
 })
 
 const selectedConfig = computed(() =>
@@ -117,8 +137,17 @@ const canSubmit = computed(() => Boolean(selectedConfig.value && composer.text.t
 const previews = computed(() => collectPagePreviews(events.value))
 const latestEvent = computed(() => events.value[events.value.length - 1] ?? null)
 const currentStageLabel = computed(() => stageLabel(latestEvent.value?.stage ?? task.value?.stage))
-const selectedProgressPercent = computed(() => progressPercent(selectedRun.value))
+const selectedProgressPercent = computed(() => overallTaskProgress(task.value, events.value))
 const activeTaskCount = computed(() => trackedRuns.value.filter((run) => isRunningTask(run.task)).length)
+const isRevisionComposer = computed(() => Boolean(selectedRun.value))
+const composerTitle = computed(() => isRevisionComposer.value ? '复制当前需求创建新会话' : '开始一个新的 PPT 会话')
+const composerHelper = computed(() => isRevisionComposer.value
+  ? '会复制当前文字需求并创建独立任务；原附件和已生成页面不会自动带入。'
+  : '描述受众、目标、页数和视觉偏好，PPTAgent 会开始独立生成。')
+const composerPlaceholder = computed(() => isRevisionComposer.value
+  ? '例如：沿用当前主题，把内容压缩到 6 页，并增加一页商业模式。'
+  : '例如：制作一份 AI Agent 平台 MVP 汇报，面向投资人，风格简洁专业，控制在 10 页左右。')
+const composerSubmitLabel = computed(() => isRevisionComposer.value ? '复制需求并生成' : '开始生成')
 
 watch(
   previews,
@@ -141,7 +170,11 @@ async function restoreTasks() {
     const snapshots = await props.api.listTasks({ limit: MAX_TRACKED_TASKS })
     const ordered = [...snapshots].sort((left, right) => timestamp(right.created_at) - timestamp(left.created_at))
     for (const snapshot of ordered) upsertTask(snapshot)
-    if (!selectedTaskId.value && taskOrder.value[0]) selectedTaskId.value = taskOrder.value[0]
+    if (!selectedTaskId.value && taskOrder.value[0]) {
+      saveComposerDraft()
+      selectedTaskId.value = taskOrder.value[0]
+      restoreComposerDraft(selectedTaskId.value)
+    }
     for (const run of trackedRuns.value) {
       if (!isTerminalTask(run.task)) void subscribeRun(run.task.task_id, 0)
     }
@@ -154,7 +187,18 @@ async function restoreTasks() {
 
 async function startGeneration() {
   composerError.value = ''
-  const description = composer.text.trim()
+  const request = composer.text.trim()
+  const requestError = validatePresentationDescription(request)
+  if (requestError) {
+    composerError.value = requestError
+    return
+  }
+  const previousDescription = selectedRun.value
+    ? runLabel(selectedRun.value)
+    : ''
+  const description = selectedRun.value
+    ? buildCopiedConversationDescription(previousDescription, request)
+    : request
   const config = selectedConfig.value
   if (!config) {
     composerError.value = '请先选择一个可用的 PPTAgent 配置。'
@@ -188,6 +232,7 @@ async function startGeneration() {
   }
 
   try {
+    const submittedDraftKey = composerDraftKey()
     const created = await props.api.createTask(payload)
     const snapshot = {
       ...created,
@@ -196,6 +241,7 @@ async function startGeneration() {
     }
     failedCreateAttempt = null
     const run = upsertTask(snapshot, { prepend: true, submittedDescription: description })
+    composerDrafts.delete(submittedDraftKey)
     selectedTaskId.value = run.task.task_id
     previewLightbox.value = null
     composer.text = ''
@@ -286,7 +332,10 @@ function acceptEvent(event: PptAgentEvent) {
   runtime.seenEventIds.add(taskEventIdentity(event))
   run.lastEventSequence = Math.max(run.lastEventSequence, event.sequence)
   run.events.push(event)
-  run.task = projectTaskEvent(run.task, event)
+  if (event.sequence > run.projectedEventSequence) {
+    run.task = projectTaskEvent(run.task, event)
+    run.projectedEventSequence = event.sequence
+  }
   if (event.type === 'TASK_FAILED') {
     run.error = isCancelledTaskEvent(event) ? '' : event.error?.message || event.message
   }
@@ -373,12 +422,89 @@ async function downloadTask(taskId = selectedTaskId.value) {
 }
 
 function selectTask(taskId: string) {
-  if (!runs[taskId]) return
+  if (!runs[taskId] || selectedTaskId.value === taskId) return
+  saveComposerDraft()
   selectedTaskId.value = taskId
+  restoreComposerDraft(taskId)
   previewLightbox.value = null
   const runtime = runtimeFor(taskId)
   if (isTerminalTask(runs[taskId]?.task) && runs[taskId]?.events.length === 0 && !runtime.historyHydrated) {
     void hydrateTaskHistory(taskId)
+  }
+}
+
+function startNewConversation() {
+  if (selectedTaskId.value) saveComposerDraft()
+  failedCreateAttempt = null
+  selectedTaskId.value = ''
+  previewLightbox.value = null
+  restoreComposerDraft(NEW_CONVERSATION_DRAFT_KEY)
+  void focusComposer()
+}
+
+function composerDraftKey(taskId = selectedTaskId.value) {
+  return taskId || NEW_CONVERSATION_DRAFT_KEY
+}
+
+function saveComposerDraft(taskId = selectedTaskId.value) {
+  const key = composerDraftKey(taskId)
+  if (!composer.text.trim() && composer.files.length === 0) {
+    composerDrafts.delete(key)
+    return
+  }
+  composerDrafts.set(key, {
+    text: composer.text,
+    files: [...composer.files],
+  })
+}
+
+function restoreComposerDraft(taskId: string) {
+  const draft = composerDrafts.get(composerDraftKey(taskId))
+  composer.text = draft?.text ?? ''
+  composer.files = draft ? [...draft.files] : []
+  failedCreateAttempt = null
+  composerError.value = ''
+  uploadState.value = ''
+}
+
+async function focusComposer() {
+  await nextTick()
+  document.querySelector<HTMLTextAreaElement>('.composer-dock textarea')?.focus()
+}
+
+function buildCopiedConversationDescription(previousDescription: string, request: string) {
+  const separator = '\n\n本次新会话补充要求：\n'
+  const remainingCharacters = MAX_DESCRIPTION_CHARACTERS
+    - Array.from(separator).length
+    - Array.from(request).length
+  const previousContext = compactDescription(previousDescription, Math.max(0, remainingCharacters))
+  return previousContext ? `${previousContext}${separator}${request}` : request
+}
+
+function compactDescription(value: string, maximumCharacters: number) {
+  const characters = Array.from(value)
+  if (characters.length <= maximumCharacters) return value
+  if (maximumCharacters <= 0) return ''
+  const omission = Array.from('\n…（较早的文字需求已压缩）…\n')
+  if (maximumCharacters <= omission.length) return characters.slice(-maximumCharacters).join('')
+  const available = maximumCharacters - omission.length
+  const headLength = Math.ceil(available * 0.58)
+  const tailLength = available - headLength
+  return [
+    ...characters.slice(0, headLength),
+    ...omission,
+    ...characters.slice(characters.length - tailLength),
+  ].join('')
+}
+
+function openConversationPreview(preview: ReturnType<typeof collectPagePreviews>[number]) {
+  const src = previewSources.value[preview.resource.resource_id]
+    || (preview.resource.url ? resolveResourceUrl(preview.resource.url) : '')
+  if (!src) return
+  previewLightbox.value = {
+    src,
+    title: preview.page?.title || preview.resource.name || '页面预览',
+    subtitle: preview.page?.page_index ? `第 ${preview.page.page_index} 页` : '页面预览',
   }
 }
 
@@ -390,6 +516,10 @@ function upsertTask(
   const current = runs[taskId]
   if (current) {
     current.task = { ...current.task, ...snapshot }
+    current.projectedEventSequence = Math.max(
+      current.projectedEventSequence,
+      taskSnapshotWatermark(snapshot) ?? 0,
+    )
     if (options.submittedDescription) current.submittedDescription = options.submittedDescription
     synchronizeRunError(current)
     return current
@@ -399,6 +529,7 @@ function upsertTask(
     task: snapshot,
     events: [],
     lastEventSequence: 0,
+    projectedEventSequence: taskSnapshotWatermark(snapshot) ?? 0,
     error: '',
     connectionState: '',
     cancelling: false,
@@ -424,6 +555,7 @@ function setTaskSnapshot(taskId: string, snapshot: PptTask) {
     thread_id: snapshot.thread_id || run.task.thread_id,
     run_id: snapshot.run_id || run.task.run_id,
   }
+  run.projectedEventSequence = Math.max(run.projectedEventSequence, taskSnapshotWatermark(snapshot) ?? 0)
   synchronizeRunError(run)
 }
 
@@ -503,6 +635,7 @@ function clearRunResources(taskId: string) {
   runtime?.ownedPreviewUrls.clear()
   runtime?.pendingPreviewResources.clear()
   runtimeByTaskId.delete(taskId)
+  composerDrafts.delete(taskId)
 }
 
 function addFiles(files: File[]) {
@@ -527,14 +660,8 @@ function statusClass(taskSnapshot: PptTask | null | undefined) {
   return 'is-running'
 }
 
-function progressPercent(run: RunViewState | null | undefined) {
-  const latest = run?.events[run.events.length - 1]
-  const progress = latest?.progress ?? run?.task.progress
-  if (!progress) return 0
-  if (typeof progress.percent === 'number' && Number.isFinite(progress.percent)) {
-    return Math.max(0, Math.min(100, progress.percent))
-  }
-  return progress.total > 0 ? Math.max(0, Math.min(100, progress.current / progress.total * 100)) : 0
+function runProgress(run: RunViewState | null | undefined) {
+  return run ? overallTaskProgress(run.task, run.events) : 0
 }
 
 function runLabel(run: RunViewState) {
@@ -585,21 +712,21 @@ function isNonRetryableSubscribeError(cause: unknown) {
 </script>
 
 <template>
-  <section class="page chat-page management-page">
-    <header class="page-head management-head chat-page-head">
-      <div class="page-title-block chat-page-copy">
+  <section class="page management-page presentation-page">
+    <header class="page-head management-head presentation-page-head">
+      <div class="page-title-block">
         <span class="page-eyebrow">智能演示文稿</span>
-        <h2>PPT 生成任务</h2>
-        <p>提交一次需求，Python Agent 会持续发送事件，直到本地 PPT 文件生成完成。</p>
+        <h2>PPT 对话工作台</h2>
+        <p>每份 PPT 都会保留为独立会话；你可以并行生成，并随时回来查看消息、页面预览和最终文件。</p>
       </div>
-      <div v-if="props.configs.length > 0" class="chat-page-meta">
+      <div v-if="props.configs.length > 0" class="presentation-meta" aria-label="工作台概览">
         <div class="page-meta-card">
           <span>当前配置</span>
           <strong>{{ selectedConfig?.name || '未选择' }}</strong>
         </div>
         <div class="page-meta-card">
-          <span>活动任务</span>
-          <strong>{{ activeTaskCount }} / {{ trackedRuns.length }}</strong>
+          <span>会话状态</span>
+          <strong>{{ activeTaskCount }} 进行中 · {{ trackedRuns.length }} 个最近会话</strong>
         </div>
       </div>
     </header>
@@ -608,145 +735,200 @@ function isNonRetryableSubscribeError(cause: unknown) {
       v-if="props.configs.length === 0"
       :icon="Presentation"
       title="还没有可用的 PPT 配置"
-      text="请先到 Agent 管理里创建一个 active 的 PPTAgent 配置，再回来发起生成。"
+      text="请先到 Agent 管理里创建一个启用的 PPTAgent 配置，再回来发起生成。"
     />
 
-    <div v-else class="task-workspace">
-      <PresentationComposer
-        :can-submit="canSubmit"
-        :config-id="selectedConfigId"
-        :configs="props.configs"
-        :error="composerError"
-        :files="composer.files"
-        :submitting="submitting"
-        :text="composer.text"
-        :upload-state="uploadState"
-        @add-files="addFiles"
-        @remove-file="removeFile"
-        @submit="startGeneration"
-        @update-config-id="selectedConfigId = $event"
-        @update-text="composer.text = $event"
-      />
-
-      <section v-if="trackedRuns.length" class="task-switcher" aria-labelledby="tracked-ppt-runs">
-        <div class="panel-head task-switcher-head">
+    <div v-else class="conversation-workspace" aria-label="PPT 对话生成工作区">
+      <aside class="task-rail conversation-sidebar" aria-labelledby="tracked-ppt-runs">
+        <div class="task-rail-head conversation-sidebar-head">
           <div>
-            <span class="chat-shell-kicker">Concurrent runs</span>
-            <h3 id="tracked-ppt-runs">最近任务</h3>
+            <span class="section-kicker">CONVERSATIONS</span>
+            <h3 id="tracked-ppt-runs">PPT 会话</h3>
           </div>
-          <span class="chat-note">
+          <span class="task-rail-status">
             <Loader2 v-if="restoring" class="spin" :size="13" />
-            {{ restoring ? '正在恢复' : `${activeTaskCount} 个生成中` }}
+            {{ restoring ? '恢复中' : `${trackedRuns.length} 个会话` }}
           </span>
         </div>
 
-        <div class="task-switcher-list">
-          <article
+        <button
+          class="new-conversation-button"
+          :class="{ selected: !selectedTaskId }"
+          type="button"
+          :aria-pressed="!selectedTaskId"
+          @click="startNewConversation"
+        >
+          <MessageSquarePlus :size="17" />
+          <span>新建 PPT 会话</span>
+        </button>
+
+        <div v-if="trackedRuns.length" class="task-rail-list conversation-list">
+          <button
             v-for="run in trackedRuns"
             :key="run.task.task_id"
-            class="task-switch-card"
+            class="task-rail-item"
             :class="{ selected: run.task.task_id === selectedTaskId }"
+            type="button"
+            :aria-pressed="run.task.task_id === selectedTaskId"
+            @click="selectTask(run.task.task_id)"
           >
-            <button class="task-switch-select" type="button" @click="selectTask(run.task.task_id)">
-              <div class="task-switch-title">
-                <strong>{{ stageLabel(run.task.stage) }}</strong>
-                <span class="status-pill" :class="statusClass(run.task)">{{ taskStatusLabel(run.task.status) }}</span>
-              </div>
-              <p>{{ runLabel(run) }}</p>
-              <div class="task-switch-meta">
-                <code>{{ shortId(run.task.run_id || run.task.task_id) }}</code>
-                <time v-if="run.task.created_at">{{ formatDateTime(run.task.created_at) }}</time>
-              </div>
-              <span v-if="run.connectionState" class="connection-state">
-                <Wifi :size="13" />{{ run.connectionState }}
-              </span>
-            </button>
-            <div class="task-switch-actions">
-              <button
-                v-if="isRunningTask(run.task)"
-                class="btn ghost compact"
-                type="button"
-                :disabled="run.cancelling"
-                @click="cancelTask(run.task.task_id)"
-              >
-                <Loader2 v-if="run.cancelling" class="spin" :size="14" />
-                <Square v-else :size="14" />
-                {{ run.cancelling ? '取消中' : '取消' }}
-              </button>
-              <button
-                v-if="run.task.status === 'succeeded'"
-                class="btn ghost compact"
-                type="button"
-                :disabled="run.downloading"
-                @click="downloadTask(run.task.task_id)"
-              >
-                <Loader2 v-if="run.downloading" class="spin" :size="14" />
-                <Download v-else :size="14" />
-                {{ run.downloading ? '准备中' : '下载' }}
-              </button>
+            <div class="task-rail-title">
+              <span class="task-status-dot" :class="statusClass(run.task)" />
+              <strong>{{ runLabel(run) }}</strong>
             </div>
-          </article>
+            <div class="task-rail-stage">
+              <span>{{ stageLabel(run.task.stage) }}</span>
+              <span>{{ runProgress(run) }}%</span>
+            </div>
+            <div
+              class="task-rail-progress"
+              role="progressbar"
+              :aria-label="`${runLabel(run)} 进度 ${runProgress(run)}%`"
+              :aria-valuenow="runProgress(run)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <span :style="{ width: `${runProgress(run)}%` }" />
+            </div>
+            <div class="task-rail-meta">
+              <span class="status-pill" :class="statusClass(run.task)">{{ taskStatusLabel(run.task.status) }}</span>
+              <time v-if="run.task.created_at">{{ formatDateTime(run.task.created_at) }}</time>
+            </div>
+          </button>
+        </div>
+
+        <div v-else class="conversation-list-empty">
+          <MessagesSquare :size="22" />
+          <p>创建后，每份 PPT 都会作为一个独立会话保留在这里。</p>
+        </div>
+      </aside>
+
+      <section class="conversation-main" :class="{ 'is-empty': !task }" aria-label="当前 PPT 会话">
+        <div v-if="task" class="conversation-toolbar" aria-live="polite">
+          <div class="conversation-toolbar-copy">
+            <span>{{ currentStageLabel }}</span>
+            <h3>{{ selectedRun ? runLabel(selectedRun) : 'PPT 会话' }}</h3>
+            <p>
+              <code>run {{ shortId(task.run_id || task.task_id) }}</code>
+              <span v-if="task.created_at">创建于 {{ formatDateTime(task.created_at) }}</span>
+              <span v-if="task.result?.slide_count">{{ task.result.slide_count }} 页</span>
+            </p>
+          </div>
+          <div class="conversation-toolbar-actions">
+            <button
+              v-if="isRunningTask(task)"
+              class="btn ghost"
+              type="button"
+              :disabled="selectedRun?.cancelling"
+              @click="cancelTask(task.task_id)"
+            >
+              <Loader2 v-if="selectedRun?.cancelling" class="spin" :size="16" />
+              <Square v-else :size="16" />
+              {{ selectedRun?.cancelling ? '正在取消…' : '取消任务' }}
+            </button>
+            <button
+              v-if="task.status === 'succeeded'"
+              class="btn primary"
+              type="button"
+              :disabled="selectedRun?.downloading"
+              @click="downloadTask(task.task_id)"
+            >
+              <Loader2 v-if="selectedRun?.downloading" class="spin" :size="17" />
+              <Download v-else :size="17" />
+              {{ selectedRun?.downloading ? '准备下载…' : '下载 PPT' }}
+            </button>
+          </div>
+        </div>
+
+        <PresentationConversation
+          v-if="task && selectedRun"
+          :events="events"
+          :previews="previews"
+          :sources="previewSources"
+          :submitted-description="selectedRun.submittedDescription"
+          :task="task"
+          @open-preview="openConversationPreview"
+        />
+
+        <section v-else class="conversation-welcome">
+          <span class="conversation-welcome-icon"><Presentation :size="30" /></span>
+          <span class="page-eyebrow">NEW CONVERSATION</span>
+          <h3>{{ restoring ? '正在恢复最近会话' : '从一个清晰的演示目标开始' }}</h3>
+          <p>描述受众、内容、页数和视觉风格。任务创建后可以离开页面，PPTAgent 会在后台继续生成。</p>
+          <div class="conversation-examples" aria-label="需求示例">
+            <span>融资路演</span>
+            <span>项目汇报</span>
+            <span>培训课件</span>
+          </div>
+        </section>
+
+        <div class="composer-dock">
+          <PresentationComposer
+            mode="conversation"
+            :can-submit="canSubmit"
+            :config-id="selectedConfigId"
+            :configs="props.configs"
+            :error="composerError"
+            :files="composer.files"
+            :helper="composerHelper"
+            :placeholder="composerPlaceholder"
+            :submit-label="composerSubmitLabel"
+            :submitting="submitting"
+            :text="composer.text"
+            :title="composerTitle"
+            :upload-state="uploadState"
+            @add-files="addFiles"
+            @remove-file="removeFile"
+            @submit="startGeneration"
+            @update-config-id="selectedConfigId = $event"
+            @update-text="composer.text = $event"
+          />
         </div>
       </section>
 
-      <section v-if="task" class="task-overview">
-        <div class="task-overview-icon"><FileOutput :size="22" /></div>
-        <div class="task-overview-copy">
-          <div class="status-header">
-            <strong>{{ currentStageLabel }}</strong>
+      <aside class="preview-rail" aria-label="当前会话页面预览">
+        <div v-if="task" class="preview-progress-card">
+          <div class="preview-progress-head">
+            <div>
+              <span class="section-kicker">CURRENT RUN</span>
+              <strong>{{ currentStageLabel }}</strong>
+            </div>
             <span class="status-pill" :class="statusClass(task)">{{ taskStatusLabel(task.status) }}</span>
           </div>
-          <p>{{ latestEvent?.message || task.message || selectedRun?.submittedDescription }}</p>
-          <code>run {{ task.run_id || task.task_id }} · thread {{ task.thread_id || 'legacy' }}</code>
-          <div
-            v-if="selectedProgressPercent > 0"
-            class="task-progress"
-            :aria-label="`生成进度 ${Math.round(selectedProgressPercent)}%`"
-          >
-            <span :style="{ width: `${selectedProgressPercent}%` }" />
+          <div class="task-progress-row">
+            <div
+              class="task-progress"
+              role="progressbar"
+              :aria-label="`总体生成进度 ${selectedProgressPercent}%`"
+              :aria-valuenow="selectedProgressPercent"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <span :style="{ width: `${selectedProgressPercent}%` }" />
+            </div>
+            <strong>{{ selectedProgressPercent }}%</strong>
           </div>
+          <p>{{ latestEvent?.message || task.message || selectedRun?.submittedDescription }}</p>
           <span v-if="selectedRun?.connectionState" class="connection-state">
             <Wifi :size="14" />{{ selectedRun.connectionState }}
           </span>
           <p v-if="selectedRun?.error" class="run-error">{{ selectedRun.error }}</p>
         </div>
-        <div class="task-overview-actions">
-          <button
-            v-if="isRunningTask(task)"
-            class="btn ghost"
-            type="button"
-            :disabled="selectedRun?.cancelling"
-            @click="cancelTask(task.task_id)"
-          >
-            <Loader2 v-if="selectedRun?.cancelling" class="spin" :size="16" />
-            <Square v-else :size="16" />
-            {{ selectedRun?.cancelling ? '正在取消…' : '取消任务' }}
-          </button>
-          <button
-            v-if="task.status === 'succeeded'"
-            class="btn primary"
-            type="button"
-            :disabled="selectedRun?.downloading"
-            @click="downloadTask(task.task_id)"
-          >
-            <Download :size="17" />
-            {{ selectedRun?.downloading ? '准备下载…' : '下载 PPT' }}
-          </button>
-        </div>
-      </section>
 
-      <div v-if="task" class="task-content-grid">
-        <TaskEventTimeline :events="events" />
-        <PagePreviewGrid :previews="previews" :sources="previewSources" @open="previewLightbox = $event" />
-      </div>
+        <PagePreviewGrid
+          v-if="task"
+          compact
+          :previews="previews"
+          :sources="previewSources"
+          @open="previewLightbox = $event"
+        />
 
-      <section v-else class="task-intro">
-        <Presentation :size="30" />
-        <div>
-          <strong>{{ restoring ? '正在恢复最近任务' : '可并行的生成流水线' }}</strong>
-          <p>每次提交会创建独立会话。已有任务会继续在后台生成，你可以随时切换回来查看事件与页面预览。</p>
+        <div v-else class="preview-conversation-empty">
+          <FilePlus2 :size="25" />
+          <strong>页面预览区</strong>
+          <p>选择已有会话或开始生成后，页面缩略图会持续出现在这里。</p>
         </div>
-      </section>
+      </aside>
     </div>
 
     <PresentationPreviewDialog :preview="previewLightbox" @close="previewLightbox = null" />
@@ -754,134 +936,227 @@ function isNonRetryableSubscribeError(cause: unknown) {
 </template>
 
 <style scoped>
-.task-workspace {
-  display: grid;
-  gap: 16px;
+.presentation-page {
+  min-width: 0;
+  gap: 22px;
+  padding-bottom: 40px;
+  overflow-x: clip;
+}
+
+.presentation-page-head {
+  align-items: end;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
-.task-switcher {
-  display: grid;
-  gap: 12px;
+.presentation-page-head .page-title-block {
+  flex: 1 1 520px;
   min-width: 0;
+}
+
+.presentation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.presentation-meta .page-meta-card {
+  min-width: 176px;
+  max-width: 250px;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.presentation-meta .page-meta-card:last-child {
+  min-width: 224px;
+}
+
+.section-kicker {
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+}
+
+.task-workspace {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.run-workbench {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 276px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.task-rail {
+  position: sticky;
+  top: 18px;
+  min-width: 0;
+  max-height: calc(100vh - 36px);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  padding: 16px 18px;
 }
 
-.task-switcher-head {
-  padding: 0;
-}
-
-.task-switcher-head h3 {
-  margin-top: 4px;
-  color: var(--text);
-  font-size: 16px;
-}
-
-.task-switcher-head .chat-note {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.task-switcher-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
-  gap: 10px;
-}
-
-.task-switch-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: stretch;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-  transition: border-color 160ms ease, background 160ms ease;
-}
-
-.task-switch-card.selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.task-switch-select {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.task-switch-title,
-.task-switch-meta {
+.task-rail-head {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
+  gap: 10px;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+  padding: 15px 16px 13px;
 }
 
-.task-switch-title strong {
-  overflow: hidden;
+.task-rail-head h3 {
+  margin-top: 3px;
   color: var(--text);
-  font-size: 13px;
-  text-overflow: ellipsis;
+  font-size: 15px;
+}
+
+.task-rail-status {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 10px;
   white-space: nowrap;
 }
 
-.task-switch-select p {
+.task-rail-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+}
+
+.task-rail-item {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--panel-soft);
+  color: inherit;
+  padding: 11px;
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.task-rail-item:hover {
+  border-color: var(--line-strong);
+  background: #fff;
+}
+
+.task-rail-item.selected {
+  border-color: rgba(18, 124, 112, 0.45);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.task-rail-item:focus-visible {
+  outline: 3px solid rgba(18, 124, 112, 0.18);
+  outline-offset: 1px;
+}
+
+.task-rail-title,
+.task-rail-stage,
+.task-rail-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.task-rail-title { gap: 7px; }
+
+.task-rail-title strong {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--text);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.task-switch-meta {
-  color: var(--muted-2);
+.task-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--muted-2);
+}
+
+.task-status-dot.is-running { background: var(--accent); }
+.task-status-dot.is-done { background: var(--success); }
+.task-status-dot.is-error { background: var(--danger); }
+
+.task-rail-title .status-pill {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  font-size: 9px;
+}
+
+.task-rail-stage,
+.task-rail-meta {
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
   font-size: 10px;
 }
 
-.task-switch-meta code,
-.task-switch-meta time {
+.task-rail-meta {
+  color: var(--muted-2);
+  font-size: 9px;
+}
+
+.task-rail-meta code,
+.task-rail-meta time {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.task-switch-actions {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  border-left: 1px solid var(--line);
-  padding: 8px;
+.task-rail-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.12);
 }
 
-.btn.compact {
-  min-height: 30px;
-  padding: 5px 8px;
-  font-size: 11px;
+.task-rail-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.run-detail {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
 }
 
 .task-overview {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
-  align-items: center;
+  align-items: start;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  padding: 16px 18px;
+  padding: 18px;
 }
 
 .task-overview-icon {
@@ -897,7 +1172,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
 .task-overview-copy {
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .task-overview-copy p {
@@ -913,11 +1188,36 @@ function isNonRetryableSubscribeError(cause: unknown) {
   white-space: nowrap;
 }
 
+.task-overview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.task-overview-meta code {
+  color: inherit;
+}
+
 .task-overview-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.task-progress-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.task-progress-row > strong {
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .task-progress {
@@ -949,7 +1249,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
 
 .task-content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(310px, 0.8fr);
   gap: 16px;
   align-items: start;
   min-width: 0;
@@ -978,7 +1278,351 @@ function isNonRetryableSubscribeError(cause: unknown) {
   color: var(--muted);
 }
 
-@media (max-width: 900px) {
+.conversation-workspace {
+  min-width: 0;
+  min-height: 620px;
+  display: grid;
+  grid-template-columns: 220px minmax(390px, 1fr) minmax(260px, 310px);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.conversation-sidebar {
+  position: static;
+  top: auto;
+  max-height: none;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.conversation-sidebar-head {
+  border-bottom: 0;
+  padding-bottom: 9px;
+}
+
+.new-conversation-button {
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(18, 124, 112, 0.2);
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  margin: 0 10px 8px;
+  padding: 9px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.new-conversation-button:hover,
+.new-conversation-button.selected {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.new-conversation-button:focus-visible {
+  outline: 3px solid rgba(18, 124, 112, 0.18);
+  outline-offset: 1px;
+}
+
+.conversation-list {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.conversation-list .task-rail-item {
+  gap: 7px;
+}
+
+.conversation-list .task-rail-meta .status-pill {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  font-size: 9px;
+}
+
+.conversation-list-empty {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--muted-2);
+  padding: 20px;
+  text-align: center;
+}
+
+.conversation-list-empty p {
+  max-width: 170px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.conversation-main {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 12px;
+}
+
+.conversation-main.is-empty {
+  grid-template-rows: minmax(220px, 1fr) auto;
+}
+
+.conversation-main > .presentation-conversation {
+  min-height: 0;
+}
+
+.conversation-toolbar {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px 14px;
+}
+
+.conversation-toolbar-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.conversation-toolbar-copy > span {
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.conversation-toolbar-copy h3 {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-toolbar-copy p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--muted-2);
+  font-size: 9px;
+}
+
+.conversation-toolbar-copy code {
+  color: inherit;
+}
+
+.conversation-toolbar-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.conversation-toolbar-actions .btn {
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.conversation-welcome {
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 32px;
+  text-align: center;
+}
+
+.conversation-welcome-icon {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.conversation-welcome h3 {
+  color: var(--text);
+  font-size: 20px;
+}
+
+.conversation-welcome p {
+  max-width: 520px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.conversation-examples {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.conversation-examples span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  padding: 5px 9px;
+  font-size: 10px;
+}
+
+.composer-dock {
+  min-width: 0;
+}
+
+.preview-rail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+  scrollbar-gutter: stable;
+}
+
+.preview-progress-card {
+  display: grid;
+  gap: 9px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 13px;
+}
+
+.preview-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.preview-progress-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.preview-progress-head strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-progress-card > p {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.preview-progress-card .connection-state {
+  font-size: 10px;
+}
+
+.preview-conversation-empty {
+  min-height: 280px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted-2);
+  padding: 22px;
+  text-align: center;
+}
+
+.preview-conversation-empty strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.preview-conversation-empty p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+@media (min-width: 1101px) and (min-height: 760px) {
+  .conversation-workspace {
+    height: calc(100dvh - 248px);
+    max-height: 900px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .run-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .task-rail {
+    position: static;
+    max-height: none;
+  }
+
+  .task-rail-list {
+    overflow: visible;
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  }
+
+  .conversation-workspace {
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+
+  .conversation-sidebar {
+    position: static;
+    max-height: none;
+  }
+
+  .conversation-list {
+    overflow-y: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .preview-rail {
+    grid-column: 2;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 920px) {
   .task-content-grid {
     grid-template-columns: 1fr;
   }
@@ -993,16 +1637,103 @@ function isNonRetryableSubscribeError(cause: unknown) {
   }
 }
 
-@media (max-width: 560px) {
-  .task-switch-card {
-    grid-template-columns: 1fr;
+@media (max-width: 760px) {
+  .presentation-page-head,
+  .presentation-meta {
+    align-items: stretch;
+    flex-direction: column;
   }
 
-  .task-switch-actions {
-    flex-direction: row;
+  .presentation-page-head .page-title-block {
+    flex: 0 1 auto;
+    width: 100%;
+  }
+
+  .presentation-page-head .page-title-block p {
+    overflow-wrap: anywhere;
+  }
+
+  .presentation-meta .page-meta-card,
+  .presentation-meta .page-meta-card:last-child {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .task-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-overview-icon {
+    display: none;
+  }
+
+  .task-overview-actions {
+    grid-column: auto;
+  }
+
+  .conversation-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .conversation-sidebar,
+  .conversation-main,
+  .preview-rail {
+    grid-column: 1;
+  }
+
+  .conversation-sidebar {
+    grid-template-rows: auto auto auto;
+  }
+
+  .conversation-list {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 12px;
+    scrollbar-width: thin;
+  }
+
+  .conversation-list .task-rail-item {
+    width: 230px;
+    flex: 0 0 230px;
+  }
+
+  .conversation-main {
+    min-height: 720px;
+    overflow: visible;
+  }
+
+  .conversation-main > .presentation-conversation {
+    min-height: 440px;
+  }
+
+  .conversation-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .conversation-toolbar-actions {
     justify-content: flex-start;
-    border-top: 1px solid var(--line);
-    border-left: 0;
+  }
+
+  .preview-rail {
+    overflow: visible;
+  }
+}
+
+@media (max-width: 520px) {
+  .task-rail-head { align-items: center; }
+  .task-overview-actions .btn { width: 100%; }
+  .task-progress-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .conversation-toolbar-actions .btn { flex: 1 1 auto; }
+  .conversation-welcome { padding: 26px 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-rail-item,
+  .task-progress span {
+    transition: none;
   }
 }
 </style>

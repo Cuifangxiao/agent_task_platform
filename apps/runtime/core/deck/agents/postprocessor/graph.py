@@ -59,9 +59,7 @@ def export_deck(state: DeckGraphState, exporter: DeckExporter) -> dict[str, Any]
     writer(events.stage_started("export", "Exporting PPTX file"))
     deck = DeckSpec.from_dict(state.get("deck_spec") or {})
     _attach_source_notes(deck, state.get("brief") or {})
-    total = len(deck.slides)
-    writer(events.export_progress("Preparing PPTX", 0, total))
-    logger.info("deck export start: request_id=%s slides=%s", request_id, total)
+    logger.info("deck export start: request_id=%s slides=%s", request_id, len(deck.slides))
     started_at = time.perf_counter()
     result = exporter.export(request_id, deck)
     project = exporter.project_paths(request_id)
@@ -97,7 +95,6 @@ def export_deck(state: DeckGraphState, exporter: DeckExporter) -> dict[str, Any]
         writer(
             events.stage_progress("export", warning, {"status": "warning", "warning": warning})
         )
-    writer(events.export_progress("PPTX export complete", total, total))
     writer(
         events.artifact(
             "export",

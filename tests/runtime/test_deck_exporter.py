@@ -5,7 +5,7 @@ from PIL import Image
 from pptx import Presentation
 
 from core.deck.export import DeckExporter
-from core.deck.contract import EventType
+from core.deck.contract import EventType, PptStage
 import core.deck.agents.postprocessor.graph as postprocessor_graph
 from core.deck.agents.postprocessor.graph import _attach_source_notes
 from core.deck.spec import DeckSpec, SlideSpec, default_theme
@@ -121,6 +121,12 @@ def test_export_reports_diagnostics_without_blocking_delivery(tmp_path, monkeypa
         },
         DeckExporter(tmp_path, UnavailableBrowserSession()),
     )
+    assert emitted[0].type is EventType.STEP_STARTED
+    assert emitted[-1].type is EventType.ARTIFACT_READY
+    assert emitted[1:-1]
+    assert all(event.type is EventType.STEP_PROGRESS for event in emitted[1:-1])
+    assert all(event.stage is PptStage.ASSEMBLING_PPT for event in emitted)
+    assert all(event.progress is None for event in emitted)
     artifact = next(event for event in emitted if event.type is EventType.ARTIFACT_READY)
     assert result["export_degraded"] is True
     assert artifact.resources[0].relative_path == "exports/deck.pptx"

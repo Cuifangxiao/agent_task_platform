@@ -122,18 +122,8 @@ def write_and_design_slides(
         title = str(outline.get("title") or fallback_slide_title(index, state)).strip()
         writer(
             events.slide_started(
-                f"Generating slide {index}/{total}: {title}",
-                slide_event_payload(
-                    {
-                        "index": index,
-                        "total": total,
-                        "title": title,
-                        "key_message": str(outline.get("key_message") or "").strip(),
-                        "component": str(outline.get("component") or ""),
-                        "role": str(outline.get("role") or ""),
-                    },
-                    status="running",
-                ),
+                f"Generating page {index}/{total}: {title}",
+                {"index": index, "total": total, "title": title},
             )
         )
         raw_slide, slide, recovery_warning = _generate_slide_spec(
@@ -142,24 +132,17 @@ def write_and_design_slides(
         raw_slides.append(raw_slide)
         slide = apply_design_contract(slide, state)
         if recovery_warning:
-            writer(
-                events.stage_progress(
-                    "writer",
-                    f"Slide {slide.index} writer output required safe recovery: {recovery_warning}",
-                    {"index": slide.index, "status": "warning", "warning": recovery_warning},
-                )
+            logger.warning(
+                "event=ppt_slide_writer_recovered request_id=%s slide_index=%s warning=%s",
+                request_id,
+                slide.index,
+                recovery_warning,
             )
         spec_issues = validate_slide_spec(slide)
         all_issues.extend(issues_to_dicts(spec_issues))
         slides.append(slide)
         previous_slides.append(slide)
         deck.slides = slides
-        writer(
-            events.slide_spec_ready(
-                f"Slide {slide.index} spec ready: {slide.title}",
-                {"index": slide.index, "total": total, "title": slide.title, "component": slide.component, "role": slide.role},
-            )
-        )
 
         designer_started_at = time.perf_counter()
         designer_metrics, designer_token = begin_node_metrics()
@@ -185,26 +168,26 @@ def write_and_design_slides(
             all_issues.extend(issues_to_dicts(artwork.issues))
         metadata = llm_registry.get("__metadata__") if isinstance(llm_registry.get("__metadata__"), dict) else {}
         designer_model = metadata.get("designer") or {}
-        writer(
-            events.stage_progress(
-                "designer",
-                f"SVG Artist completed slide {slide.index} with {artwork.render_mode}",
-                {
-                    "index": slide.index,
-                    "render_mode": artwork.render_mode,
-                    "template_id": artwork.template_id,
-                    "layout_id": artwork.layout_id,
-                    "page_rhythm": artwork.page_rhythm,
-                    "artist_rejected_issue_count": len(artwork.rejected_issues),
-                    "metrics": {
-                        "duration_ms": round((time.perf_counter() - designer_started_at) * 1000),
-                        "provider": designer_model.get("provider", ""),
-                        "model": designer_model.get("model", ""),
-                        **designer_metrics.snapshot(),
-                        "export_degraded": artwork.render_mode != "llm_svg",
-                    },
-                },
-            )
+        measured = designer_metrics.snapshot()
+        logger.info(
+            "event=ppt_slide_designer_end request_id=%s slide_index=%s duration_ms=%s provider=%s model=%s "
+            "render_mode=%s template_id=%s layout_id=%s page_rhythm=%s rejected_issue_count=%s "
+            "model_call_count=%s token_usage=%s retry_count=%s fallback_count=%s export_degraded=%s",
+            request_id,
+            slide.index,
+            round((time.perf_counter() - designer_started_at) * 1000),
+            designer_model.get("provider", ""),
+            designer_model.get("model", ""),
+            artwork.render_mode,
+            artwork.template_id,
+            artwork.layout_id,
+            artwork.page_rhythm,
+            len(artwork.rejected_issues),
+            measured["model_call_count"],
+            measured["token_usage"],
+            measured["retry_count"],
+            measured["fallback_count"],
+            artwork.render_mode != "llm_svg",
         )
         html = html_renderer.render(deck, slide)
         render_started_at = time.perf_counter()
@@ -235,10 +218,7 @@ def write_and_design_slides(
             "artist_rejected_issues": artwork.rejected_issues,
         }
         artifacts.append(artifact_payload)
-        writer(events.slide_preview(f"Slide {slide.index} preview ready", artifact_payload))
-        ready_payload = slide_event_payload(slide.to_dict(), status=artifact_payload["status"])
-        ready_payload["total"] = total
-        writer(events.slide_ready(f"Slide {slide.index} ready: {slide.title}", ready_payload))
+        writer(events.slide_preview(f"Page {slide.index}/{total} preview ready: {slide.title}", artifact_payload))
         if artifact.issues:
             all_issues.extend(issues_to_dicts(artifact.issues))
 
@@ -597,25 +577,6 @@ def normalize_placeholder_slide(slide: SlideSpec, outline: dict[str, Any], deck:
     else:
         slide.content["items"] = [key_message or slide.title]
     return slide
-
-
-def slide_event_payload(slide: dict[str, Any], *, status: str) -> dict[str, Any]:
-    content = slide.get("content") if isinstance(slide.get("content"), dict) else {}
-    bullets = content.get("bullets") or content.get("items") or content.get("steps") or []
-    if not isinstance(bullets, list):
-        bullets = []
-    return {
-        "index": slide.get("index"),
-        "title": slide.get("title", ""),
-        "key_message": content.get("body") or content.get("subtitle") or content.get("takeaway") or slide.get("key_message") or "",
-        "layout": slide.get("component") or slide.get("layout") or "content-basic",
-        "component": slide.get("component") or "",
-        "role": slide.get("role") or "",
-        "bullets": [str(item) for item in bullets],
-        "visual_suggestion": "",
-        "speaker_notes": slide.get("notes", ""),
-        "status": status,
-    }
 
 
 __all__ = [

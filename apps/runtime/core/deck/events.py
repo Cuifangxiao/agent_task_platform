@@ -20,10 +20,10 @@ _STAGES = {
     "outline": PptStage.PLANNING,
     "style": PptStage.PLANNING,
     "design_lock": PptStage.GENERATING_ASSETS,
-    "writer": PptStage.GENERATING_CONTENT,
+    "writer": PptStage.GENERATING_PAGES,
     "slides": PptStage.GENERATING_PAGES,
     "designer": PptStage.GENERATING_PAGES,
-    "render": PptStage.RENDERING,
+    "render": PptStage.GENERATING_PAGES,
     "export": PptStage.ASSEMBLING_PPT,
 }
 
@@ -61,11 +61,6 @@ def outline_ready(outline_markdown: str) -> PipelineEvent:
     return PipelineEvent(EventType.STEP_COMPLETED, PptStage.PLANNING, "Outline ready")
 
 
-def text_delta(stage: str, channel: str, delta: str, message: str) -> PipelineEvent:
-    del channel, delta
-    return PipelineEvent(EventType.STEP_PROGRESS, stage_for(stage), message)
-
-
 def style_options(payload: dict[str, Any]) -> PipelineEvent:
     options = payload.get("options") if isinstance(payload, dict) else []
     name = str(options[0].get("name") or "") if isinstance(options, list) and options else ""
@@ -77,15 +72,13 @@ def style_options(payload: dict[str, Any]) -> PipelineEvent:
 
 
 def slide_started(message: str, payload: dict[str, Any]) -> PipelineEvent:
-    return PipelineEvent(EventType.STEP_STARTED, PptStage.GENERATING_CONTENT, message, page=_page(payload))
-
-
-def slide_spec_ready(message: str, payload: dict[str, Any]) -> PipelineEvent:
-    return PipelineEvent(EventType.STEP_COMPLETED, PptStage.GENERATING_CONTENT, message, page=_page(payload))
-
-
-def slide_ready(message: str, payload: dict[str, Any]) -> PipelineEvent:
-    return PipelineEvent(EventType.STEP_COMPLETED, PptStage.GENERATING_PAGES, message, page=_page(payload))
+    return PipelineEvent(
+        EventType.STEP_STARTED,
+        PptStage.GENERATING_PAGES,
+        message,
+        progress=_page_progress(payload),
+        page=_page(payload),
+    )
 
 
 def slide_preview(message: str, payload: dict[str, Any]) -> PipelineEvent:
@@ -110,19 +103,11 @@ def slide_preview(message: str, payload: dict[str, Any]) -> PipelineEvent:
         )
     return PipelineEvent(
         EventType.ARTIFACT_READY,
-        PptStage.RENDERING,
+        PptStage.GENERATING_PAGES,
         message,
+        progress=_page_progress(payload),
         resources=tuple(resources),
         page=_page(payload),
-    )
-
-
-def export_progress(message: str, current: int, total: int) -> PipelineEvent:
-    return PipelineEvent(
-        EventType.STEP_PROGRESS,
-        PptStage.ASSEMBLING_PPT,
-        message,
-        progress=_make_progress(current, total, "slides"),
     )
 
 
@@ -158,6 +143,12 @@ def _make_progress(current: int, total: int, unit: str) -> Progress:
     return Progress(current=current, total=total, percent=percent, unit=unit)
 
 
+def _page_progress(payload: dict[str, Any]) -> Progress | None:
+    index = _positive_int(payload.get("index"))
+    total = _positive_int(payload.get("total") or payload.get("page_count"))
+    return _make_progress(index, total, "page") if index and total else None
+
+
 def _page(payload: dict[str, Any]) -> PageDetail | None:
     index = _positive_int(payload.get("index"))
     if not index:
@@ -181,16 +172,12 @@ def _positive_int(value: Any) -> int:
 __all__ = [
     "agent_message",
     "artifact",
-    "export_progress",
     "fact_sheet_ready",
     "outline_ready",
     "slide_preview",
-    "slide_ready",
-    "slide_spec_ready",
     "slide_started",
     "stage_for",
     "stage_progress",
     "stage_started",
     "style_options",
-    "text_delta",
 ]

@@ -10,7 +10,6 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.errors import GraphBubbleUp
 
-import core.deck.events as events
 from core.deck.llm import llm_log_context
 from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics
 from core.deck.state import DeckGraphState
@@ -18,7 +17,6 @@ from core.deck.state import DeckGraphState
 
 logger = logging.getLogger(__name__)
 DeckNodeHandler = Callable[[DeckGraphState], dict[str, Any]]
-StreamWriterFactory = Callable[[], Callable[[Any], None]]
 
 
 def instrument_node(
@@ -27,7 +25,6 @@ def instrument_node(
     llm_registry: dict[str, Any],
     *,
     model_key: str = "",
-    stream_writer_factory: StreamWriterFactory | None = None,
 ) -> DeckNodeHandler:
     """Wrap one node without coupling instrumentation to graph assembly."""
 
@@ -66,20 +63,15 @@ def instrument_node(
         duration_ms = round((time.perf_counter() - started_at) * 1000)
         measured = collector.snapshot()
         logger.info(
-            "event=ppt_step_end task_id=%s stage=%s duration_ms=%s model_call_count=%s token_usage=%s",
+            "event=ppt_step_end task_id=%s stage=%s duration_ms=%s model_call_count=%s token_usage=%s "
+            "retry_count=%s fallback_count=%s",
             task_id,
             stage,
             duration_ms,
             measured["model_call_count"],
             measured["token_usage"],
-        )
-        writer_factory = stream_writer_factory or get_stream_writer
-        writer_factory()(
-            events.stage_progress(
-                stage,
-                f"{stage} completed",
-                {"status": "done", "metrics": {"duration_ms": duration_ms, **measured}},
-            )
+            measured["retry_count"],
+            measured["fallback_count"],
         )
         return result
 
@@ -99,4 +91,4 @@ def run_phase_graph(graph: Any, state: DeckGraphState) -> dict[str, Any]:
     return final_state
 
 
-__all__ = ["StreamWriterFactory", "instrument_node", "run_phase_graph"]
+__all__ = ["instrument_node", "run_phase_graph"]

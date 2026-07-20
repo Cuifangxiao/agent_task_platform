@@ -3,6 +3,7 @@ import type {
   PptEventType,
   PptPagePreview,
   PptResource,
+  PptStage,
   PptTask,
   PptTaskStatus,
 } from '../types'
@@ -23,6 +24,49 @@ const EVENT_TYPES = new Set<PptEventType>([
   'TASK_COMPLETED',
   'TASK_FAILED',
 ])
+
+export type PresentationPhaseId = 'prepare' | 'plan' | 'design' | 'generate' | 'export' | 'done'
+export type PresentationPhaseStatus = 'pending' | 'active' | 'done' | 'error' | 'cancelled'
+
+export interface PresentationPhaseDefinition {
+  id: PresentationPhaseId
+  label: string
+  description: string
+}
+
+export interface PresentationPhaseView extends PresentationPhaseDefinition {
+  status: PresentationPhaseStatus
+  message: string
+  eventCount: number
+  pageCurrent: number
+  pageTotal: number
+  progressPercent: number
+  updatedAt?: string
+}
+
+export interface CompactTaskEvent {
+  event: PptAgentEvent
+  repeatCount: number
+}
+
+export const PRESENTATION_PHASES: readonly PresentationPhaseDefinition[] = [
+  { id: 'prepare', label: '准备资料', description: '读取需求与附件' },
+  { id: 'plan', label: '规划内容', description: '整理大纲与叙事结构' },
+  { id: 'design', label: '确定设计', description: '选择风格并锁定版式' },
+  { id: 'generate', label: '生成页面', description: '逐页撰写、设计与渲染' },
+  { id: 'export', label: '导出文件', description: '组装并校验 PPTX' },
+  { id: 'done', label: '生成完成', description: '结果可预览和下载' },
+] as const
+
+const PHASE_INDEX = new Map(PRESENTATION_PHASES.map((phase, index) => [phase.id, index]))
+const PHASE_PROGRESS_RANGES: Record<PresentationPhaseId, readonly [number, number]> = {
+  prepare: [0, 8],
+  plan: [8, 24],
+  design: [24, 38],
+  generate: [38, 90],
+  export: [90, 98],
+  done: [100, 100],
+}
 
 export function normalizeTaskEvent(event: RawPresentationEvent): PptAgentEvent | null {
   if (!isRecord(event.data)) return null
@@ -260,11 +304,149 @@ export function taskStatusLabel(status: PptTaskStatus | undefined) {
   }
 }
 
+export function phaseIdForStage(stage: PptStage | string | undefined): PresentationPhaseId {
+  switch (stage) {
+    case 'PREPARING':
+      return 'prepare'
+    case 'PLANNING':
+      return 'plan'
+    case 'GENERATING_ASSETS':
+      return 'design'
+    case 'GENERATING_CONTENT':
+    case 'GENERATING_PAGES':
+    case 'RENDERING':
+      return 'generate'
+    case 'ASSEMBLING_PPT':
+      return 'export'
+    case 'FINISHED':
+      return 'done'
+    default:
+      return 'prepare'
+  }
+}
+
+export function projectTaskPhases(
+  events: readonly PptAgentEvent[],
+  task: PptTask | null | undefined,
+): PresentationPhaseView[] {
+  const ordered = [...events].sort((left, right) => left.sequence - right.sequence)
+  const grouped = new Map<PresentationPhaseId, PptAgentEvent[]>()
+  let currentPhaseIndex = PHASE_INDEX.get(phaseIdForStage(task?.stage)) ?? 0
+
+  for (const event of ordered) {
+    const phaseId = phaseIdForStage(event.stage)
+    const phaseIndex = PHASE_INDEX.get(phaseId) ?? 0
+    currentPhaseIndex = Math.max(currentPhaseIndex, phaseIndex)
+    grouped.set(phaseId, [...(grouped.get(phaseId) ?? []), event])
+  }
+
+  const terminalEvent = [...ordered].reverse().find((event) => event.type === 'TASK_COMPLETED' || event.type === 'TASK_FAILED')
+  const status = task?.status ?? (terminalEvent ? taskStatusForEvent(terminalEvent) : 'running')
+  if (status === 'succeeded') currentPhaseIndex = PHASE_INDEX.get('done') ?? currentPhaseIndex
+
+  return PRESENTATION_PHASES.map((definition, index) => {
+    const phaseEvents = grouped.get(definition.id) ?? []
+    const latest = phaseEvents[phaseEvents.length - 1]
+    const { current, total, percent } = phaseProgress(phaseEvents)
+    let phaseStatus: PresentationPhaseStatus = 'pending'
+
+    if (index < currentPhaseIndex) {
+      phaseStatus = 'done'
+    } else if (index === currentPhaseIndex) {
+      if (status === 'failed') phaseStatus = 'error'
+      else if (status === 'cancelled') phaseStatus = 'cancelled'
+      else if (status === 'succeeded') phaseStatus = 'done'
+      else phaseStatus = 'active'
+    }
+
+    return {
+      ...definition,
+      status: phaseStatus,
+      message: latest?.message || definition.description,
+      eventCount: phaseEvents.length,
+      pageCurrent: current,
+      pageTotal: total,
+      progressPercent: phaseStatus === 'done' ? 100 : percent,
+      ...(latest?.created_at ? { updatedAt: latest.created_at } : {}),
+    }
+  })
+}
+
+export function overallTaskProgress(
+  task: PptTask | null | undefined,
+  events: readonly PptAgentEvent[],
+) {
+  if (!task) return 0
+  if (task.status === 'succeeded') return 100
+
+  const phases = projectTaskPhases(events, task)
+  const current = phases.find((phase) => ['active', 'error', 'cancelled'].includes(phase.status))
+    ?? [...phases].reverse().find((phase) => phase.status === 'done')
+    ?? phases[0]
+  if (!current) return 0
+
+  const [start, end] = PHASE_PROGRESS_RANGES[current.id]
+  const ratio = current.progressPercent > 0
+    ? current.progressPercent / 100
+    : current.status === 'active' ? 0.12 : 0
+  return Math.max(0, Math.min(100, Math.round(start + (end - start) * ratio)))
+}
+
+export function compactTaskEvents(events: readonly PptAgentEvent[]): CompactTaskEvent[] {
+  const compacted: CompactTaskEvent[] = []
+  for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    const previous = compacted[compacted.length - 1]
+    if (previous && compactEventKey(previous.event) === compactEventKey(event) && canCompactEvent(event)) {
+      previous.event = event
+      previous.repeatCount += 1
+      continue
+    }
+    compacted.push({ event, repeatCount: 1 })
+  }
+  return compacted
+}
+
 export function progressLabel(event: PptAgentEvent) {
   const progress = event.progress
   if (!progress || progress.total <= 0) return ''
   const unit = progress.unit === 'page' ? '页' : progress.unit || '项'
   return `${progress.current}/${progress.total} ${unit}`
+}
+
+function phaseProgress(events: readonly PptAgentEvent[]) {
+  let current = 0
+  let total = 0
+  let percent = 0
+  for (const event of events) {
+    const pageCurrent = Math.max(0, Number(event.page?.page_index) || 0)
+    const pageTotal = Math.max(0, Number(event.page?.page_count) || 0)
+    const progressCurrent = Math.max(0, Number(event.progress?.current) || 0)
+    const progressTotal = Math.max(0, Number(event.progress?.total) || 0)
+    current = Math.max(current, pageCurrent, progressCurrent)
+    total = Math.max(total, pageTotal, progressTotal)
+    if (typeof event.progress?.percent === 'number' && Number.isFinite(event.progress.percent)) {
+      percent = Math.max(percent, event.progress.percent)
+    }
+  }
+  if (total > 0) percent = Math.max(percent, current / total * 100)
+  return {
+    current,
+    total,
+    percent: Math.max(0, Math.min(100, Math.round(percent))),
+  }
+}
+
+function compactEventKey(event: PptAgentEvent) {
+  return [
+    phaseIdForStage(event.stage),
+    event.type,
+    event.page?.page_index ?? '',
+    event.message.trim().replace(/\s+/g, ' ').toLocaleLowerCase(),
+  ].join('|')
+}
+
+function canCompactEvent(event: PptAgentEvent) {
+  return !event.error && !event.final_result && !(event.resources?.length) && !event.progress && !event.page
 }
 
 export function resolveResourceUrl(url: string) {

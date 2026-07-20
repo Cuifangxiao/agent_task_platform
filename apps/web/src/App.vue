@@ -7,9 +7,12 @@ import {
   previewAgents,
   previewLogs,
   previewModels,
+  previewPptEventsByRun,
+  previewPptTasks,
   previewProviders,
 } from '@/dev/previewData'
 import type { PresentationApi } from '@/features/presentations/api'
+import type { PptAgentEvent, PptTask } from '@/features/presentations/types'
 import AgentListPage from '@/pages/AgentListPage.vue'
 import DashboardPage from '@/pages/DashboardPage.vue'
 import LoginPage from '@/pages/LoginPage.vue'
@@ -26,17 +29,119 @@ const previewPage = import.meta.env.DEV && previewParam && previewPages.has(prev
 const isDesignPreview = previewPage !== null
 const activePage = ref(previewPage ?? 'dashboard')
 const saving = ref(false)
+const designPreviewTasks = ref<PptTask[]>(previewPptTasks.map((task) => ({ ...task })))
+const designPreviewEvents = new Map<string, PptAgentEvent[]>(
+  Object.entries(previewPptEventsByRun).map(([runId, events]) => [runId, events.map((event) => ({ ...event }))]),
+)
+let designPreviewTaskSequence = 100
+
+function findDesignPreviewTask(taskOrRunId: string) {
+  return designPreviewTasks.value.find((task) => (
+    task.task_id === taskOrRunId || task.run_id === taskOrRunId
+  ))
+}
+
+function cancelDesignPreviewTask(taskOrRunId: string) {
+  const task = findDesignPreviewTask(taskOrRunId)
+  if (!task || task.status !== 'running') return task
+  const now = new Date().toISOString()
+  const runId = task.run_id || task.task_id
+  const events = designPreviewEvents.get(runId) ?? []
+  const sequence = Math.max(task.last_event_sequence ?? 0, events.at(-1)?.sequence ?? 0) + 1
+  const cancelled: PptTask = {
+    ...task,
+    status: 'cancelled',
+    message: '任务已取消',
+    updated_at: now,
+    finished_at: now,
+    last_event_sequence: sequence,
+    error: { code: 'TASK_CANCELLED', message: '任务已取消' },
+  }
+  designPreviewTasks.value = designPreviewTasks.value.map((item) => (
+    item.task_id === task.task_id ? cancelled : item
+  ))
+  designPreviewEvents.set(runId, [...events, {
+    task_id: task.task_id,
+    run_id: runId,
+    sequence,
+    type: 'TASK_FAILED',
+    stage: task.stage,
+    message: '任务已取消',
+    error: cancelled.error,
+    created_at: now,
+  }])
+  return cancelled
+}
+
 const designPreviewPresentationApi: PresentationApi = {
-  createTask: async () => { throw new Error('设计预览中不能创建真实任务。') },
-  listTasks: async () => [],
-  getTask: async () => { throw new Error('设计预览中没有真实任务。') },
-  cancelTask: async () => { throw new Error('设计预览中不能取消任务。') },
-  downloadTaskFile: async () => { throw new Error('设计预览中没有可下载的文件。') },
-  createRealtimeClient: ({ onConnectionState }) => ({
-    connect: () => onConnectionState('closed'),
-    subscribe: async () => {},
+  createTask: async (payload) => {
+    const now = new Date().toISOString()
+    designPreviewTaskSequence += 1
+    const taskId = `preview-run-${designPreviewTaskSequence}`
+    const task: PptTask = {
+      schema_version: '1',
+      event_id: `${taskId}-event-1`,
+      thread_id: payload.thread_id || `preview-thread-${designPreviewTaskSequence}`,
+      run_id: taskId,
+      task_id: taskId,
+      client_request_id: payload.client_request_id,
+      agent_config_id: payload.agent_config_id,
+      description: payload.description,
+      status: 'running',
+      stage: 'PREPARING',
+      message: '正在准备需求与参考资料',
+      last_event_sequence: 1,
+      created_at: now,
+      updated_at: now,
+    }
+    designPreviewTasks.value = [task, ...designPreviewTasks.value]
+    designPreviewEvents.set(taskId, [{
+      task_id: taskId,
+      run_id: taskId,
+      thread_id: task.thread_id,
+      sequence: 1,
+      type: 'TASK_STARTED',
+      stage: 'PREPARING',
+      message: 'PPT generation started',
+      created_at: now,
+    }])
+    return task
+  },
+  listTasks: async (options = {}) => {
+    const tasks = options.threadId
+      ? designPreviewTasks.value.filter((task) => task.thread_id === options.threadId)
+      : designPreviewTasks.value
+    return tasks.slice(0, options.limit ?? tasks.length)
+  },
+  getTask: async (taskId) => {
+    const task = findDesignPreviewTask(taskId)
+    if (!task) throw new Error('找不到设计预览任务。')
+    return task
+  },
+  cancelTask: async (taskId) => {
+    const task = cancelDesignPreviewTask(taskId)
+    if (!task) throw new Error('找不到设计预览任务。')
+    return task
+  },
+  downloadTaskFile: async () => ({
+    blob: new Blob(['PPT design preview'], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
+    filename: 'pptagent-preview.pptx',
+  }),
+  createRealtimeClient: ({ onConnectionState, onEvent, onSnapshot }) => ({
+    connect: () => onConnectionState('open'),
+    subscribe: async (runId, after = 0) => {
+      const task = findDesignPreviewTask(runId)
+      if (!task) return
+      for (const event of designPreviewEvents.get(runId) ?? []) {
+        if (event.sequence > after) onEvent(event)
+      }
+      onSnapshot(task)
+    },
     unsubscribe: async () => {},
-    cancel: async () => {},
+    cancel: async (runId) => {
+      const task = cancelDesignPreviewTask(runId)
+      if (task) onSnapshot(task)
+    },
     ping: async () => {},
     close: () => {},
   }),

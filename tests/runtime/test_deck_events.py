@@ -16,9 +16,13 @@ def test_preview_event_uses_typed_page_and_relative_resources():
     )
 
     assert event.type is EventType.ARTIFACT_READY
-    assert event.stage is PptStage.RENDERING
+    assert event.stage is PptStage.GENERATING_PAGES
     assert event.page.page_index == 2
     assert event.page.page_count == 5
+    assert event.progress.current == 2
+    assert event.progress.total == 5
+    assert event.progress.percent == 40.0
+    assert event.progress.unit == "page"
     assert [item.type for item in event.resources] == [
         ResourceType.PAGE_PREVIEW,
         ResourceType.HTML,
@@ -32,8 +36,24 @@ def test_preview_event_uses_typed_page_and_relative_resources():
     assert all("_v" not in item.relative_path for item in event.resources)
 
 
+def test_page_start_uses_the_same_page_stage_and_progress_shape_as_preview():
+    event = events.slide_started(
+        "Generating page 2/5: Architecture",
+        {"index": 2, "total": 5, "title": "Architecture"},
+    )
+
+    assert event.type is EventType.STEP_STARTED
+    assert event.stage is PptStage.GENERATING_PAGES
+    assert event.page.page_index == 2
+    assert event.page.page_count == 5
+    assert event.progress.current == 2
+    assert event.progress.total == 5
+    assert event.progress.percent == 40.0
+    assert event.progress.unit == "page"
+
+
 def test_stage_progress_maps_done_to_step_completed():
     event = events.stage_progress("writer", "writer completed", {"status": "done"})
 
     assert event.type is EventType.STEP_COMPLETED
-    assert event.stage is PptStage.GENERATING_CONTENT
+    assert event.stage is PptStage.GENERATING_PAGES

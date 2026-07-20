@@ -15,7 +15,6 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 import core.deck.events as events
-from core.deck.helpers import emit_agent
 from core.deck.instrumentation import instrument_node, run_phase_graph
 from core.deck.design.catalog import (
     TemplatePack,
@@ -862,7 +861,6 @@ def prepare_style_options(
     output_root: Path,
 ) -> dict[str, Any]:
     writer = get_stream_writer()
-    emit_agent(writer, "style", "Template Curator", "从静态模板目录选择首个推荐视觉方向。")
     writer(events.stage_started("style", "Selecting the recommended style"))
     options = build_style_options(state, output_root)
     selected, _ = select_style_option(options, "")

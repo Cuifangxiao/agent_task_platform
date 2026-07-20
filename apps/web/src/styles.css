@@ -3005,7 +3005,15 @@ label {
   .app-shell.sidebar-is-collapsed,
   .login-panel,
   .two-column {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell,
+  .main,
+  .page-stage {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .sidebar {

@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 import json
+import logging
 
 import core.deck.agents.generation.graph as generation_graph
 from core.deck.agents.design.graph import build_style_options
 from core.deck.design import get_template_pack, template_preview_path, template_svg_source
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.rendering.artist import build_svg_artist_prompt, render_svg_artwork, resolve_page_blueprint, validate_artist_svg
+from core.deck.contract import EventType, PptStage
 from core.deck.spec import DeckSpec, SlideSpec, default_theme
 
 
@@ -218,9 +220,10 @@ def test_artist_gate_rejects_pages_that_ignore_locked_geometry():
     assert any(issue.kind == "svg_blueprint_geometry" for issue in issues)
 
 
-def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch):
+def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch, caplog):
     emitted = []
     monkeypatch.setattr(generation_graph, "get_stream_writer", lambda: emitted.append)
+    caplog.set_level(logging.INFO, logger=generation_graph.__name__)
     writer_llm = StaticJSONLLM(
         {
             "index": 1,
@@ -265,6 +268,18 @@ def test_slide_pipeline_routes_explicit_designer_to_full_svg_artist(monkeypatch)
     assert result["artifacts"][0]["svg_renderer"] == "llm_svg"
     assert result["artifacts"][0]["template_id"] == "consulting_signal"
     assert "Market growth" in browser.svg
+    assert [
+        (event.type, event.stage, event.page.page_index if event.page else None)
+        for event in emitted
+    ] == [
+        (EventType.STEP_STARTED, PptStage.GENERATING_PAGES, None),
+        (EventType.STEP_STARTED, PptStage.GENERATING_PAGES, 1),
+        (EventType.ARTIFACT_READY, PptStage.GENERATING_PAGES, 1),
+    ]
+    assert [event.progress.current for event in emitted[1:]] == [1, 1]
+    assert [event.progress.total for event in emitted[1:]] == [1, 1]
+    assert "event=ppt_slide_designer_end" in caplog.text
+    assert "model_call_count=1" in caplog.text
 
 
 def test_slide_pipeline_falls_back_after_one_invalid_designer_call(monkeypatch):

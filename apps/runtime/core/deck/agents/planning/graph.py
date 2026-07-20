@@ -9,7 +9,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 import core.deck.events as events
-from core.deck.helpers import clamp_slide_count, component_from_layout, emit_agent, truncate
+from core.deck.helpers import clamp_slide_count, component_from_layout, truncate
 from core.deck.instrumentation import instrument_node, run_phase_graph
 from core.deck.llm import (
     compose_context_prompt,
@@ -56,7 +56,6 @@ class Planning:
 
 def prepare_brief(state: DeckGraphState, llm_registry: dict[str, Any] | None = None) -> dict[str, Any]:
     writer = get_stream_writer()
-    emit_agent(writer, "brief", "Researcher", "整理输入材料和事实表。")
     writer(events.stage_started("brief", "Preparing deck brief"))
 
     deck_title = str(state.get("deck_title") or "").strip() or "Untitled presentation"
@@ -228,7 +227,6 @@ def _extract_value_and_unit(statement: str) -> tuple[str, str]:
 
 def generate_outline(state: DeckGraphState, llm_registry: dict[str, Any]) -> dict[str, Any]:
     writer = get_stream_writer()
-    emit_agent(writer, "outline", "Strategist", "规划叙事顺序并流式输出包含页面节奏、版式意图和证据要求的 Markdown 大纲。")
     writer(events.stage_started("outline", "Generating deck outline"))
 
     parts: list[str] = []
@@ -237,7 +235,6 @@ def generate_outline(state: DeckGraphState, llm_registry: dict[str, Any]) -> dic
         if not delta:
             continue
         parts.append(delta)
-        writer(events.text_delta("outline", "outline_markdown", delta, "Streaming outline markdown"))
 
     outline_markdown = normalize_outline_markdown("".join(parts), state)
     plan = outline_markdown_to_plan(outline_markdown, state)

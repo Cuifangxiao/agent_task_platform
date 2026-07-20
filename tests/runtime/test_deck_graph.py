@@ -1,6 +1,10 @@
+from types import SimpleNamespace
+
+import core.deck.agents.planning.graph as planning_graph
 from core.deck.contract import GeneratePptInput, InputResource
 from core.deck.agents.design.graph import build_style_options, select_style_option
 from core.deck.agents.planning.graph import outline_prompt
+from core.deck.contract import EventType, PptStage
 from core.deck.sources import parse_uploaded_files_with_provenance
 
 
@@ -40,6 +44,40 @@ def test_outline_prompt_adds_uploaded_sources_only_when_present():
     )
     assert "Uploaded documents:" in prompt
     assert "Revenue grew 35%." in prompt
+
+
+def test_outline_streaming_emits_only_boundary_events_not_one_event_per_chunk(monkeypatch):
+    class ChunkedOutlineLLM:
+        @staticmethod
+        def stream(_messages):
+            for content in (
+                "# Architecture\n",
+                "> Explain the flow.\n",
+                "## 1. Context\n",
+                "- Key message: Why the system exists.\n",
+            ):
+                yield SimpleNamespace(content=content)
+
+    emitted = []
+    monkeypatch.setattr(planning_graph, "get_stream_writer", lambda: emitted.append)
+
+    result = planning_graph.generate_outline(
+        {
+            "deck_title": "Architecture",
+            "user_description": "Explain the system",
+            "brief": {"audience": "Engineers", "goal": "Explain"},
+            "uploaded_file_text": "",
+        },
+        {"outline": ChunkedOutlineLLM()},
+    )
+
+    assert result["plan"]["title"] == "Architecture"
+    assert [event.type for event in emitted] == [
+        EventType.STEP_STARTED,
+        EventType.STEP_COMPLETED,
+    ]
+    assert all(event.stage is PptStage.PLANNING for event in emitted)
+    assert emitted[-1].message == "Outline ready"
 
 
 def test_uploaded_resources_keep_page_and_paragraph_provenance():
