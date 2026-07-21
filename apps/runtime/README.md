@@ -26,11 +26,11 @@ apps/runtime/
 │   └── ppt_handler.py       #   PPT AgentEvent proto <-> core
 ├── core/                    # 领域内核: 零 proto/grpc 依赖, 可独立单测
 │   ├── provider/            #   contract.py(Input/Output DTO) + service.py(业务)
-│   ├── deck/                #   PPT contract、LangGraph agents、本地渲染与导出
-│   │   ├── agents/          #   四个 phase；节点实现和子图组装都在各自 graph.py
-│   │   ├── runner.py        #   PptGraph 主图，顺序组装四个 phase
+│   ├── deck/                #   PPT contract、HTML-first LangGraph、本地渲染与导出
+│   │   ├── agents/          #   planning/design/generation/postprocessor 扁平节点
+│   │   ├── runner.py        #   18 节点根图与 repair/fallback/逐页条件路由
 │   │   ├── llm.py           #   模型调用、prompt 与结构化输出工具
-│   │   └── state.py         #   主图与子图共享的状态 schema
+│   │   └── state.py         #   分区、可序列化的状态 schema
 │   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
 │   ├── llm/                 #   模型接入层: 各 provider 客户端(统一 BaseLLMClient 接口)
 │   ├── rag/  memory/  tools/
@@ -71,35 +71,73 @@ cp .env.example .env                 # 按需填密钥
 
 ## PPT 生成运行依赖
 
-PPT 使用独立的 gRPC 服务端流。Go 发送一次 `GeneratePpt` 请求，Runtime 为该请求创建
-`core/deck/runner.py` 中的 `PptGraph`，持续返回 `AgentEvent`。主图按 phase 组装：
+PPT 使用独立的 gRPC 服务端流。Go 发送一次 `GeneratePpt` 请求，Runtime 为每个
+run 创建独立的 `core/deck/runner.py::PptGraph`，通过 custom stream 持续返回 `AgentEvent`。
+当前是 HTML-first v2，根图直接暴露 18 个节点，不再组装四个 phase 子图：
 
-- `Planning`：`brief -> outline`；
-- `Design`：`style -> design_lock`；
-- `Generation`：`write_slides`；
-- `Postprocessor`：`export`。
+```text
+normalize_request -> plan_deck -> select_template -> create_design_spec
+-> prepare_slide -> generate_slide_content -> generate_slide_html
+-> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
+   -> [repair_slide_html -> sanitize...] | [build_fallback_html -> sanitize...] | capture_png
+-> persist_slide_artifacts -> emit_slide_preview -> advance_slide
+   -> [more: prepare_slide] | [done: assemble_image_pptx -> finalize_deck]
+```
 
-每个 phase 都采用同一套直接结构：`__init__` 初始化依赖并设置 `self.graph`，节点方法和本 phase
-专属逻辑位于当前目录的 `graph.py`，`compile_graph()` 用原生 `StateGraph.add_node/add_edge` 组图，
-`run()` 执行子图；跨 phase 的埋点、模型调用和小型确定性 helper 位于 `deck/` 顶层公共模块。`PptGraph` 只负责
-`planning_phase -> design_phase -> generation_phase -> postprocessor_phase` 的顶层顺序和子图事件
-转发。扩展时新增一个同形态的 phase，并在 `runner.py` 中实例化和连接即可，无额外 component DSL。
-已有 phase 也可以通过 `PptGraph` 的同名构造参数直接替换。
-每个请求 fresh compile、从头单向执行，无 checkpointer、人工 review 或 resume。
+LLM 边界使用 `DeckBrief`、`DeckPlan`、`DesignSpec`、`SlideContentSpec` 和
+`HtmlSlideSpec` 等严格 Pydantic schema；LangGraph state 只保存可序列化字典、诊断和相对产物信息。
+`completed_slides` 是以 `slide_id` 为键的幂等结果映射。每个请求从头执行，当前没有
+LangGraph checkpointer、人工 review 或 pause/resume。
 
-模型节点固定为 `brief`、`outline`、`style`、`writer`、`designer`。模型配置来自 Go 请求，
-Runtime 不读取业务数据库。生成过程中产生的 SVG、HTML、预览和最终 PPTX 都写入
-`DECK_ARTIFACTS_DIR/{task_id}/`；未配置时默认写入 `apps/runtime/artifacts/decks`。
+设计系统位于 `core/deck/design_system/html/`，提供 4 套完整主题（`paper_editorial`、
+`executive_signal`、`midnight_product`、`alpine_research`）、10 个 layout recipe 和 24 个本地 Lucide 图标。
+模型生成的 HTML/CSS 会经过 parser-backed allowlist 清洗，再装入含 CSP、全局 DesignSpec token 和
+trusted base CSS 的文档壳。Chromium 对每页执行越界、溢出、重叠、最小字号、节点预算和字体可用性检查；
+内容错误最多修复两次，然后进入确定性 recipe fallback。数字、人物、实质性引语、客户案例和已实现结果
+还会经过来源守卫；有效但无关的 `source_ref` 不能授权新事实。
 
-部署时安装 Python 依赖后，还需要安装 Playwright Chromium:
+渲染画布为 `1600×900` CSS px，`deviceScaleFactor=2`，每页输出 `3200×1800` PNG。生产预览事件
+只发布 `PAGE_PREVIEW` PNG，使用稳定的 `sXX-preview` resource ID；已清洗 HTML 会持久化供审计，
+但不通过页预览事件暴露。每条新版页预览事件还携带以 `artifact_hash` 为值的可选 `revision`，
+用于客户端精确识别已持久化页面版本。最终 PPTX 每页只含一张全出血 PNG，因此视觉稳定但页内元素不可编辑。
+
+模型角色仍固定为 `brief`、`outline`、`style`、`writer`、`designer`，配置由 Go 请求注入。
+上传文件当前只用于文本/provenance；上传图片不会进入生成节点，这一版没有多模态视觉分析。
+
+安装 Python 依赖后，还需要 Playwright Chromium：
 
 ```bash
 .venv/bin/python -m playwright install chromium
 ```
 
-若 Go 与 Runtime 位于不同容器，`python_agent.artifacts_dir` 和 `DECK_ARTIFACTS_DIR`
-必须挂载到同一个物理目录。Runtime 在事件中只返回任务目录内的相对路径；绝对路径、HTTP URL、
-鉴权和下载边界都由 Go 处理。完整流程见仓库根目录的 `docs/PPT_GENERATION_PIPELINE.md`。
+Linux/CI 可使用：
+
+```bash
+.venv/bin/python -m playwright install --with-deps chromium
+sudo apt-get install -y fontconfig fonts-noto-cjk fonts-inter
+```
+
+四套主题只使用 `Noto Sans CJK SC`（中文与混排）和 `Inter`（拉丁文）。运行
+`fc-list : family | rg -i 'Noto Sans CJK SC|Inter'` 检查目标环境；字体缺失是硬性渲染错误。
+生产 Runtime 应使用非 root 用户，并显式开启 Chromium sandbox。
+
+生成 10 页模板画廊和三套 6 页 HTML/PNG/PPTX 样例：
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/generate_html_deck_samples.py
+```
+
+输出位于 `artifacts/deck-v2-samples/`；macOS 可通过 `--chinese-font "PingFang SC" --latin-font "Arial"`
+使用本机字体进行开发预览。生产验收仍应使用 `Noto Sans CJK SC` / `Inter`。
+
+生成产物写入 `DECK_ARTIFACTS_DIR/{task_id}/`，默认为 `apps/runtime/artifacts/decks`。若 Go 与 Runtime
+位于不同容器，`python_agent.artifacts_dir` 和 `DECK_ARTIFACTS_DIR` 必须挂载到同一物理目录。
+Runtime 事件只返回相对路径；绝对路径、URL、鉴权和下载边界由 Go 处理。Go 使用 WebSocket
+`/api/v1/ppt/ws` 发布事件，并将 run 快照和完整事件日志持久化到 MySQL 的 `ppt_runs` / `ppt_run_events`；
+这条路径不使用 SSE，TaskHub 仅保留实时 fan-out 和取消控制。
+
+完整架构、artifact 布局、字体合约、测试命令和当前限制见
+`docs/PPT_GENERATION_PIPELINE.md`。
 
 ## proto 代码生成
 

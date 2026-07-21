@@ -10,7 +10,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, TypeVar
+
+from pydantic import BaseModel, ValidationError
 
 from core.deck.runtime_metrics import record_model_call, record_model_response, record_retry, record_token_usage
 
@@ -18,6 +20,15 @@ from core.deck.runtime_metrics import record_model_call, record_model_response, 
 PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 logger = logging.getLogger(__name__)
 _LLM_LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("deck_llm_log_context", default={})
+StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
+
+
+class StructuredOutputError(ValueError):
+    """The model answered, but its complete response violated the schema."""
+
+
+class ModelInvocationError(RuntimeError):
+    """The provider call failed before a schema-valid answer was available."""
 
 
 @contextmanager
@@ -201,6 +212,139 @@ def invoke_json_with_retries(llm: Any, system: str, user: str, *, attempts: int)
         )
         return parsed
     raise ValueError(str(last_error or "model did not return JSON"))
+
+
+def invoke_structured_with_retries(
+    llm: Any,
+    model_type: type[StructuredModel],
+    *,
+    system: str,
+    user: str,
+    attempts: int = 2,
+) -> StructuredModel:
+    """Invoke a model through a formal Pydantic schema boundary.
+
+    LangChain-native models use ``with_structured_output``.  Compatibility
+    providers must return one complete JSON document which is parsed with
+    ``model_validate_json``; Markdown fences and substring recovery are
+    intentionally not supported.
+    """
+
+    structured_llm: Any = None
+    if hasattr(llm, "with_structured_output"):
+        try:
+            structured_llm = llm.with_structured_output(model_type)
+        except (AttributeError, NotImplementedError, TypeError, ValueError):
+            structured_llm = None
+
+    schema_json = json.dumps(model_type.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
+    strict_system = system + "\n\nOutput must conform to this JSON Schema:\n" + schema_json
+    prompt = user
+    total_attempts = max(1, int(attempts))
+    last_validation_error: Exception | None = None
+    last_invocation_error: Exception | None = None
+
+    for attempt in range(total_attempts):
+        started_at = time.perf_counter()
+        output_chars = 0
+        _log_call_start(
+            llm,
+            kind="structured",
+            attempt=attempt + 1,
+            attempts=total_attempts,
+            input_chars=len(strict_system) + len(prompt),
+        )
+        try:
+            record_model_call()
+            target = structured_llm or llm
+            response = target.invoke([("system", strict_system), ("human", prompt)])
+            record_token_usage(response)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            if _is_structured_validation_exception(exc):
+                last_validation_error = exc
+                _log_call_error(
+                    llm,
+                    kind="structured",
+                    attempt=attempt + 1,
+                    attempts=total_attempts,
+                    started_at=started_at,
+                    phase="validate",
+                    exc=exc,
+                )
+                if attempt + 1 < total_attempts:
+                    record_retry()
+                    prompt = user + "\n\nThe previous structured response violated the schema. Return one corrected JSON object only."
+                    continue
+                raise StructuredOutputError(str(exc)) from exc
+            last_invocation_error = exc
+            _log_call_error(
+                llm,
+                kind="structured",
+                attempt=attempt + 1,
+                attempts=total_attempts,
+                started_at=started_at,
+                phase="invoke",
+                exc=exc,
+            )
+            if attempt + 1 < total_attempts:
+                record_retry()
+                continue
+            raise ModelInvocationError(str(exc)) from exc
+
+        try:
+            if isinstance(response, model_type):
+                parsed = response
+            elif isinstance(response, BaseModel):
+                parsed = model_type.model_validate(response.model_dump(mode="json"))
+            elif isinstance(response, dict):
+                parsed = model_type.model_validate(response)
+            else:
+                text = extract_text(response).strip()
+                output_chars = len(text)
+                parsed = model_type.model_validate_json(text)
+        except (ValidationError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            last_validation_error = exc
+            _log_call_error(
+                llm,
+                kind="structured",
+                attempt=attempt + 1,
+                attempts=total_attempts,
+                started_at=started_at,
+                phase="validate",
+                exc=exc,
+                output_chars=output_chars,
+            )
+            if attempt + 1 < total_attempts:
+                record_retry()
+                prompt = user + "\n\nThe previous complete response violated the schema. Return one corrected JSON object only."
+                continue
+            raise StructuredOutputError(str(exc)) from exc
+
+        _log_call_end(
+            llm,
+            kind="structured",
+            attempt=attempt + 1,
+            attempts=total_attempts,
+            started_at=started_at,
+            output_chars=output_chars,
+        )
+        return parsed
+
+    if last_invocation_error is not None:
+        raise ModelInvocationError(str(last_invocation_error)) from last_invocation_error
+    raise StructuredOutputError(str(last_validation_error or "model did not return schema-valid output"))
+
+
+def _is_structured_validation_exception(exc: Exception) -> bool:
+    """Distinguish parser/schema failures from provider transport failures."""
+
+    if isinstance(exc, (ValidationError, json.JSONDecodeError, StructuredOutputError)):
+        return True
+    return type(exc).__name__ in {
+        "OutputParserException",
+        "SchemaValidationError",
+        "StructuredOutputValidationError",
+    }
 
 
 def invoke_text_with_retries(llm: Any, system: str, user: str, *, attempts: int) -> str:

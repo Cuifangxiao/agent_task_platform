@@ -17,10 +17,9 @@ Imported layout families:
 - `pixel_retro`
 - `psychology_attachment`
 
-The original SVG files are retained as design references and as the source for
-pre-generated catalog cover images. They are not copied directly into generated
-presentations. Runtime pages are re-authored against this project's restricted,
-editable SVG contract.
+The original SVG files are retained as design references and provenance for the
+derived catalog packs. They are not copied directly into generated presentations.
+Runtime pages are re-authored against this project's restricted, editable SVG
+contract.
 
 No branded layouts, organization logos, or proprietary brand fonts are included.
-

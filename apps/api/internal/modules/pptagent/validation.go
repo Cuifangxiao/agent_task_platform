@@ -9,8 +9,22 @@ import (
 )
 
 var windowsVolumePattern = regexp.MustCompile(`^[A-Za-z]:`)
+var artifactRevisionPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+const maxEventIDBytes = 160
 
 func validateAgentEvent(event AgentEvent) error {
+	if len(event.EventID) > maxEventIDBytes {
+		return fmt.Errorf("event_id exceeds %d bytes", maxEventIDBytes)
+	}
+	for _, value := range []byte(event.EventID) {
+		if value < 0x21 || value > 0x7e {
+			return fmt.Errorf("event_id must contain printable ASCII without whitespace")
+		}
+	}
+	if event.Revision != "" && !artifactRevisionPattern.MatchString(event.Revision) {
+		return fmt.Errorf("revision must be a lowercase SHA-256 digest")
+	}
 	if event.Sequence == 0 {
 		return fmt.Errorf("event sequence is required")
 	}

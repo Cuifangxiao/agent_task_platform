@@ -339,8 +339,7 @@ def resolve_template_id(state: dict[str, Any], blueprint: dict[str, Any]) -> str
 
     direct_values = [
         blueprint.get("template_id"),
-        state.get("template_id"),
-        (state.get("art_direction") or {}).get("template_id") if isinstance(state.get("art_direction"), dict) else None,
+        state.get("selected_template_id"),
     ]
     for container_key in ("design_spec", "execution_lock", "design_contract", "template_manifest"):
         container = state.get(container_key)

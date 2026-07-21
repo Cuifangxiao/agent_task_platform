@@ -2,7 +2,15 @@
 
 from core.deck.export.text_layer import HIDE_TEXT_JS, TEXT_LAYER_JS
 
-__all__ = ["DeckExporter", "ExportResult", "HIDE_TEXT_JS", "TEXT_LAYER_JS", "extract_text_layer"]
+__all__ = [
+    "DeckExporter",
+    "ExportResult",
+    "HIDE_TEXT_JS",
+    "ImagePptxExportResult",
+    "ImagePptxExporter",
+    "TEXT_LAYER_JS",
+    "extract_text_layer",
+]
 
 
 def __getattr__(name: str):
@@ -10,4 +18,8 @@ def __getattr__(name: str):
         from core.deck.export import pptx
 
         return getattr(pptx, name)
+    if name in {"ImagePptxExporter", "ImagePptxExportResult"}:
+        from core.deck.export import image_pptx
+
+        return getattr(image_pptx, name)
     raise AttributeError(name)

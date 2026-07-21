@@ -87,21 +87,24 @@ flowchart LR
 
 ## PPT 生成流程
 
-当前通信、持久化、并发和失败语义以 [Agent Run / WebSocket 架构](docs/AGENT_RUN_STREAMING_ARCHITECTURE.md) 为准。
+通信、持久化、并发和失败语义以 [Agent Run / WebSocket 架构](docs/AGENT_RUN_STREAMING_ARCHITECTURE.md) 为准；页面生成、HTML 安全边界和图片型 PPTX 产物详见 [PPT HTML-first v2 流水线](docs/PPT_GENERATION_PIPELINE.md)。
 
 ```text
 POST 创建任务
   → Go 解析五个模型节点，并在 MySQL 创建 Run/幂等键/同 thread worker guard
-  → Python 运行线性本地生成流水线并持续发送 AgentEvent
+  → Python 先生成完整 DeckPlan/DesignSpec，再逐页生成并清洗 HTML/CSS
+  → 受控 Chromium 执行 DOM QA、有限 repair/fallback，并逐页发送 PNG AgentEvent
   → Go 校验事件，在同一事务写 Event + Run 快照，提交后通过 WS 广播
   → Go 校验最终 PPTX 存在且 size/hash 匹配，再提交 TASK_COMPLETED
   → worker 退出后释放同 thread guard；终态历史继续保留在 MySQL
 ```
 
 - 使用独立的 `contracts/proto/ppt/ppt_agent.proto` 服务端流协议。
+- Runtime 使用 18 节点扁平 LangGraph；4 套完整主题、10 种版式 recipe 和本地 Lucide 图标共享同一 DesignSpec。
+- 每页预览是固定 `3200×1800` PNG；最终 PPTX 每页只有一张全出血图片，因此视觉同源但页内元素不可编辑。
 - PPT 实时链路只使用一条可复用 WebSocket；每个 run 以独立 sequence 游标订阅和重放。
 - `ppt_runs` 保存快照与 worker 生命周期，`ppt_run_events` 保存完整 canonical 事件；API 重启后历史仍可查询和重放。
-- 没有 outline/style 人工确认、review/coherence/repair、durable queue、Python checkpoint、resume 或多实例 lease/fencing；重启时尚在执行的 run 会收口为 `SERVER_RESTARTED` 可重试失败。
+- 没有 outline/style 人工确认、多模态视觉 review、durable queue、Python checkpoint、resume 或多实例 lease/fencing；重启时尚在执行的 run 会收口为 `SERVER_RESTARTED` 可重试失败。
 - 每个任务的产物位于 `apps/runtime/artifacts/decks/{task_id}/`；Go 与 Python 必须共享这个物理目录。
 - Python 只返回任务目录内的相对路径；Go 负责鉴权、路径边界校验和文件下载。
 

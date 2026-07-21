@@ -1,0 +1,105 @@
+{
+  "schema": "html-layout-recipes.v1",
+  "recipes": [
+    {
+      "family": "cover_minimal",
+      "roles": ["cover"],
+      "purpose": "Introduce one promise with a restrained visual anchor.",
+      "slots": ["eyebrow:24", "title:56", "takeaway:120", "meta:40"],
+      "capacity": {"title_lines": 2, "body_chars": 120, "items": 0},
+      "structure": "12-column canvas; title occupies columns 1–8, one cropped motif occupies 9–12.",
+      "variants": ["offset_orbit", "vertical_signal", "quiet_field"],
+      "visual_anchors": ["one oversized geometric field", "one semantic icon", "one short metadata line"]
+    },
+    {
+      "family": "section_break",
+      "roles": ["section", "context"],
+      "purpose": "Reset the rhythm and name the next chapter or question.",
+      "slots": ["chapter_number:8", "title:42", "takeaway:100"],
+      "capacity": {"title_lines": 2, "body_chars": 100, "items": 0},
+      "structure": "Large chapter marker crosses a single color field; supporting copy remains narrow.",
+      "variants": ["band", "split_field", "number_crop"],
+      "visual_anchors": ["chapter numeral", "horizontal rule", "cropped color field"]
+    },
+    {
+      "family": "statement_focus",
+      "roles": ["insight", "decision", "evidence"],
+      "purpose": "Make one sentence or conclusion impossible to miss.",
+      "slots": ["statement:110", "support:180", "source:60"],
+      "capacity": {"title_lines": 3, "body_chars": 180, "items": 2},
+      "structure": "Statement owns the visual center; support sits on a narrow lower rail.",
+      "variants": ["centered", "left_weighted", "signal_bar"],
+      "visual_anchors": ["oversized phrase", "one signal bar", "one supporting icon"]
+    },
+    {
+      "family": "editorial_split",
+      "roles": ["context", "problem", "evidence", "insight", "solution"],
+      "purpose": "Pair a conclusion-led narrative with one evidence or implication zone.",
+      "slots": ["title:72", "body:240", "bullets:3x70", "aside:140"],
+      "capacity": {"title_lines": 2, "body_chars": 420, "items": 4},
+      "structure": "Asymmetric 7:5 or 8:4 grid; avoid nested cards and dashboard chrome.",
+      "variants": ["text_left_signal_right", "evidence_left_answer_right", "diagonal_field"],
+      "visual_anchors": ["large pull quote", "metric", "single abstract shape"]
+    },
+    {
+      "family": "three_points",
+      "roles": ["context", "evidence", "solution"],
+      "purpose": "Explain exactly three parallel ideas with clear visual hierarchy.",
+      "slots": ["title:72", "point:3x110", "takeaway:120"],
+      "capacity": {"title_lines": 2, "body_chars": 360, "items": 3},
+      "structure": "Three anchors share a baseline but do not look like dashboard cards.",
+      "variants": ["numbered_axis", "staggered_columns", "one_plus_two"],
+      "visual_anchors": ["large numerals", "semantic icons", "shared baseline"]
+    },
+    {
+      "family": "comparison",
+      "roles": ["problem", "evidence", "decision", "solution"],
+      "purpose": "Contrast two states and converge on one implication.",
+      "slots": ["title:72", "left:3x70", "right:3x70", "answer:120"],
+      "capacity": {"title_lines": 2, "body_chars": 460, "items": 6},
+      "structure": "Two evidence fields share a baseline and lead into a single answer band.",
+      "variants": ["before_after", "option_a_b", "tension_resolution"],
+      "visual_anchors": ["central divider", "directional arrow", "answer band"]
+    },
+    {
+      "family": "process",
+      "roles": ["process", "solution", "decision"],
+      "purpose": "Show a finite sequence with outputs rather than decorative arrows.",
+      "slots": ["title:72", "step:3-5x80", "outcome:120"],
+      "capacity": {"title_lines": 2, "body_chars": 480, "items": 5},
+      "structure": "Connected steps follow one reading path; each step contains action and output.",
+      "variants": ["horizontal_flow", "z_path", "vertical_handoff"],
+      "visual_anchors": ["numbered nodes", "connectors", "outcome marker"]
+    },
+    {
+      "family": "timeline",
+      "roles": ["context", "evidence", "process"],
+      "purpose": "Explain change over time with milestones and consequences.",
+      "slots": ["title:72", "milestone:3-5x90", "takeaway:120"],
+      "capacity": {"title_lines": 2, "body_chars": 520, "items": 5},
+      "structure": "Milestones align to one axis; labels alternate to protect whitespace.",
+      "variants": ["horizontal_axis", "vertical_journey", "phase_bands"],
+      "visual_anchors": ["time axis", "milestone dots", "phase labels"]
+    },
+    {
+      "family": "key_metric",
+      "roles": ["evidence", "insight", "decision"],
+      "purpose": "Make one source-backed metric the visual anchor and explain its meaning.",
+      "slots": ["title:72", "metric:16", "label:50", "support:180"],
+      "capacity": {"title_lines": 2, "body_chars": 240, "items": 3},
+      "structure": "One 140px metric or phrase dominates; supporting evidence remains secondary.",
+      "variants": ["hero_left", "hero_center", "metric_with_delta"],
+      "visual_anchors": ["oversized number", "single gauge arc", "source rail"]
+    },
+    {
+      "family": "closing_resolution",
+      "roles": ["closing"],
+      "purpose": "Resolve the opening question with one decision, action, or enduring message.",
+      "slots": ["title:56", "resolution:150", "next_action:80"],
+      "capacity": {"title_lines": 2, "body_chars": 230, "items": 2},
+      "structure": "Closing answer occupies the center; one next action anchors the lower edge.",
+      "variants": ["answer_field", "return_to_motif", "action_line"],
+      "visual_anchors": ["resolved motif", "one action arrow", "short closing line"]
+    }
+  ]
+}

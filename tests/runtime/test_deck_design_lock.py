@@ -13,6 +13,8 @@ def _state():
     return {
         "request_id": "55555555-5555-4555-8555-555555555555",
         "deck_title": "Locked deck",
+        "requested_template_id": "auto",
+        "selected_template_id": "editorial_freeform",
         "brief": {"audience": "Leadership", "goal": "Decide", "language": "en"},
         "theme": default_theme().to_dict(),
         "plan": {

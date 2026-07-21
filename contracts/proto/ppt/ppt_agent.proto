@@ -132,4 +132,12 @@ message AgentEvent {
     ErrorDetail error = 10;
     FinalResult final_result = 11;
   }
+
+  // Stable producer-assigned identity. Older runtimes may omit this field;
+  // consumers must continue to synthesize an ID in that case.
+  string event_id = 12;
+
+  // Optional producer artifact revision. Slide preview events carry the
+  // persisted SlideArtifactMetadata.artifact_hash. Older runtimes omit it.
+  string revision = 13;
 }

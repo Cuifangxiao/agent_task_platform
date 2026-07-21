@@ -122,6 +122,7 @@ type FinalResult struct {
 type AgentEvent struct {
 	SchemaVersion string        `json:"schema_version"`
 	EventID       string        `json:"event_id"`
+	Revision      string        `json:"revision,omitempty"`
 	ThreadID      string        `json:"thread_id"`
 	RunID         string        `json:"run_id"`
 	TaskID        string        `json:"task_id"` // Compatibility alias for run_id.

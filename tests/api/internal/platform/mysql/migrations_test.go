@@ -64,6 +64,7 @@ func TestPptRunStoreMigrationDefinesDurableSnapshotAndCompleteEventLog(t *testin
 		"CREATE TABLE IF NOT EXISTS ppt_run_events",
 		"payload_json JSON NOT NULL",
 		"PRIMARY KEY (run_id, sequence)",
+		"UNIQUE KEY uk_ppt_run_events_event_id (event_id)",
 		"FOREIGN KEY (owner_id) REFERENCES users (id)",
 		"FOREIGN KEY (run_id) REFERENCES ppt_runs (run_id)",
 	} {
@@ -73,5 +74,34 @@ func TestPptRunStoreMigrationDefinesDurableSnapshotAndCompleteEventLog(t *testin
 	}
 	if strings.Contains(script, "FOREIGN KEY (agent_config_id)") {
 		t.Fatal("agent_config_id must remain a historical reference without a foreign key")
+	}
+}
+
+func TestPptEventIDMigrationSupportsStableProducerIDs(t *testing.T) {
+	dir, err := resolveMySQLMigrationDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(filepath.Join(dir, "012_widen_ppt_event_ids.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(payload)
+	statements := splitSQLStatements(script)
+	if len(statements) != 2 {
+		t.Fatalf("migration statement count = %d, want 2", len(statements))
+	}
+	for _, required := range []string{
+		"ALTER TABLE ppt_runs",
+		"event_id VARCHAR(160) CHARACTER SET ascii COLLATE ascii_bin NULL",
+		"ALTER TABLE ppt_run_events",
+		"event_id VARCHAR(160) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("migration is missing %q", required)
+		}
+	}
+	if strings.Contains(strings.ToUpper(script), "DROP INDEX") {
+		t.Fatal("event_id widening must preserve the existing unique index")
 	}
 }

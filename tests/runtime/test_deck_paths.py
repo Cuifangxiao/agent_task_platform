@@ -17,6 +17,8 @@ def test_deck_project_paths_separate_author_sources_previews_and_delivery(tmp_pa
     assert project.notes_total.relative_to(project.root).as_posix() == "notes/total.md"
     for directory in (project.sources, project.analysis, project.images, project.templates, project.svg_output, project.previews, project.notes, project.reports, project.exports, project.backup):
         assert directory.is_dir()
+    assert not project.private_debug.is_relative_to(project.root)
+    assert project.raw_model_output(1, 0).is_relative_to(project.private_debug)
 
 
 def test_normalized_sources_are_archived_before_strategy(tmp_path):

@@ -53,6 +53,32 @@ class DeckProjectPaths:
         return self.root / "images"
 
     @property
+    def slide_specs(self) -> Path:
+        return self.root / "slide_specs"
+
+    @property
+    def diagnostics(self) -> Path:
+        return self.root / "diagnostics"
+
+    @property
+    def private_debug(self) -> Path:
+        """Raw model output storage outside the downloadable task tree.
+
+        The Go artifact endpoint can open any guessed relative path below a
+        task directory, not only resources announced by events.  Keeping raw,
+        unsanitized model output in a sibling private root prevents disclosure
+        even if a caller guesses its filename.
+        """
+
+        configured = os.getenv("DECK_PRIVATE_DEBUG_DIR", "").strip()
+        if configured:
+            base = Path(configured).expanduser().resolve()
+        else:
+            public_root = self.root.parent
+            base = public_root.parent / f".{public_root.name}-private-debug"
+        return (base / self.root.name / "raw-model-output").resolve()
+
+    @property
     def templates(self) -> Path:
         return self.root / "templates"
 
@@ -89,6 +115,18 @@ class DeckProjectPaths:
         return self.root / "design-spec.json"
 
     @property
+    def brief_json(self) -> Path:
+        return self.root / "deck-brief.json"
+
+    @property
+    def deck_plan_json(self) -> Path:
+        return self.root / "deck-plan.json"
+
+    @property
+    def outline_markdown(self) -> Path:
+        return self.root / "outline.md"
+
+    @property
     def design_spec_markdown(self) -> Path:
         return self.root / "design-spec.md"
 
@@ -117,6 +155,10 @@ class DeckProjectPaths:
         return self.reports / "generation-manifest.json"
 
     @property
+    def slide_artifact_manifest(self) -> Path:
+        return self.reports / "slide-artifacts.json"
+
+    @property
     def quality_report(self) -> Path:
         return self.reports / "quality-report.json"
 
@@ -136,12 +178,28 @@ class DeckProjectPaths:
     def preview_background(self, page: int) -> Path:
         return self.previews / f"page-{_positive_page(page):03d}_bg.png"
 
+    def slide_content_spec(self, page: int) -> Path:
+        return self.slide_specs / f"page-{_positive_page(page):03d}.content.json"
+
+    def html_slide_spec(self, page: int) -> Path:
+        return self.slide_specs / f"page-{_positive_page(page):03d}.html.json"
+
+    def slide_diagnostics(self, page: int) -> Path:
+        return self.diagnostics / f"page-{_positive_page(page):03d}.json"
+
+    def raw_model_output(self, page: int, attempt: int) -> Path:
+        attempt_value = max(0, int(attempt))
+        return self.private_debug / f"page-{_positive_page(page):03d}-attempt-{attempt_value:02d}.json"
+
     def ensure(self) -> "DeckProjectPaths":
         for path in (
             self.root,
             self.sources,
             self.analysis,
             self.images,
+            self.slide_specs,
+            self.diagnostics,
+            self.private_debug,
             self.templates,
             self.svg_output,
             self.previews,

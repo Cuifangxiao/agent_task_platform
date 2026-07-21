@@ -89,12 +89,14 @@ export function normalizeTaskEvent(event: RawPresentationEvent): PptAgentEvent |
         ...(typeof event.data.progress.unit === 'string' ? { unit: event.data.progress.unit } : {}),
       }
     : undefined
+  const revision = normalizedArtifactRevision(event.data.revision)
 
   return {
     ...(typeof event.data.schema_version === 'string' || typeof event.data.schema_version === 'number'
       ? { schema_version: event.data.schema_version }
       : {}),
     event_id: normalizedIdentifier(event.data.event_id) || `${taskId}:${sequence}`,
+    ...(revision ? { revision } : {}),
     ...(normalizedIdentifier(event.data.thread_id)
       ? { thread_id: normalizedIdentifier(event.data.thread_id) }
       : {}),
@@ -467,6 +469,11 @@ function optionalFiniteNumber(value: unknown) {
 
 function normalizedIdentifier(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizedArtifactRevision(value: unknown) {
+  const revision = normalizedIdentifier(value)
+  return /^[0-9a-f]{64}$/.test(revision) ? revision : ''
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

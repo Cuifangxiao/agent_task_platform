@@ -65,18 +65,24 @@ def prepare_brief(state: DeckGraphState, llm_registry: dict[str, Any] | None = N
     brief = build_brief(deck_title, description, uploaded_file_text, source_chunks=source_chunks)
     if llm_registry and llm_registry.get("brief") is not None:
         try:
-            brief = normalize_brief(
+            brief = merge_brief_context(
                 invoke_json_with_retries(
                     llm_registry["brief"],
                     system=load_node_prompt("brief"),
                     user=brief_prompt(deck_title, description, uploaded_file_text),
                     attempts=2,
                 ),
-                fallback=brief,
+                deterministic_brief=brief,
             )
         except ValueError as exc:
             record_fallback()
-            writer(events.stage_progress("brief", f"Brief model output was unusable; used deterministic extraction: {exc}", {"status": "warning"}))
+            writer(
+                events.stage_progress(
+                    "brief",
+                    f"Brief model output was unusable; used deterministic extraction: {exc}",
+                    {"status": "warning"},
+                )
+            )
     else:
         record_fallback()
         writer(events.stage_progress("brief", "使用了确定性素材提取"))
@@ -142,9 +148,9 @@ def brief_prompt(deck_title: str, description: str, uploaded_file_text: str) -> 
             "deck_title": deck_title,
             "user_description": description,
             "required_shape": {
-                "facts": [{"id": "fact#1", "statement": "...", "value": "", "unit": "", "source_file": ""}],
                 "audience": "string",
                 "goal": "string",
+                "occasion": "string",
                 "language": "zh|en",
                 "suggested_pages": 8,
             },
@@ -153,18 +159,38 @@ def brief_prompt(deck_title: str, description: str, uploaded_file_text: str) -> 
     )
 
 
-def normalize_brief(raw: dict[str, Any], *, fallback: dict[str, Any]) -> dict[str, Any]:
-    # The deterministic ledger is authoritative because every entry has verified
-    # file/page/section provenance. Model output may improve audience/goal fields,
-    # but must never replace or invent source facts.
-    fallback_facts = [item for item in fallback.get("facts") or [] if isinstance(item, dict)]
+def merge_brief_context(
+    model_context: dict[str, Any],
+    *,
+    deterministic_brief: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge model-inferred presentation context into the source fact ledger."""
+
+    facts = [item for item in deterministic_brief.get("facts") or [] if isinstance(item, dict)]
     return {
-        "facts": fallback_facts,
-        "audience": str(raw.get("audience") or fallback.get("audience") or "general audience").strip(),
-        "goal": str(raw.get("goal") or fallback.get("goal") or "communicate clearly").strip(),
-        "occasion": str(raw.get("occasion") or fallback.get("occasion") or "").strip(),
-        "language": str(raw.get("language") or fallback.get("language") or "zh").strip() or "zh",
-        "suggested_pages": clamp_slide_count(raw.get("suggested_pages") or fallback.get("suggested_pages") or 8),
+        "facts": facts,
+        "audience": str(
+            model_context.get("audience")
+            or deterministic_brief.get("audience")
+            or "general audience"
+        ).strip(),
+        "goal": str(
+            model_context.get("goal")
+            or deterministic_brief.get("goal")
+            or "communicate clearly"
+        ).strip(),
+        "occasion": str(
+            model_context.get("occasion") or deterministic_brief.get("occasion") or ""
+        ).strip(),
+        "language": str(
+            model_context.get("language") or deterministic_brief.get("language") or "zh"
+        ).strip()
+        or "zh",
+        "suggested_pages": clamp_slide_count(
+            model_context.get("suggested_pages")
+            or deterministic_brief.get("suggested_pages")
+            or 8
+        ),
     }
 
 
@@ -392,7 +418,7 @@ __all__ = [
     "Planning",
     "build_brief",
     "generate_outline",
-    "normalize_brief",
+    "merge_brief_context",
     "normalize_outline_markdown",
     "outline_markdown_to_plan",
     "outline_prompt",

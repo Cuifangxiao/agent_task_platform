@@ -103,6 +103,8 @@ def _to_proto(event: AgentEvent):
     timestamp.FromDatetime(event.created_at)
     kwargs = {
         "task_id": event.task_id,
+        "event_id": event.event_id,
+        "revision": event.revision,
         "sequence": event.sequence,
         "created_at": timestamp,
         "type": _EVENT_TYPES[event.type],

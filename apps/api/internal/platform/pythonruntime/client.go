@@ -247,6 +247,8 @@ func (s *pptStream) Recv() (*pptagent.AgentEvent, error) {
 		return nil, err
 	}
 	event := &pptagent.AgentEvent{
+		EventID:   resp.GetEventId(),
+		Revision:  resp.GetRevision(),
 		TaskID:    resp.GetTaskId(),
 		Sequence:  resp.GetSequence(),
 		Type:      pptagent.EventType(resp.GetType().String()),

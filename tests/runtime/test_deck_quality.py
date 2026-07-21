@@ -1,5 +1,5 @@
 from core.deck.agents.design.graph import theme_is_valid
-from core.deck.agents.planning.graph import build_brief, normalize_brief
+from core.deck.agents.planning.graph import build_brief, merge_brief_context
 from core.deck.quality.rules import validate_dom_result
 from core.deck.spec import ThemeTokens
 
@@ -16,10 +16,10 @@ def test_validate_dom_result_maps_browser_findings_to_must_fix_issues():
     assert issues[0].kind == "dom_overflow"
 
 
-def test_normalize_brief_falls_back_when_model_omits_facts():
-    brief = normalize_brief(
+def test_brief_context_merge_keeps_deterministic_facts():
+    brief = merge_brief_context(
         {"audience": "Execs", "suggested_pages": 99},
-        fallback={"facts": [{"id": "fact#1", "statement": "Known fact"}]},
+        deterministic_brief={"facts": [{"id": "fact#1", "statement": "Known fact"}]},
     )
 
     assert brief["facts"] == [{"id": "fact#1", "statement": "Known fact"}]

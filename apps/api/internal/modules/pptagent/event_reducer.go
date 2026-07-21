@@ -51,6 +51,8 @@ func reduceTaskEvent(task Task, event AgentEvent, receivedAt time.Time) (Task, A
 	event.RunID = runID
 	event.TaskID = runID
 	event.Channel = eventChannelForType(event.Type)
+	event.EventID = strings.TrimSpace(event.EventID)
+	event.Revision = strings.TrimSpace(event.Revision)
 	if event.EventID == "" {
 		var err error
 		event.EventID, err = randomUUID()

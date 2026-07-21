@@ -1,8 +1,4 @@
 from xml.etree import ElementTree as ET
-from dataclasses import replace
-
-from PIL import Image
-import pytest
 
 from core.deck.design import (
     list_template_packs,
@@ -10,7 +6,6 @@ from core.deck.design import (
     render_template_reference_svg,
     render_visualization_reference_svg,
     select_visualization,
-    template_preview_path,
     visualization_svg_source,
 )
 from core.deck.quality.svg import validate_svg_page
@@ -67,22 +62,16 @@ def test_template_reference_accepts_confirmed_theme_without_changing_geometry():
     assert len(root.findall(".//*[@data-zone]")) == len(pack.layouts[0]["geometry"])
 
 
-def test_catalog_has_static_16_by_9_cover_for_every_template_pack():
+def test_catalog_has_complete_executable_template_packs():
     packs = list_template_packs()
     assert len(packs) == 11
     assert sum(pack.source.get("kind") == "ppt-master" for pack in packs) == 7
 
     for pack in packs:
-        preview = template_preview_path(pack)
-        with Image.open(preview) as image:
-            assert image.size == (640, 360)
-            assert image.format == "PNG"
-
-
-def test_catalog_preview_resolver_rejects_path_traversal():
-    pack = replace(list_template_packs()[0], cover_preview="../outside.png")
-    with pytest.raises(ValueError, match="escapes the design system"):
-        template_preview_path(pack)
+        assert pack.theme.palette
+        assert pack.theme.fonts
+        assert pack.layout_principles
+        assert pack.layouts
 
 
 def test_visualization_catalog_covers_the_common_artist_grammars():

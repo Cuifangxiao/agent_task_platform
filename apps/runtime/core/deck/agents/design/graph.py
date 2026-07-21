@@ -7,8 +7,6 @@ import json
 import logging
 from pathlib import Path
 import re
-import shutil
-import time
 from typing import Any
 
 from langgraph.config import get_stream_writer
@@ -21,7 +19,6 @@ from core.deck.design.catalog import (
     compatible_layouts,
     get_template_pack,
     list_template_packs,
-    template_preview_path,
 )
 from core.deck.design.visualizations import public_visualization_catalog
 from core.deck.llm import invoke_json_with_retries, load_node_prompt, normalize_llm_registry
@@ -44,26 +41,28 @@ _VISUALIZATION_TYPES = {
     "funnel", "architecture", "table", "kpi", "comparison", "custom",
 }
 logger = logging.getLogger(__name__)
-_SAFE_TEMPLATE_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
 
 class Design:
-    """Style selection and design-lock phase."""
+    """Template selection and design-lock phase."""
 
     def __init__(self, llms: Any, output_dir: Path) -> None:
         self.llm_registry = normalize_llm_registry(llms)
         self.output_dir = Path(output_dir)
         self.graph = self.compile_graph()
 
-    def style(self, state: DeckGraphState) -> dict[str, Any]:
-        return prepare_style_options(state, self.output_dir)
+    def select_template(self, state: DeckGraphState) -> dict[str, Any]:
+        return prepare_template_selection(state)
 
     def design_lock(self, state: DeckGraphState) -> dict[str, Any]:
         return freeze_design_contract(state, self.output_dir, self.llm_registry)
 
     def compile_graph(self):
         builder = StateGraph(DeckGraphState)
-        builder.add_node("style", instrument_node("style", self.style, self.llm_registry))
+        builder.add_node(
+            "template_selection",
+            instrument_node("template_selection", self.select_template, self.llm_registry),
+        )
         builder.add_node(
             "design_lock",
             instrument_node(
@@ -73,8 +72,8 @@ class Design:
                 model_key="style",
             ),
         )
-        builder.add_edge(START, "style")
-        builder.add_edge("style", "design_lock")
+        builder.add_edge(START, "template_selection")
+        builder.add_edge("template_selection", "design_lock")
         builder.add_edge("design_lock", END)
         return builder.compile()
 
@@ -156,7 +155,7 @@ def compile_design_package(
     """Create the deterministic package, optionally refined by an explicit Art Director model."""
 
     art_direction = state.get("art_direction") if isinstance(state.get("art_direction"), dict) else {}
-    template_id = str(state.get("template_id") or art_direction.get("template_id") or "editorial_freeform").strip()
+    template_id = str(state.get("selected_template_id") or "editorial_freeform").strip()
     pack = get_template_pack(template_id)
     theme = ThemeTokens.from_dict(state.get("theme") or pack.theme.to_dict() or default_theme().to_dict())
     plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
@@ -165,7 +164,7 @@ def compile_design_package(
     if not outline_pages:
         raise ValueError("outline contains no executable page sections")
     asset_manifest = _build_asset_manifest(state.get("source_images") or [])
-    selection_source = _template_selection_source(state, art_direction)
+    selection_source = _template_selection_source(state)
     theme_source = "selected_theme_tokens" if isinstance(state.get("theme"), dict) and state.get("theme") else "template_catalog"
     template_manifest = _build_template_manifest(pack, selection_source=selection_source)
 
@@ -566,10 +565,8 @@ def _normalize_design_narrative(raw: Any, fallback: dict[str, str]) -> dict[str,
     return {key: str(raw.get(key) or value).strip() for key, value in fallback.items()}
 
 
-def _template_selection_source(state: DeckGraphState, art_direction: dict[str, Any]) -> str:
-    if art_direction:
-        return "recommended_art_direction"
-    requested = str(state.get("template_id") or "").strip()
+def _template_selection_source(state: DeckGraphState) -> str:
+    requested = str(state.get("requested_template_id") or "").strip()
     return "user_request" if requested and requested != "auto" else "system_recommendation"
 
 
@@ -589,7 +586,7 @@ def _template_provenance(
         "catalog_source": "design_system/template_packs.json",
         "source": dict(pack.source),
         "geometry_source": f"template_packs[{pack.template_id}].layouts[{layout_id}].geometry",
-        "theme_source": "selected art-direction tokens" if theme_source == "selected_theme_tokens" else f"template_packs[{pack.template_id}].theme",
+        "theme_source": "selected template theme" if theme_source == "selected_theme_tokens" else f"template_packs[{pack.template_id}].theme",
         "svg_generator": "core.deck.design.sources.render_template_reference_svg",
         "art_director_refined": art_director_refined,
     }
@@ -853,107 +850,45 @@ def _cell(value: Any) -> str:
     return _md(value).replace("|", "\\|")
 
 
-# ─────────────────────────────── style node ─────────────────────────────────
+# ─────────────────────────── template-selection node ────────────────────────
 
 
-def prepare_style_options(
-    state: DeckGraphState,
-    output_root: Path,
-) -> dict[str, Any]:
+def prepare_template_selection(state: DeckGraphState) -> dict[str, Any]:
+    """Resolve one catalog template and expose only its executable state."""
+
     writer = get_stream_writer()
-    writer(events.stage_started("style", "Selecting the recommended style"))
-    options = build_style_options(state, output_root)
-    selected, _ = select_style_option(options, "")
-    theme = ThemeTokens.from_dict(selected.get("tokens") or {})
-    public_options = public_style_options([selected])
-    writer(events.style_options({"options": public_options}))
-    return _selected_style_state(selected, theme)
-
-
-def build_style_options(
-    state: DeckGraphState,
-    output_root: Path,
-) -> list[dict[str, Any]]:
-    request_id = str(state.get("request_id") or "")
-    started_at = time.perf_counter()
-    packs = _candidate_packs(state)
-    selected_packs = packs[:1]
-    options: list[dict[str, Any]] = []
+    writer(events.stage_started("template_selection", "Selecting the presentation template"))
+    pack = select_template_pack(state)
+    art_direction = build_art_direction(pack, state)
     logger.info(
-        "event=ppt_style_options_start request_id=%s option_count=%s preview_mode=static_template_cover",
-        request_id,
-        len(selected_packs),
+        "event=ppt_template_selected request_id=%s requested_template_id=%s selected_template_id=%s",
+        str(state.get("request_id") or ""),
+        str(state.get("requested_template_id") or "auto"),
+        pack.template_id,
     )
-    for index, pack in enumerate(selected_packs, start=1):
-        option_started_at = time.perf_counter()
-        direction = _direction_from_pack(pack, state)
-        theme = ThemeTokens.from_dict(direction["tokens"])
-        style_id = f"direction_{index}"
-        logger.info(
-            "event=ppt_style_option_start request_id=%s style_id=%s option_index=%s option_count=%s template_id=%s",
-            request_id,
-            style_id,
-            index,
-            len(selected_packs),
-            direction.get("template_id", ""),
-        )
-        cover_path = _materialize_template_cover(output_root, request_id, style_id, pack)
-        options.append(
-            {
-                **direction,
-                "style_id": style_id,
-                "cover_png": cover_path,
-                "cover_html": "",
-                "thumb_b64": "",
-                "tokens_summary": tokens_summary(theme),
-                "sample_render_mode": "static_template_cover",
-                "preview_note": "模板封面示意；生成阶段会根据内容自动适配。",
-            }
-        )
-        logger.info(
-            "event=ppt_style_option_end request_id=%s style_id=%s option_index=%s duration_ms=%s render_mode=%s",
-            request_id,
-            style_id,
-            index,
-            round((time.perf_counter() - option_started_at) * 1000),
-            "static_template_cover",
-        )
-    logger.info(
-        "event=ppt_style_options_end request_id=%s option_count=%s duration_ms=%s",
-        request_id,
-        len(options),
-        round((time.perf_counter() - started_at) * 1000),
-    )
-    return options
+    writer(events.template_selected(pack.name, pack.template_id))
+    return {
+        "selected_template_id": pack.template_id,
+        "theme": pack.theme.to_dict(),
+        "art_direction": art_direction,
+    }
 
 
-def _materialize_template_cover(output_root: Path, request_id: str, style_id: str, pack: TemplatePack) -> str:
-    if not _SAFE_TEMPLATE_ID_RE.fullmatch(pack.template_id):
-        raise ValueError(f"unsafe template id in catalog: {pack.template_id}")
-    source = template_preview_path(pack)
-    project = DeckProjectPaths.for_request(output_root, request_id).ensure()
-    destination_dir = project.templates / "catalog" / pack.template_id
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    destination = destination_dir / f"{style_id}{source.suffix.casefold()}"
-    shutil.copyfile(source, destination)
-    return project.relative(destination)
+def select_template_pack(state: DeckGraphState) -> TemplatePack:
+    ranked = rank_template_packs(state)
+    return ranked[0] if ranked else get_template_pack("editorial_freeform")
 
 
-def _direction_from_pack(pack: TemplatePack, state: DeckGraphState) -> dict[str, Any]:
+def build_art_direction(pack: TemplatePack, state: DeckGraphState) -> dict[str, Any]:
     return {
         "name": pack.name,
         "communication_mode": pack.communication_mode,
         "visual_style": pack.visual_style,
-        "template_id": pack.template_id,
-        "template_mode": pack.template_mode,
-        "template_summary": pack.summary,
         "rationale": pack.summary,
         "execution_assumptions": _execution_assumptions(pack, state),
         "layout_principles": pack.layout_principles,
         "image_strategy": pack.image_strategy,
         "icon_strategy": pack.icon_strategy,
-        "template_source": dict(pack.source),
-        "tokens": pack.theme.to_dict(),
     }
 
 
@@ -975,10 +910,10 @@ def _execution_assumptions(pack: TemplatePack, state: DeckGraphState) -> dict[st
     }
 
 
-def _candidate_packs(state: DeckGraphState) -> list[TemplatePack]:
+def rank_template_packs(state: DeckGraphState) -> list[TemplatePack]:
     packs = list(list_template_packs())
     by_id = {pack.template_id: pack for pack in packs}
-    requested = str(state.get("template_id") or "auto").strip()
+    requested = str(state.get("requested_template_id") or "auto").strip()
     haystack = " ".join(
         [
             str(state.get("user_description") or ""),
@@ -1040,73 +975,6 @@ def theme_is_valid(theme: ThemeTokens) -> bool:
     return not any(issue.severity == "must_fix" for issue in validate_theme_contrast(deck))
 
 
-def public_style_options(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    keys = (
-        "style_id",
-        "name",
-        "communication_mode",
-        "visual_style",
-        "template_id",
-        "template_mode",
-        "template_summary",
-        "template_source",
-        "rationale",
-        "execution_assumptions",
-        "layout_principles",
-        "image_strategy",
-        "icon_strategy",
-        "cover_png",
-        "cover_html",
-        "thumb_b64",
-        "tokens_summary",
-        "sample_render_mode",
-        "preview_note",
-    )
-    return [{key: item.get(key) for key in keys} for item in options]
-
-
-def select_style_option(options: list[dict[str, Any]], style_id: str) -> tuple[dict[str, Any], bool]:
-    for option in options:
-        if str(option.get("style_id") or "") == style_id:
-            return option, True
-    if options:
-        return options[0], False
-    pack = get_template_pack("editorial_freeform")
-    fallback = _direction_from_pack(pack, {}) | {"style_id": "direction_1"}
-    return fallback, False
-
-
-def _selected_style_state(selected: dict[str, Any], theme: ThemeTokens) -> dict[str, Any]:
-    art_direction = {
-        key: selected.get(key)
-        for key in (
-            "style_id",
-            "name",
-            "communication_mode",
-            "visual_style",
-            "template_id",
-            "template_mode",
-            "template_summary",
-            "template_source",
-            "rationale",
-            "execution_assumptions",
-            "layout_principles",
-            "image_strategy",
-            "icon_strategy",
-        )
-    }
-    return {
-        "theme": theme.to_dict(),
-        "art_direction": art_direction,
-        "template_id": str(selected.get("template_id") or "editorial_freeform"),
-    }
-
-
-def tokens_summary(theme: ThemeTokens) -> str:
-    palette = theme.palette
-    return f"{theme.name}: bg {palette.get('bg')}, ink {palette.get('ink')}, accent {palette.get('accent')} / {palette.get('accent2')}; {theme.motif}"
-
-
 __all__ = [
     "ASSET_MANIFEST_SCHEMA",
     "Design",
@@ -1114,15 +982,14 @@ __all__ = [
     "PAGE_BLUEPRINT_SCHEMA",
     "SPEC_LOCK_SCHEMA",
     "TEMPLATE_MANIFEST_SCHEMA",
+    "build_art_direction",
     "build_design_contract",
-    "build_style_options",
     "compile_design_package",
     "freeze_design_contract",
     "page_contract",
-    "prepare_style_options",
-    "public_style_options",
+    "prepare_template_selection",
+    "rank_template_packs",
     "render_template_svg",
-    "select_style_option",
+    "select_template_pack",
     "theme_is_valid",
-    "tokens_summary",
 ]

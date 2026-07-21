@@ -1,96 +1,196 @@
-"""Top-level PPT graph assembly.
+"""Flat LangGraph assembly for the versioned HTML-first deck pipeline.
 
-Each phase owns its internal LangGraph.  This runner only connects phases in
-the same explicit style as the soulmate ``GraphModule``.
+The graph deliberately keeps every meaningful authoring and rendering step at
+the root level.  This makes repair/fallback routing, per-slide persistence
+boundaries, and event ordering observable instead of hiding them inside four
+nested graphs.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 
-from core.deck.agents import Design, Generation, Planning, Postprocessor
-from core.deck.export import DeckExporter
-from core.deck.rendering.browser import BrowserRenderer, BrowserSession
-from core.deck.rendering.html import HTMLSlideRenderer
+from core.deck.agents.design.nodes import DesignNodes
+from core.deck.agents.generation.nodes import GenerationNodes
+from core.deck.agents.planning.nodes import PlanningNodes
+from core.deck.agents.postprocessor.nodes import PostprocessorNodes
+from core.deck.export.image_pptx import ImagePptxExporter
+from core.deck.html import HTMLAssembler
+from core.deck.instrumentation import instrument_node
+from core.deck.rendering.html_browser import HTMLBrowserRenderer, SecureBrowserSession
 from core.deck.state import DeckGraphState
 
 
+NODE_SEQUENCE = (
+    "normalize_request",
+    "plan_deck",
+    "select_template",
+    "create_design_spec",
+    "prepare_slide",
+    "generate_slide_content",
+    "generate_slide_html",
+    "sanitize_and_assemble_html",
+    "render_html_and_measure_dom",
+    "validate_dom",
+    "repair_slide_html",
+    "build_fallback_html",
+    "capture_png",
+    "persist_slide_artifacts",
+    "emit_slide_preview",
+    "advance_slide",
+    "assemble_image_pptx",
+    "finalize_deck",
+)
+
+
 class PptGraph:
-    """Request-scoped root graph composed from four concrete phases."""
+    """Request-scoped, sequential HTML authoring graph.
+
+    Browser and LLM clients are dependency objects owned by the request; only
+    JSON-serializable dictionaries and artifact paths enter ``DeckGraphState``.
+    The optional node-provider arguments keep the graph easy to exercise with
+    deterministic fakes without reintroducing nested phase graphs.
+    """
 
     def __init__(
         self,
         llms: Any,
         output_dir: Path,
-        browser_session: BrowserSession | None = None,
+        browser_session: SecureBrowserSession | None = None,
         *,
-        html_renderer: HTMLSlideRenderer | None = None,
-        browser_renderer: BrowserRenderer | None = None,
-        exporter: DeckExporter | None = None,
-        planning: Any | None = None,
-        design: Any | None = None,
-        generation: Any | None = None,
-        postprocessor: Any | None = None,
+        assembler: HTMLAssembler | None = None,
+        browser_renderer: HTMLBrowserRenderer | None = None,
+        exporter: ImagePptxExporter | None = None,
+        planning_nodes: PlanningNodes | None = None,
+        design_nodes: DesignNodes | None = None,
+        generation_nodes: GenerationNodes | None = None,
+        postprocessor_nodes: PostprocessorNodes | None = None,
+        max_repairs: int = 2,
     ) -> None:
         self.output_dir = Path(output_dir)
-        self.planning = planning if planning is not None else Planning(llms)
-        self.design = design if design is not None else Design(llms, self.output_dir)
-        self.generation = (
-            generation
-            if generation is not None
-            else Generation(
-                llms,
-                self.output_dir,
-                browser_session,
-                html_renderer=html_renderer,
-                browser_renderer=browser_renderer,
-            )
+        self.llm_registry = llms if isinstance(llms, dict) else {}
+        self.browser_session = browser_session or SecureBrowserSession()
+        self._owns_browser_session = browser_session is None
+        self.assembler = assembler or HTMLAssembler()
+        self.browser_renderer = browser_renderer or HTMLBrowserRenderer(self.browser_session)
+        self.exporter = exporter or ImagePptxExporter(self.output_dir)
+
+        self.planning = planning_nodes or PlanningNodes(llms, self.output_dir)
+        self.design = design_nodes or DesignNodes(llms, self.output_dir)
+        self.generation = generation_nodes or GenerationNodes(
+            llms,
+            self.output_dir,
+            assembler=self.assembler,
+            browser_renderer=self.browser_renderer,
+            max_repairs=max_repairs,
         )
-        self.postprocessor = (
-            postprocessor
-            if postprocessor is not None
-            else Postprocessor(
-                self.output_dir,
-                browser_session,
-                exporter=exporter,
-            )
+        self.postprocessor = postprocessor_nodes or PostprocessorNodes(
+            self.output_dir,
+            exporter=self.exporter,
         )
         self.graph = self.compile_graph()
 
     def compile_graph(self):
         builder = StateGraph(DeckGraphState)
-        builder.add_node("planning_phase", self.run_planning_phase)
-        builder.add_node("design_phase", self.run_design_phase)
-        builder.add_node("generation_phase", self.run_generation_phase)
-        builder.add_node("postprocessor_phase", self.run_postprocessor_phase)
+        node_handlers = {
+            "normalize_request": (self.planning.normalize_request, "brief"),
+            "plan_deck": (self.planning.plan_deck, "outline"),
+            "select_template": (self.design.select_template, "style"),
+            "create_design_spec": (self.design.create_design_spec, "style"),
+            "prepare_slide": (self.generation.prepare_slide, ""),
+            "generate_slide_content": (self.generation.generate_slide_content, "writer"),
+            "generate_slide_html": (self.generation.generate_slide_html, "designer"),
+            "sanitize_and_assemble_html": (self.generation.sanitize_and_assemble_html, ""),
+            "render_html_and_measure_dom": (self.generation.render_html_and_measure_dom, ""),
+            "validate_dom": (self.generation.validate_dom, ""),
+            "repair_slide_html": (self.generation.repair_slide_html, "designer"),
+            "build_fallback_html": (self.generation.build_fallback_html, ""),
+            "capture_png": (self.generation.capture_png, ""),
+            "persist_slide_artifacts": (self.generation.persist_slide_artifacts, ""),
+            "emit_slide_preview": (self.generation.emit_slide_preview, ""),
+            "advance_slide": (self.generation.advance_slide, ""),
+            "assemble_image_pptx": (self.postprocessor.assemble_image_pptx, ""),
+            "finalize_deck": (self.postprocessor.finalize_deck, ""),
+        }
+        for name in NODE_SEQUENCE:
+            handler, model_key = node_handlers[name]
+            builder.add_node(
+                name,
+                instrument_node(name, handler, self.llm_registry, model_key=model_key),
+            )
 
-        builder.add_edge(START, "planning_phase")
-        builder.add_edge("planning_phase", "design_phase")
-        builder.add_edge("design_phase", "generation_phase")
-        builder.add_edge("generation_phase", "postprocessor_phase")
-        builder.add_edge("postprocessor_phase", END)
+        builder.add_edge(START, "normalize_request")
+        builder.add_edge("normalize_request", "plan_deck")
+        builder.add_edge("plan_deck", "select_template")
+        builder.add_edge("select_template", "create_design_spec")
+        builder.add_edge("create_design_spec", "prepare_slide")
+        builder.add_edge("prepare_slide", "generate_slide_content")
+        builder.add_edge("generate_slide_content", "generate_slide_html")
+        builder.add_edge("generate_slide_html", "sanitize_and_assemble_html")
+        builder.add_edge("sanitize_and_assemble_html", "render_html_and_measure_dom")
+        builder.add_edge("render_html_and_measure_dom", "validate_dom")
+        builder.add_conditional_edges(
+            "validate_dom",
+            _route_after_validation,
+            {
+                "valid": "capture_png",
+                "repair": "repair_slide_html",
+                "fallback": "build_fallback_html",
+            },
+        )
+        builder.add_edge("repair_slide_html", "sanitize_and_assemble_html")
+        builder.add_edge("build_fallback_html", "sanitize_and_assemble_html")
+        builder.add_edge("capture_png", "persist_slide_artifacts")
+        builder.add_edge("persist_slide_artifacts", "emit_slide_preview")
+        builder.add_edge("emit_slide_preview", "advance_slide")
+        builder.add_conditional_edges(
+            "advance_slide",
+            _route_after_advance,
+            {"more": "prepare_slide", "done": "assemble_image_pptx"},
+        )
+        builder.add_edge("assemble_image_pptx", "finalize_deck")
+        builder.add_edge("finalize_deck", END)
         return builder.compile()
 
-    def run_planning_phase(self, state: DeckGraphState) -> dict[str, Any]:
-        return self.planning.run(state)
+    def invoke(self, input_state: Any, config: dict[str, Any] | None = None, **kwargs: Any):
+        return self.graph.invoke(input_state, config=_graph_config(config), **kwargs)
 
-    def run_design_phase(self, state: DeckGraphState) -> dict[str, Any]:
-        return self.design.run(state)
+    def stream(self, input_state: Any, config: dict[str, Any] | None = None, **kwargs: Any):
+        return self.graph.stream(input_state, config=_graph_config(config), **kwargs)
 
-    def run_generation_phase(self, state: DeckGraphState) -> dict[str, Any]:
-        return self.generation.run(state)
+    def close(self) -> None:
+        """Close resources only when this graph created the browser session."""
 
-    def run_postprocessor_phase(self, state: DeckGraphState) -> dict[str, Any]:
-        return self.postprocessor.run(state)
-
-    def invoke(self, *args: Any, **kwargs: Any):
-        return self.graph.invoke(*args, **kwargs)
-
-    def stream(self, *args: Any, **kwargs: Any):
-        return self.graph.stream(*args, **kwargs)
+        if self._owns_browser_session:
+            self.browser_session.close()
 
 
-__all__ = ["PptGraph"]
+def _route_after_validation(state: DeckGraphState) -> Literal["valid", "repair", "fallback"]:
+    decision = str(state.get("current_render_decision") or "")
+    if decision not in {"valid", "repair", "fallback"}:
+        raise ValueError(f"unexpected render decision: {decision or '<empty>'}")
+    return decision  # type: ignore[return-value]
+
+
+def _route_after_advance(state: DeckGraphState) -> Literal["more", "done"]:
+    plan = state.get("deck_plan") or {}
+    slides = plan.get("slides") if isinstance(plan, dict) else None
+    total = len(slides) if isinstance(slides, list) else 0
+    if total <= 0:
+        raise ValueError("DeckPlan has no slides")
+    return "done" if int(state.get("current_slide_index") or 0) >= total else "more"
+
+
+def _graph_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Allow the bounded 30-page loop without weakening caller config."""
+
+    resolved = dict(config or {})
+    # 30 pages × (10 normal nodes + up to 2 repair laps) stays below 1,000.
+    resolved.setdefault("recursion_limit", 1_000)
+    return resolved
+
+
+__all__ = ["NODE_SEQUENCE", "PptGraph"]

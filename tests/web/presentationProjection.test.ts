@@ -24,6 +24,7 @@ test('a typed transport event becomes one canonical task event', () => {
     data: {
       schema_version: '1',
       event_id: 'event-12',
+      revision: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       thread_id: 'thread-123',
       run_id: 'run-123',
       task_id: 'run-123',
@@ -39,6 +40,7 @@ test('a typed transport event becomes one canonical task event', () => {
   assert.equal(event?.sequence, 12)
   assert.equal(event?.schema_version, '1')
   assert.equal(event?.event_id, 'event-12')
+  assert.equal(event?.revision, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
   assert.equal(event?.thread_id, 'thread-123')
   assert.equal(event?.run_id, 'run-123')
   assert.equal(event?.task_id, 'run-123')
@@ -72,6 +74,21 @@ test('malformed stream data is rejected instead of entering UI state', () => {
   assert.equal(normalizeTaskEvent({ event: 'message', data: 'not-json' }), null)
   assert.equal(normalizeTaskEvent({ event: 'TASK_STARTED', data: { task_id: 'task-1' } }), null)
   assert.equal(normalizeTaskEvent({ id: 1, event: 'unknown', data: { task_id: 'task-1' } }), null)
+})
+
+test('invalid artifact revisions are omitted for backward compatibility', () => {
+  const event = normalizeTaskEvent({
+    id: 2,
+    event: 'ARTIFACT_READY',
+    data: {
+      task_id: 'task-1',
+      sequence: 2,
+      revision: 'not-a-sha256',
+      message: 'preview ready',
+    },
+  })
+
+  assert.equal(event?.revision, undefined)
 })
 
 test('PAGE_PREVIEW resources are deduplicated and sorted by page index', () => {

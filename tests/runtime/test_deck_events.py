@@ -3,9 +3,13 @@ from core.deck.contract import EventType, PptStage, ResourceType
 
 
 def test_preview_event_uses_typed_page_and_relative_resources():
+    stable_event_id = "slide-preview:task-1:s02:0123456789abcdef0123"
+    artifact_hash = "a" * 64
     event = events.slide_preview(
         "Preview ready",
         {
+            "event_id": stable_event_id,
+            "artifact_hash": artifact_hash,
             "index": 2,
             "total": 5,
             "title": "Architecture",
@@ -16,6 +20,8 @@ def test_preview_event_uses_typed_page_and_relative_resources():
     )
 
     assert event.type is EventType.ARTIFACT_READY
+    assert event.event_id == stable_event_id
+    assert event.revision == artifact_hash
     assert event.stage is PptStage.GENERATING_PAGES
     assert event.page.page_index == 2
     assert event.page.page_count == 5
@@ -34,6 +40,16 @@ def test_preview_event_uses_typed_page_and_relative_resources():
         "svg_output/page-002.svg",
     ]
     assert all("_v" not in item.relative_path for item in event.resources)
+
+
+def test_preview_event_keeps_event_id_optional_for_legacy_callers():
+    event = events.slide_preview(
+        "Preview ready",
+        {"index": 1, "total": 1, "png": "previews/page-001.png"},
+    )
+
+    assert event.event_id == ""
+    assert event.revision == ""
 
 
 def test_page_start_uses_the_same_page_stage_and_progress_shape_as_preview():

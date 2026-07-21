@@ -94,6 +94,22 @@ def test_ppt_handler_maps_every_event_enum(event_type, proto_type):
     assert _to_proto(event).type == proto_type
 
 
+def test_ppt_handler_preserves_producer_event_id():
+    revision = "a" * 64
+    event = AgentEvent(
+        task_id="task-1",
+        sequence=3,
+        created_at=datetime.now(timezone.utc),
+        type=EventType.ARTIFACT_READY,
+        stage=PptStage.RENDERING,
+        event_id="slide-preview:task-1:s01:0123456789abcdef0123",
+        revision=revision,
+    )
+
+    assert _to_proto(event).event_id == event.event_id
+    assert _to_proto(event).revision == revision
+
+
 @pytest.mark.parametrize(
     ("stage", "proto_stage"),
     [

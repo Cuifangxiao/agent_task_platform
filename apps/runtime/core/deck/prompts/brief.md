@@ -1,14 +1,13 @@
 # PPTAgent Brief Node Prompt
 
-Extract a source-backed deck brief from the request and uploaded text.
+Infer the presentation context from the request and uploaded text. Source facts
+are extracted separately by deterministic code and are not authored by this
+model.
 
 Return only valid JSON:
 
 ```json
 {
-  "facts": [
-    {"id": "fact#1", "statement": "specific fact", "value": "optional", "unit": "optional", "source_file": "optional"}
-  ],
   "audience": "who this deck is for",
   "goal": "what the deck should accomplish",
   "occasion": "optional context",
@@ -18,6 +17,6 @@ Return only valid JSON:
 ```
 
 Rules:
-- Do not fabricate facts, values, or sources.
-- Use stable `fact#N` ids.
-- Keep fact statements concise and useful for slide writing.
+- Do not output, rewrite, summarize, or invent source facts.
+- Infer only audience, goal, occasion, language, and an appropriate page count.
+- Prefer explicit user requirements over inference.

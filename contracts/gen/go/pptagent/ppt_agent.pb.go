@@ -917,7 +917,13 @@ type AgentEvent struct {
 	//	*AgentEvent_Page
 	//	*AgentEvent_Error
 	//	*AgentEvent_FinalResult
-	Detail        isAgentEvent_Detail `protobuf_oneof:"detail"`
+	Detail isAgentEvent_Detail `protobuf_oneof:"detail"`
+	// Stable producer-assigned identity. Older runtimes may omit this field;
+	// consumers must continue to synthesize an ID in that case.
+	EventId string `protobuf:"bytes,12,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	// Optional producer artifact revision. Slide preview events carry the
+	// persisted SlideArtifactMetadata.artifact_hash. Older runtimes omit it.
+	Revision      string `protobuf:"bytes,13,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1042,6 +1048,20 @@ func (x *AgentEvent) GetFinalResult() *FinalResult {
 	return nil
 }
 
+func (x *AgentEvent) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *AgentEvent) GetRevision() string {
+	if x != nil {
+		return x.Revision
+	}
+	return ""
+}
+
 type isAgentEvent_Detail interface {
 	isAgentEvent_Detail()
 }
@@ -1133,7 +1153,7 @@ const file_ppt_agent_proto_rawDesc = "" +
 	"\vslide_count\x18\x02 \x01(\rR\n" +
 	"slideCount\x12\x1d\n" +
 	"\n" +
-	"elapsed_ms\x18\x03 \x01(\x04R\telapsedMs\"\xf6\x03\n" +
+	"elapsed_ms\x18\x03 \x01(\x04R\telapsedMs\"\xad\x04\n" +
 	"\n" +
 	"AgentEvent\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1a\n" +
@@ -1148,7 +1168,9 @@ const file_ppt_agent_proto_rawDesc = "" +
 	"\x04page\x18\t \x01(\v2\x15.ppt.agent.PageDetailH\x00R\x04page\x12.\n" +
 	"\x05error\x18\n" +
 	" \x01(\v2\x16.ppt.agent.ErrorDetailH\x00R\x05error\x12;\n" +
-	"\ffinal_result\x18\v \x01(\v2\x16.ppt.agent.FinalResultH\x00R\vfinalResultB\b\n" +
+	"\ffinal_result\x18\v \x01(\v2\x16.ppt.agent.FinalResultH\x00R\vfinalResult\x12\x19\n" +
+	"\bevent_id\x18\f \x01(\tR\aeventId\x12\x1a\n" +
+	"\brevision\x18\r \x01(\tR\brevisionB\b\n" +
 	"\x06detail*\xab\x01\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x10\n" +

@@ -56,6 +56,7 @@ func TestDecodeWSClientCommandUsesCanonicalEnvelope(t *testing.T) {
 }
 
 func TestWebSocketSubscribeReplaysThenStreamsAndTerminalKeepsSocketOpen(t *testing.T) {
+	revision := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	service := newWSTestService(&Task{
 		SchemaVersion: CurrentSchemaVersion,
 		ThreadID:      "thread-1",
@@ -66,7 +67,7 @@ func TestWebSocketSubscribeReplaysThenStreamsAndTerminalKeepsSocketOpen(t *testi
 	})
 	service.replay["run-1"] = []AgentEvent{
 		{RunID: "run-1", TaskID: "run-1", Sequence: 1, Type: EventTaskStarted, Stage: StagePreparing, Message: "started"},
-		{RunID: "run-1", TaskID: "run-1", Sequence: 2, Type: EventStepProgress, Stage: StagePlanning, Message: "planning"},
+		{RunID: "run-1", TaskID: "run-1", Sequence: 2, Revision: revision, Type: EventStepProgress, Stage: StagePlanning, Message: "planning"},
 	}
 	server := newWSTestServer(service)
 	defer server.Close()
@@ -98,8 +99,8 @@ func TestWebSocketSubscribeReplaysThenStreamsAndTerminalKeepsSocketOpen(t *testi
 	if replayed.Type != wsTypeRunEvent || replayed.RequestID != "subscribe-1" {
 		t.Fatalf("unexpected replay frame: %#v", replayed)
 	}
-	if event := decodeWSPayload[AgentEvent](t, replayed); event.Sequence != 2 {
-		t.Fatalf("replayed sequence = %d, want 2", event.Sequence)
+	if event := decodeWSPayload[AgentEvent](t, replayed); event.Sequence != 2 || event.Revision != revision {
+		t.Fatalf("replayed event = %#v, want sequence 2 and revision %q", event, revision)
 	}
 
 	service.emit("run-1", AgentEvent{

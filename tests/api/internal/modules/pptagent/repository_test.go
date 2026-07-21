@@ -187,6 +187,29 @@ func TestRunRepositoryAppendEventCommitsEventAndTerminalSnapshotTogether(t *test
 	}
 }
 
+func TestAgentEventPersistenceJSONIncludesArtifactRevision(t *testing.T) {
+	want := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	payload, err := json.Marshal(AgentEvent{Revision: want})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(payload, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if got := persisted["revision"]; got != want {
+		t.Fatalf("persisted revision = %#v, want %q", got, want)
+	}
+
+	var restored AgentEvent
+	if err := json.Unmarshal(payload, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Revision != want {
+		t.Fatalf("restored revision = %q, want %q", restored.Revision, want)
+	}
+}
+
 func TestRunRepositoryAppendEventRecoversAmbiguousCommit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

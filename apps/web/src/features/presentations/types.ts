@@ -80,6 +80,7 @@ export interface PptFinalResult {
 export interface PptAgentEvent {
   schema_version?: string | number
   event_id?: string
+  revision?: string
   thread_id?: string
   run_id?: string
   task_id: string

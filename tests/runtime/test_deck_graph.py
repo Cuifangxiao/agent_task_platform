@@ -1,29 +1,50 @@
 from types import SimpleNamespace
 
 import core.deck.agents.planning.graph as planning_graph
+import core.deck.agents.design.graph as design_graph
 from core.deck.contract import GeneratePptInput, InputResource
-from core.deck.agents.design.graph import build_style_options, select_style_option
-from core.deck.agents.planning.graph import outline_prompt
+from core.deck.agents.design.graph import build_art_direction, select_template_pack
+from core.deck.agents.planning.graph import brief_prompt, outline_prompt
 from core.deck.contract import EventType, PptStage
 from core.deck.sources import parse_uploaded_files_with_provenance
 
 
-def test_style_builds_only_first_recommendation_and_selects_it(tmp_path):
+def test_template_selection_returns_one_resolved_catalog_pack():
     state = {
         "request_id": "task-1",
         "user_description": "Technical architecture deck",
-        "template_id": "auto",
+        "requested_template_id": "auto",
         "brief": {"audience": "Engineers", "goal": "Explain the system"},
         "plan": {"title": "Architecture", "narrative": "A clear flow", "slides": [{"index": 1}]},
     }
 
-    options = build_style_options(state, tmp_path)
-    selected, exact = select_style_option(options, "")
+    selected = select_template_pack(state)
+    direction = build_art_direction(selected, state)
 
-    assert len(options) == 1
-    assert selected is options[0]
-    assert exact is False
-    assert selected["template_id"]
+    assert selected.template_id == "technical_blueprint"
+    assert direction["visual_style"] == selected.visual_style
+    assert "template_id" not in direction
+    assert "theme" not in direction
+
+
+def test_template_selection_separates_request_preference_from_selected_result(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(design_graph, "get_stream_writer", lambda: emitted.append)
+    state = {
+        "request_id": "task-explicit-template",
+        "requested_template_id": "consulting_signal",
+        "user_description": "Technical architecture deck",
+        "brief": {"audience": "Engineers", "goal": "Explain the system"},
+        "plan": {"title": "Architecture", "narrative": "A clear flow", "slides": [{"index": 1}]},
+    }
+
+    result = design_graph.prepare_template_selection(state)
+
+    assert result["selected_template_id"] == "consulting_signal"
+    assert result["theme"]
+    assert result["art_direction"]
+    assert "style_options" not in result
+    assert emitted[-1].message == "Template selected: Consulting Signal"
 
 
 def test_outline_prompt_adds_uploaded_sources_only_when_present():
@@ -43,6 +64,16 @@ def test_outline_prompt_adds_uploaded_sources_only_when_present():
         }
     )
     assert "Uploaded documents:" in prompt
+    assert "Revenue grew 35%." in prompt
+
+
+def test_brief_prompt_leaves_source_facts_to_the_deterministic_ledger():
+    prompt = brief_prompt("Market report", "Prepare a board update", "Revenue grew 35%.")
+
+    assert '"audience"' in prompt
+    assert '"goal"' in prompt
+    assert '"occasion"' in prompt
+    assert '"facts"' not in prompt
     assert "Revenue grew 35%." in prompt
 
 

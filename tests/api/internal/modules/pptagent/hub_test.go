@@ -64,6 +64,26 @@ func TestTaskHubRejectsWrongOwnerAndOutOfOrderSequence(t *testing.T) {
 	}
 }
 
+func TestArtifactRevisionValidationIsBackwardCompatible(t *testing.T) {
+	base := AgentEvent{
+		Sequence: 1,
+		Type:     EventTaskStarted,
+		Stage:    StagePreparing,
+		Message:  "started",
+	}
+	if err := validateAgentEvent(base); err != nil {
+		t.Fatalf("legacy event without revision was rejected: %v", err)
+	}
+	base.Revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := validateAgentEvent(base); err != nil {
+		t.Fatalf("valid artifact revision was rejected: %v", err)
+	}
+	base.Revision = "not-a-sha256"
+	if err := validateAgentEvent(base); err == nil {
+		t.Fatal("invalid artifact revision was accepted")
+	}
+}
+
 func TestTaskHubCancelCreatesSingleTerminalEvent(t *testing.T) {
 	hub := NewTaskHub(time.Hour)
 	taskID := "55555555-5555-4555-8555-555555555555"
@@ -263,10 +283,12 @@ func TestTaskHubFillsThreadRunAndChannelEnvelope(t *testing.T) {
 		t.Fatalf("task request metadata was not retained: %#v", task)
 	}
 
+	stablePreviewEventID := "slide-preview:run-1:s01:0123456789abcdef0123"
 	events := []AgentEvent{
 		{Sequence: 1, Type: EventTaskStarted, Stage: StagePreparing, Message: "started"},
 		{Sequence: 2, Type: EventStepProgress, Stage: StagePlanning, Message: "planning"},
 		{
+			EventID:  stablePreviewEventID,
 			Sequence: 3,
 			Type:     EventArtifactReady,
 			Stage:    StageRendering,
@@ -309,6 +331,9 @@ func TestTaskHubFillsThreadRunAndChannelEnvelope(t *testing.T) {
 	}
 	if latest.EventID != subscription.Replay[2].EventID {
 		t.Fatalf("task event id = %q, want latest event %q", latest.EventID, subscription.Replay[2].EventID)
+	}
+	if subscription.Replay[2].EventID != stablePreviewEventID {
+		t.Fatalf("preview event id = %q, want producer id %q", subscription.Replay[2].EventID, stablePreviewEventID)
 	}
 }
 

@@ -183,7 +183,7 @@ def _write_generation_manifest(
                 "title": slide.title,
                 "role": slide.role,
                 "component": slide.component,
-                "template_id": str(blueprint.get("template_id") or template.get("template_id") or state.get("template_id") or ""),
+                "template_id": str(blueprint.get("template_id") or template.get("template_id") or state.get("selected_template_id") or ""),
                 "layout_id": str(blueprint.get("layout_id") or artifact.get("layout_id") or ""),
                 "page_rhythm": str(blueprint.get("page_rhythm") or blueprint.get("rhythm") or artifact.get("page_rhythm") or ""),
                 "render_mode": str(artifact.get("svg_renderer") or artifact.get("render_mode") or artifact.get("renderer") or ""),

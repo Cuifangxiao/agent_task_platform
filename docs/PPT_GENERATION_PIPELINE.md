@@ -1,336 +1,321 @@
-# PPT 生成流水线
+# PPT HTML-first v2 生成流水线
 
-当前实现是一条不中断的生成流水线：HTTP 负责创建任务和订阅事件，Go 负责鉴权、模型配置解析、任务内存状态和 SSE，Python Runtime 负责完整生成，并通过 gRPC 服务端流持续返回事件。
+当前生产路径是一条固定为 `16:9` 的 HTML-first 流水线：LLM 先生成结构化内容和单页 HTML/CSS 片段，Runtime 再在受控 Chromium 中完成 DOM 检测与 PNG 截图，最终将每页 PNG 全出血铺入 PPTX。PPTX 与页面预览图视觉一致，但页面内容不可在 PowerPoint 中逐元素编辑。
 
 ```text
 Web
-  ├─ POST /api/v1/ppt/tasks                 创建任务
-  └─ GET  /api/v1/ppt/tasks/{task_id}/events 订阅 SSE
-            │
-            ▼
-Go API：解析 5 个模型节点，创建内存任务，启动 goroutine
-            │ GeneratePpt(request) returns (stream AgentEvent)
-            ▼
-Python Runtime：PptGraph 组装 planning → design → generation → postprocessor 四个 phase 子图
-            │ AgentEvent
-            ▼
-Go TaskHub：更新任务快照、缓存事件、广播 SSE
-            │
-            └─ TASK_COMPLETED + PPTX 资源，随后 gRPC 流结束
+  ├─ POST /api/v1/ppt/tasks           创建任务
+  ├─ GET  /api/v1/ppt/tasks           查询历史任务
+  └─ WS   /api/v1/ppt/ws              订阅、重放、取消任务
+              │
+              ▼
+Go API：鉴权、解析 5 个模型绑定、持久化 run/event、WebSocket 广播
+              │ GeneratePpt(request) -> stream AgentEvent
+              ▼
+Python Runtime：18 节点扁平 LangGraph -> HTML -> DOM QA -> PNG -> image-only PPTX
+              │
+              ▼
+Go API：ppt_runs + ppt_run_events (MySQL)，TaskHub 仅做热缓存/实时 fan-out
 ```
 
-这版没有人工确认、暂停/恢复、审阅循环和多 Worker 调度。任一进程在生成中退出，本次任务即失败；客户端重新创建任务即可。
+## 1. 请求与实时事件
 
-## 1. 一次请求如何流转
-
-1. 客户端使用已登录用户的生成描述、附件和 PPT 选项调用 `POST /api/v1/ppt/tasks`；可以显式指定 `agent_config_id`，省略时 Go 选择当前用户默认或首个可用的 PPT Agent 配置。
-2. Go 校验 Agent 配置，并解析 `brief`、`outline`、`style`、`writer`、`designer` 五个节点绑定的模型配置。缺失或停用的配置在任务启动前直接返回 HTTP 错误。
-3. Go 创建进程内任务和事件缓冲，立即返回 `task_id`、任务快照及 `events_url`，同时在独立 goroutine 中调用 Python `GeneratePpt`。
-4. Python 由 `PptGraph` 根装配器组合四个 phase 子图，默认按六个业务节点的固定顺序完成本地 PPT 流水线。节点只处理领域状态；对外进度由统一 `AgentEvent` 表示。
-5. Go 每收到一个 gRPC 事件，就更新任务快照并广播到订阅该任务的 SSE 客户端。稍晚连接的客户端先收到内存中已缓存的事件，再接收新事件。
-6. Python 成功时发送 `TASK_COMPLETED`，其中 `resources` 和 `final_result.ppt_file` 指向最终 PPTX 的相对路径；失败时发送 `TASK_FAILED`。终态事件之后流结束。
-7. 客户端通过任务文件或产物路由下载文件。Go 根据相对路径访问共享产物目录，并在返回文件前校验任务所有者和路径边界。
-
-创建任务与订阅事件是两个请求。SSE 断开只会失去这个订阅，不会取消已经在 Go goroutine 中运行的生成任务；需要停止生成时显式调用取消接口。
-
-## 2. HTTP 接口
-
-所有接口都位于 `/api/v1` 且需要登录：
+所有 HTTP 接口均在 `/api/v1` 下且需要登录。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| `POST` | `/ppt/tasks` | 创建 PPT 任务，返回任务快照和事件地址 |
-| `GET` | `/ppt/tasks/{task_id}` | 读取当前进程中的任务快照 |
-| `GET` | `/ppt/tasks/{task_id}/events` | 订阅 SSE；可用 `after` 跳过已消费序号，先重放其后的缓存事件，再推送实时事件 |
-| `POST` | `/ppt/tasks/{task_id}/cancel` | 取消任务，并取消对应的 gRPC context |
+| `POST` | `/ppt/tasks` | 创建任务，支持 JSON 或 multipart 附件，返回 `202` 和 run 快照 |
+| `GET` | `/ppt/tasks?thread_id=&limit=` | 从 MySQL 查询当前用户的历史任务 |
+| `GET` | `/ppt/tasks/{task_id}` | 从 MySQL 读取 run 快照 |
+| `POST` | `/ppt/tasks/{task_id}/cancel` | 取消仍在运行的任务 |
 | `GET` | `/ppt/tasks/{task_id}/file` | 下载最终 PPTX |
-| `GET` | `/ppt/tasks/{task_id}/artifacts/*asset_path` | 下载该任务目录内的其他产物 |
+| `GET` | `/ppt/tasks/{task_id}/artifacts/*asset_path` | 下载任务目录内的其他产物 |
+| `WS` | `/ppt/ws` | 复用一条 WebSocket 订阅多个 run |
 
-任务、任务快照和事件都只存在当前 Go 进程内。因此：
+WebSocket 使用版本化 JSON envelope，浏览器通过 `Sec-WebSocket-Protocol` 完成鉴权。客户端命令包括 `run.subscribe`、`run.unsubscribe`、`run.cancel` 和 `ping`；服务端返回 `connection.ready`、`command.ack`、`run.snapshot`、`run.event`、`command.error` 和 `pong`。
 
-- API 重启后，旧 `task_id` 不可查询，也不能继续订阅或下载；
-- 多个 API 实例不会共享任务，第一版不应在无会话粘性的情况下横向扩容；
-- SSE 的事件缓存用于弥补“创建任务后稍晚订阅”的时间差，不是持久化日志；
-- 当前实现将已结束任务在内存中保留约一小时并惰性清理，不能把这个窗口当成持久化保证；
-- `sequence` 只是单个任务内的递增排序游标，不是协议版本号。
+订阅命令中的 `payload.after` 是已消费的最大 `sequence`。Go 会先从 MySQL 的 `ppt_run_events` 重放更大的序号，再转发 TaskHub 的实时事件。因此断线重连不依赖进程内历史缓存。`event_id` 用于事件身份，`sequence` 用于单个 run 内排序和续传。
 
-## 3. gRPC 契约与事件
+MySQL 是 run 快照和完整事件日志的真源：
 
-协议真源是 `contracts/proto/ppt/ppt_agent.proto`：
+- `ppt_runs` 保存任务状态、阶段、水位、结果和 worker heartbeat；
+- `ppt_run_events` 以 `(run_id, sequence)` 为主键保存规范事件；
+- TaskHub 仅负责当前进程的取消控制、有界热缓存和 WebSocket fan-out；
+- API 重启后可继续查询历史 run 并重放已持久化事件，但不会恢复正在运行的 LangGraph。启动恢复会将遗留的 running run 以 `SERVER_RESTARTED` 持久化为失败终态。
 
-```proto
-rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
-```
+Go 在创建任务前解析 `brief`、`outline`、`style`、`writer`、`designer` 五个模型节点。绑定缺失、模型停用或类型错误会在 worker 启动前拒绝请求。
 
-Go 只发送一次请求，Python 单向连续返回事件，因此无需双向流。请求包含任务描述、内联附件、五个模型节点配置和 PPT 选项；不包含 checkpoint、当前阶段、恢复载荷或历史事件。
+## 2. 扁平 18 节点 LangGraph
 
-### 事件类型
+`core/deck/runner.py` 不再将 planning/design/generation/postprocessor 封装为四张子图。所有关键步骤和条件分支都在根图可见，节点定义顺序为：
 
-| `EventType` | 发送时机 | 前端处理 |
-|---|---|---|
-| `TASK_STARTED` | Python 接受任务并开始准备 | 初始化运行状态 |
-| `STEP_STARTED` | 一个可展示阶段开始 | 更新阶段和提示文案 |
-| `STEP_PROGRESS` | 页、资源或步骤产生进度 | 更新 `current/total/percent/unit`，可同时展示页信息 |
-| `STEP_COMPLETED` | 一个可展示阶段完成 | 标记该阶段完成 |
-| `ARTIFACT_READY` | SVG、HTML、预览图等中间产物可用 | 从 `resources` 读取可选产物 |
-| `TASK_COMPLETED` | PPTX 已写入共享目录 | 读取 `final_result`，结束订阅 |
-| `TASK_FAILED` | 流开始后的生成错误或连接中断 | 展示结构化错误，结束订阅 |
+1. `normalize_request`
+2. `plan_deck`
+3. `select_template`
+4. `create_design_spec`
+5. `prepare_slide`
+6. `generate_slide_content`
+7. `generate_slide_html`
+8. `sanitize_and_assemble_html`
+9. `render_html_and_measure_dom`
+10. `validate_dom`
+11. `repair_slide_html`
+12. `build_fallback_html`
+13. `capture_png`
+14. `persist_slide_artifacts`
+15. `emit_slide_preview`
+16. `advance_slide`
+17. `assemble_image_pptx`
+18. `finalize_deck`
 
-### 稳定阶段
-
-| `PptStage` | 用户可见含义 | 可能覆盖的内部工作 |
-|---|---|---|
-| `PREPARING` | 正在准备输入 | 校验请求、保存附件、初始化项目目录 |
-| `PLANNING` | 正在规划演示文稿 | brief、outline、style |
-| `GENERATING_CONTENT` | 正在生成内容 | writer 生成逐页结构化内容 |
-| `GENERATING_ASSETS` | 正在准备视觉资产 | 图片和页面依赖资源 |
-| `GENERATING_PAGES` | 正在生成页面 | designer 逐页生成 SVG/HTML |
-| `RENDERING` | 正在渲染预览 | 本地页面渲染和预览产物 |
-| `ASSEMBLING_PPT` | 正在组装 PowerPoint | 本地 PPTX 导出 |
-| `FINISHED` | 已结束 | 成功或失败终态 |
-
-阶段是前端稳定契约，不应直接等同于 Python 函数名。以后可以在不改变前端阶段的前提下拆分内部实现。
-
-每个事件都带 `task_id`、`sequence`、`created_at`、`type`、`stage` 和面向用户的 `message`。按需再带 `progress`、`resources`，以及 `page`、`error`、`final_result` 中的一种结构化详情。资源只传任务目录下的 `relative_path`，Python 不生成 HTTP URL；Go 在 HTTP 边界补全受鉴权保护的下载 URL。
-
-## 4. Python LangGraph 装配
-
-Python 的 LangGraph 结构与 `soulmate/agents` 保持同一种直接形态：每个 phase 是一个普通类，
-`__init__` 初始化本 phase 的依赖并执行 `self.graph = self.compile_graph()`；节点方法、本 phase 专属
-辅助逻辑和 `compile_graph()` 放在该 phase 的 `graph.py`。跨 phase 的埋点、模型调用和确定性 helper
-分别放在 `instrumentation.py`、`llm.py`、`helpers.py`。没有 `AgentNode`、`GraphFragment` 或
-`DeckWorkflow` 这类中间 DSL。
-
-### 4.1 目录与子图
-
-```text
-core/deck/
-├── runner.py                         # PptGraph 顶层装配
-├── state.py                          # 主图和子图共享的 DeckGraphState
-├── llm.py                            # 模型调用公共能力
-├── instrumentation.py                # 节点事件、日志和指标
-├── helpers.py                        # 跨 phase 的小型确定性 helper
-└── agents/
-    ├── planning/graph.py             # brief -> outline
-    ├── design/graph.py               # style -> design_lock
-    ├── generation/graph.py           # write_slides
-    └── postprocessor/graph.py        # export
-```
-
-| Phase 类 | 内部拓扑 | 职责 |
-|---|---|---|
-| `Planning` | `brief -> outline` | 整理事实并产生叙事大纲 |
-| `Design` | `style -> design_lock` | 选择视觉方向并固化设计契约 |
-| `Generation` | `write_slides` | 逐页生成内容与设计，并渲染预览 |
-| `Postprocessor` | `export` | 组装并导出 PPTX |
-
-每个类都直接用 LangGraph API 组装自身：
-
-```python
-class Planning:
-    def __init__(self, llms):
-        self.llm_registry = normalize_llm_registry(llms)
-        self.graph = self.compile_graph()
-
-    def brief(self, state):
-        ...
-
-    def outline(self, state):
-        ...
-
-    def compile_graph(self):
-        graph = StateGraph(DeckGraphState)
-        graph.add_node("brief", self.brief)
-        graph.add_node("outline", self.outline)
-        graph.add_edge(START, "brief")
-        graph.add_edge("brief", "outline")
-        graph.add_edge("outline", END)
-        return graph.compile()
-```
-
-### 4.2 顶层组装
-
-顶层装配位于 `core/deck/runner.py`，对应参考项目中的 `runner.GraphModule`。`PptGraph.__init__`
-直接创建四个 phase，然后 `compile_graph()` 连接下面的主图：
+条件路由如下：
 
 ```text
 START
-  -> planning_phase
-  -> design_phase
-  -> generation_phase
-  -> postprocessor_phase
-  -> END
+  -> normalize_request -> plan_deck
+  -> select_template -> create_design_spec
+  -> prepare_slide -> generate_slide_content -> generate_slide_html
+  -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
+                                                          ├─ valid    -> capture_png
+                                                          ├─ repair   -> repair_slide_html
+                                                          │                 └─> sanitize_and_assemble_html
+                                                          └─ fallback -> build_fallback_html
+                                                                            └─> sanitize_and_assemble_html
+  capture_png -> persist_slide_artifacts -> emit_slide_preview -> advance_slide
+                                                                  ├─ more -> prepare_slide
+                                                                  └─ done -> assemble_image_pptx
+                                                                                -> finalize_deck -> END
 ```
 
-四个 phase 包装节点分别运行自己的已编译子图；各 phase 的 `run()` 通过公共执行 helper 把子图产生的
-custom stream 事件显式转发到主图，因此现有进度、逐页预览和指标事件仍可被 `DeckService` 接收。
+页面严格串行生成，使后一页能参考邻页和最近的构图历史，同时确保每页预览事件按顺序发布。每个 run 创建独立的 `PptGraph`、LLM 依赖和 Chromium session；浏览器对象、LLM client、文件句柄和图片二进制数据都不进入 LangGraph state。
 
-替换现有阶段时，可通过 `PptGraph(planning=..., design=..., generation=..., postprocessor=...)`
-直接注入同形态对象；runner 只要求对象提供 `run(state)`。扩展一个全新阶段时，新增
-`agents/<phase>/graph.py`，按相同模式实现类并从子包导出，然后在 `PptGraph.__init__` 中初始化它，
-在 `compile_graph()` 中增加一个 phase 节点和两条相邻边。phase 内部若需要条件路由，直接使用
-LangGraph 的 `add_conditional_edges()`，不再经过项目自定义协议。
+## 3. Schema 与 state
 
-### 4.3 运行边界
+LLM 边界使用 `core/deck/schemas.py` 中的严格 Pydantic schema，默认 `extra="forbid"`。模型输出优先使用 structured output；退化路径也必须是完整 JSON，不从 Markdown fence 或文本子串中猜测 JSON。
 
-- 每个请求创建新的 `PptGraph` 和四张 phase 子图；
-- 默认六个业务节点仍按原顺序一次性执行；
-- 不配置 LangGraph checkpointer，不保存 checkpoint；
-- 没有人工或自动 review、暂停、resume、repair/regenerate 循环或多 Worker 调度；
-- 失败或进程退出后，需要重新提交完整请求。
-
-生成状态只保存本次执行需要的输入、brief、outline、style、逐页内容、资源和最终文件。
-gRPC context、模型客户端、浏览器会话和大块二进制文件不进入图状态。模型配置仍使用
-`brief`、`outline`、`style`、`writer`、`designer` 五个角色，对外配置和事件协议不变。
-
-## 5. 失败与取消语义
-
-失败分成三个边界：
-
-| 边界 | 行为 |
+| Schema | 职责 |
 |---|---|
-| 任务尚未创建 | Go 参数、权限或模型绑定校验失败，返回普通 HTTP 错误，不创建内存任务 |
-| gRPC 流尚未开始 | Python 以标准 gRPC status 拒绝请求；Go 将任务置为失败并广播 `TASK_FAILED` |
-| gRPC 流已经开始 | Python 尽量先发送一个 `TASK_FAILED`，再正常结束流 |
+| `DeckBrief` | 主题、受众、沟通目标、语言、页数和带溯源信息的 `SourceFact` |
+| `DeckPlan` / `SlidePlan` | 整套叙事弧、连续的 `s01...` 页面名册、页面角色、结论式标题、布局族和节奏 |
+| `DesignSpec` | 全局主题 ID、色板、中英文字体、字号、间距、形状、图标风格和背景 motif |
+| `SlideContentSpec` | 单页结构化内容块、强调项、候选图标和 `source_refs` |
+| `HtmlSlideSpec` | 单页 layout family/variant、构图摘要、HTML body fragment、scoped CSS 和图标 key |
+| `RendererDiagnostic` | `security` / `content` / `environment` 分类，严重度、selector、几何信息与修复建议 |
+| `SlideArtifactMetadata` | 每页 HTML/PNG 路径、内容哈希、渲染环境、模型元数据、repair/fallback 结果 |
 
-如果 Go 在未收到终态事件时遇到 gRPC 异常或提前 EOF，会补发：
+当前版本标识为 `deck-state.v2`、`html-deck.v1` 和 `chromium-html.v1`。`core/deck/state.py` 将 state 分为七个逻辑区域：
 
-```json
-{
-  "type": "TASK_FAILED",
-  "stage": "GENERATING_CONTENT",
-  "message": "PPT generation service connection was interrupted",
-  "error": {
-    "code": "PYTHON_STREAM_LOST",
-    "retryable": true
-  }
-}
-```
+- `DeckRunState`：版本、run/request ID 和图内状态；失败终态及错误详情由图外的 service 事件统一发布；
+- `DeckInputState`：用户描述、解析后文本、source chunks、页数、语言和模板偏好；
+- `DeckPlanningState`：规范 `brief` 与 `deck_plan`；
+- `DeckDesignState`：选中主题、`design_spec`、page blueprints 与 immutable execution lock；
+- `DeckCurrentSlideState`：当前页内容、HTML、清洗结果、诊断、repair 次数和 PNG 元数据；
+- `DeckGenerationState`：以 `slide_id` 为键的 `completed_slides` 幂等映射、构图历史和质量问题；
+- `DeckOutputState`：最终 PPTX、导出元数据和 generation manifest。
 
-失败事件保留中断时的当前阶段，便于定位故障发生在哪里；示例中的 `GENERATING_CONTENT` 仅代表一种可能。
+state 中存的 schema 对象都是 `model_dump(mode="json")` 后的可序列化字典。`current_slide_index` 是零基偏移，`SlidePlan.index` 和对外页码是一基。
 
-取消接口会取消 Go 持有的 task context，从而取消 Python gRPC 调用，并让任务进入终态。取消不是暂停：同一任务不能继续执行，用户需要重新创建任务。
+## 4. 完整主题、布局 recipe 与图标
 
-服务崩溃也没有恢复语义。不要通过伪造 `sequence`、阶段或中间文件来尝试续跑；重新提交完整请求是唯一恢复方式。
+`core/deck/design_system/html/` 是 HTML v2 的设计系统真源。主题和布局分层定义：一套主题锁定整份 deck 的色彩、字体、间距和 motif；每页再在相同主题下选用一个 recipe。因此每套主题都拥有完整的 10 种页型，而不是只有一张封面。
 
-## 6. 共享产物目录
+| 主题 ID | 适用场景 | 核心风格 |
+|---|---|---|
+| `paper_editorial` | 品牌、叙事、复盘、通用汇报 | 暖白纸张、番茄红信号色、编辑式构图 |
+| `executive_signal` | 管理层、经营、战略、咨询 | 白底深蓝、单一橙色信号、证据与决策导向 |
+| `midnight_product` | 产品发布、AI、技术方案、路演 | 深色背景、荧光青/琥珀、大尺度视觉锚点 |
+| `alpine_research` | 研究、教学、学术、医疗 | 云白、松绿和冰川蓝，问题—方法—结论结构 |
 
-Python 和 Go 必须能访问同一个物理目录：
+旧的 template ID 仍可通过 `themes.json` 的 alias 解析到上述四套主题；未知 ID 回退到 `paper_editorial`。
+
+10 个 layout family 为：`cover_minimal`、`section_break`、`statement_focus`、`editorial_split`、`three_points`、`comparison`、`process`、`timeline`、`key_metric`、`closing_resolution`。`recipes.json` 对每个 family 明确角色、slot、容量、结构、variant 和视觉锚点；缺少任一 family 或重复定义都会在 catalog 加载时失败。
+
+`icons/lucide.json` 内置 24 个经校验的 Lucide SVG 图标，含中英文语义 tag 和第三方许可说明。LLM 只能输出 `<span data-icon="..."></span>` 占位符；清洗后由本地 trusted registry 注入 SVG，不允许远程图标、任意 SVG 属性或外部 URL。
+
+## 5. HTML 安全边界、DOM QA 与修复
+
+LLM 不输出完整文档，只输出一个 `HtmlSlideSpec`：页面 body fragment 和以 `.slide` 为作用域的 CSS。`HTMLAssembler` 在模型输出与 Chromium 之间建立了硬边界：
+
+1. `html5lib` 解析 fragment，`bleach` 按 tag/attribute allowlist 清洗 HTML/SVG；
+2. `tinycss2` 解析 CSS，只保留 `.slide` scoped selector、允许的 property 和受控 CSS variable；
+3. 禁止 script、event handler、`href/src`、`url()`、HTTP/data URL、`@import`、外部字体、form、frame、worker 和可执行 CSS；
+4. 强制 HTML/CSS 长度、DOM node、SVG path、CSS rule/declaration 和 shadow 预算；
+5. 注入不可由模型修改的 `base.css`、`DesignSpec` token 与 CSP 文档壳。
+
+Chromium 渲染配置固定为 `1600×900` CSS px，`deviceScaleFactor=2`，最终 PNG 为 `3200×1800`。每次 measure/capture 都创建新的 browser context 和 page，禁止下载与 service worker，拦截所有网络请求，等待 `document.fonts.ready` 和两帧 `requestAnimationFrame`，并关闭动画、过渡和光标。截图后还会验证尺寸与不透明性。
+
+DOM QA 至少检查：
+
+- 恰好一个 `.slide` 根节点及固定画布尺寸；
+- html/body/slide scroll overflow；
+- `[data-box]` 语义区域的空内容、越界、文字溢出、隐藏与非预期重叠；
+- 所有可见文本都必须属于语义区域，并检查有效透明度、文本/背景对比度和覆盖遮挡；
+- 封面标题 `66px`、内页标题 `46px`、正文 `21px`、注释 `16px` 的最小字号；
+- title line budget、DOM/SVG/shadow 预算、未解析图标和批准字体是否可用。
+
+几何检查之外，Runtime 还对模型 HTML 做语义守卫：必须保留批准的 assertion title 和至少一个正文内容块；`key_metric` 必须显示原始 metric value；HTML 中出现的数字只能来自 `SlideContentSpec`（页码和步骤序号除外）。人物、引语、客户案例和已经实现的结果属于高风险事实形态：DeckPlan 和 SlideContentSpec 只能逐字复用输入来源，`source_ref` 也必须指向真正包含该陈述的 fact；HTML 设计模型不能在排版阶段新增这类表述。建议、目标、可能性等非事实性框架文案仍可正常生成。这可以阻止“版式看起来正常，但模型偷偷换了标题、数字或事实”的页面进入截图。
+
+`environment` 类错误（Chromium 缺失、字体不可用、超时、文件系统失败）直接终止任务；`security` 或 `content` 类问题最多触发两轮定向 HTML repair。修复仍失败时，按当前的 10 种 recipe 之一生成确定性 fallback HTML，并再次经过同一清洗和 DOM QA。fallback 也不通过时才将任务置为失败。
+
+## 6. 预览事件与 PPTX
+
+生产 v2 在每页 `capture_png -> persist_slide_artifacts` 成功后发送一个 `ARTIFACT_READY`：
+
+- `resources` 中只有 `PAGE_PREVIEW` / `image/png`；
+- `resource_id` 是稳定的 `sXX-preview`，同页重新发布时前端会替换而不是追加；
+- `event_id` 由 `(request_id, slide_id, content_hash, preview_hash)` 确定；相同页面重放保持不变，内容或 PNG 改变时产生新 ID；
+- `revision` 是该页已持久化 `SlideArtifactMetadata.artifact_hash`；旧 Runtime 可以省略，Go 会原样持久化并经 WebSocket 交给客户端；
+- `page.page_id` 是稳定 `slide_id`，`page_index` 保持一基；
+- 已清洗 HTML 仍持久化到任务目录供审计，但不作为页预览事件发布；
+- 对外 `PptStage` 与事件类型保持稳定，新增的内部节点不暴露给前端。
+
+最终导出使用空白 `16:9` presentation，每页只添加一张全出血 PNG。浏览器 capture 阶段先锁定预览为 `3200×1800`，导出器再校验 PNG/16:9，并反向打开 PPTX 检查页数、每页图片数量和画布覆盖范围；manifest 明确记录 `image_based: true` 与 `editable: false`。
+
+## 7. 产物目录
+
+Python 和 Go 必须访问同一个物理目录：
 
 ```text
-Python: DECK_ARTIFACTS_DIR/{task_id}/...
-Go:     python_agent.artifacts_dir/{task_id}/...
+Python: DECK_ARTIFACTS_DIR/{run_id}/...
+Go:     python_agent.artifacts_dir/{run_id}/...
 ```
 
-本地默认值是仓库中的 `apps/runtime/artifacts/decks`。Runtime 应从 `apps/runtime` 启动；API 从仓库根目录启动时，默认 `python_agent.artifacts_dir` 与它指向同一位置。
+本地默认为 `apps/runtime/artifacts/decks`。单个任务的主要文件布局如下：
 
-部署约束：
-
-- 两个进程在不同容器时，给两个路径挂载同一个共享卷；
-- 两个进程在不同主机且没有共享文件系统时，这版产物下载不可用；
-- Python 事件只允许返回相对任务目录的路径，不能泄露主机绝对路径；
-- `task_id` 必须作为安全的单个目录名使用；
-- Go 下载前必须清理并解析路径，确认最终绝对路径仍位于 `artifacts_dir/{task_id}` 内；
-- 产物 URL 必须绑定任务所有者，不能凭路径跨任务或跨用户读取。
-
-本地生成仍会产出 SVG、HTML/预览资源和最终 PPTX；文件布局以 `apps/runtime/core/deck/paths.py` 定义为准，HTTP 层不依赖某一套硬编码的中间目录结构。
-
-## 7. 代码导航
-
-| 层 | 文件 | 职责 |
-|---|---|---|
-| 协议 | `contracts/proto/ppt/ppt_agent.proto` | 独立 PPT gRPC 服务、请求、事件和资源契约 |
-| Go 领域类型 | `apps/api/internal/modules/pptagent/types.go` | 任务、事件、资源、Runtime port |
-| Go 内存状态 | `apps/api/internal/modules/pptagent/hub.go` | 任务快照、事件重放、订阅广播、终态 |
-| Go 编排 | `apps/api/internal/modules/pptagent/service.go` | 创建/取消任务、接收 gRPC 流、失败收口 |
-| Go 模型解析 | `apps/api/internal/modules/pptagent/model_resolution.go` | 从 Agent 配置解析五个模型节点 |
-| Go HTTP | `apps/api/internal/modules/pptagent/handler.go` | 任务 HTTP API 与 SSE |
-| Go 产物 | `apps/api/internal/modules/pptagent/artifact.go` | 任务目录约束和文件下载 |
-| Go gRPC adapter | `apps/api/internal/platform/pythonruntime/client.go` | 领域请求/事件与 protobuf 的转换 |
-| 路由 | `apps/api/internal/transport/http/router/router.go` | 注册 `/api/v1/ppt/tasks` 路由 |
-| Python gRPC | `apps/runtime/server/grpc.py` | 注册服务、gRPC status 与流边界 |
-| Python handler | `apps/runtime/handler/ppt_handler.py` | protobuf 与 core contract 的转换 |
-| Python 领域入口 | `apps/runtime/core/deck/service.py` | 运行一次完整生成并输出领域事件 |
-| Python 根装配器 | `apps/runtime/core/deck/runner.py` | `PptGraph` 初始化四个 phase 并组装主图 |
-| Python Planning | `apps/runtime/core/deck/agents/planning/graph.py` | `brief`、`outline` 节点与子图 |
-| Python Design | `apps/runtime/core/deck/agents/design/graph.py` | `style`、`design_lock` 节点与子图 |
-| Python Generation | `apps/runtime/core/deck/agents/generation/graph.py` | `write_slides` 节点与子图 |
-| Python Postprocessor | `apps/runtime/core/deck/agents/postprocessor/graph.py` | `export` 节点与子图 |
-| Python 图状态 | `apps/runtime/core/deck/state.py` | 主图和所有 phase 共用的 state schema |
-| Python 模型工具 | `apps/runtime/core/deck/llm.py` | 模型 registry、prompt、stream 与 JSON 解析 |
-| Python 产物路径 | `apps/runtime/core/deck/paths.py` | 定义 task-local 项目目录和导出路径 |
-
-## 8. 本地启动与验证
-
-PPT 任务本身不落库，但登录和模型配置仍依赖 MySQL/Redis。第一次运行先准备基础设施和配置：
-
-```powershell
-docker compose -f deploy/docker-compose.yml up -d mysql redis
-
-Copy-Item apps/api/config/config.example.yaml apps/api/config/config.yaml
-Copy-Item apps/runtime/config.example.yaml apps/runtime/config.yaml
-Copy-Item apps/runtime/.env.example apps/runtime/.env
-
-py -3.11 -m venv apps/runtime/.venv
-& apps/runtime/.venv/Scripts/python.exe -m pip install -r apps/runtime/requirements.txt -r apps/runtime/requirements-dev.txt
-& apps/runtime/.venv/Scripts/python.exe -m playwright install chromium
-npm --prefix apps/web install
+```text
+{run_id}/
+├─ sources/                              # 归一化文本与 provenance
+├─ deck-brief.json
+├─ deck-plan.json
+├─ outline.md
+├─ design-spec.json
+├─ design-spec.md
+├─ spec-lock.json
+├─ spec-lock.md
+├─ page-blueprints.json
+├─ template-manifest.json
+├─ slide_specs/
+│  ├─ page-001.content.json
+│  └─ page-001.html.json
+├─ previews/
+│  ├─ page-001.html                 # 已清洗、已组装的完整文档
+│  └─ page-001.png                  # 3200×1800 对外预览
+├─ diagnostics/page-001.json
+├─ reports/
+│  ├─ slide-artifacts.json
+│  ├─ export-manifest.json
+│  ├─ generation-manifest.json
+│  └─ quality-report.json
+└─ exports/deck.pptx
 ```
 
-如果修改了 PPT proto，从支持 GNU Make 的 Git Bash/WSL 执行 `make proto`；它会同时更新 Go 与 Python 生成代码。然后在三个终端启动：
+原始模型输出不写入可下载的任务树。它只进入
+`${DECK_PRIVATE_DEBUG_DIR:-<artifacts-sibling-private-root>}/{run_id}/raw-model-output/`；生产环境可将
+`DECK_PRIVATE_DEBUG_DIR` 指向独立、受限且带生命周期策略的卷。Python 事件只返回 run 目录下的相对路径，Go 校验 owner 和路径边界后再填充 HTTP URL。MySQL 只持久化 run/event 元数据，不存储 PNG/PPTX 二进制数据；容器间必须共享 artifact volume。
 
-```powershell
-# 终端 1
-Set-Location apps/runtime
-& ./.venv/Scripts/python.exe main.py --conf config.yaml
+## 8. 本地安装与字体合约
+
+先安装 Python 依赖和 Playwright Chromium：
+
+```bash
+cd apps/runtime
+python3.11 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
 ```
 
-```powershell
-# 终端 2：仓库根目录
-go run ./apps/api/cmd/server --conf apps/api/config/config.yaml
+Linux/CI 可让 Playwright 同时安装 Chromium 系统依赖：
+
+```bash
+.venv/bin/python -m playwright install --with-deps chromium
+sudo apt-get update
+sudo apt-get install -y fontconfig fonts-noto-cjk fonts-inter
 ```
 
-```powershell
-# 终端 3：仓库根目录
-npm --prefix apps/web run dev
+四套主题只使用两种批准字体：中文与混排使用 `Noto Sans CJK SC`，拉丁文使用 `Inter`。Docker 镜像安装 `fonts-noto-cjk` 与 `fonts-inter`；自建运行环境可将相应 `.ttf`/`.otf` 安装到系统字体目录后刷新 fontconfig：
+
+```bash
+sudo install -d /usr/local/share/fonts/deck
+sudo install -m 0644 /path/to/deck-fonts/*.ttf /usr/local/share/fonts/deck/
+sudo fc-cache -f
+fc-list : family | rg -i 'Noto Sans CJK SC|Inter'
 ```
 
-先验证 API 健康状态：
+Runtime 不下载 Web font，字体合约不满足会被当作渲染环境错误，不会悄然换字体。生产镜像以非 root 用户运行，并显式要求 Chromium sandbox；不应通过 `--no-sandbox` 规避部署问题。
 
-```powershell
-curl.exe http://127.0.0.1:8080/api/v1/health
+MySQL migration 会在 Go API 启动时自动执行：`migrations/mysql/011_create_ppt_run_store.sql` 创建 PPT run/event 表，`012_widen_ppt_event_ids.sql` 将生产者稳定事件 ID 列扩为 `VARCHAR(160)` 并保留唯一约束。本地联调时先启动 MySQL、Redis 和 Runtime，再启动 Go API 与 Web。
+
+## 9. 验证
+
+Runtime 全量测试：
+
+```bash
+cd apps/runtime
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. \
+  .venv/bin/python -m pytest -p no:cacheprovider -q ../../tests/runtime
 ```
 
-登录并创建好包含五个模型绑定的 PPT Agent 配置后，可用访问令牌走完整接口：
+Go 的持久化、WebSocket、事件 reducer 和 artifact 边界测试：
 
-```powershell
-$headers = @{ Authorization = "Bearer $env:ACCESS_TOKEN" }
-$body = @{
-  agent_config_id = 1
-  description = "生成一份介绍 Agent Task Platform 架构的演示文稿"
-  options = @{
-    language = "zh-CN"
-    expected_slide_count = 8
-    aspect_ratio = "16:9"
-  }
-} | ConvertTo-Json -Depth 5
-
-$created = Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8080/api/v1/ppt/tasks `
-  -Headers $headers -ContentType application/json -Body $body
+```bash
+cd ../..
+go test ./apps/api/internal/modules/pptagent/... ./apps/api/internal/platform/mysql/...
 ```
 
-响应使用项目统一 envelope；从其中取出 `task_id` 后订阅返回的 `events_url`。SSE 应从 `TASK_STARTED` 开始，并且只以 `TASK_COMPLETED` 或 `TASK_FAILED` 结束。成功事件中的 PPTX URL 应能在同一用户身份下下载。
+Web 的事件投影、预览去重与构建验证：
 
-提交前运行：
-
-```powershell
-make test-go
-
-Push-Location apps/runtime
-& ./.venv/Scripts/python.exe -m pytest ../../tests/runtime -q
-Pop-Location
-
+```bash
 npm --prefix apps/web test
 npm --prefix apps/web run build
 ```
+
+生成 10 页 recipe 画廊和三套 6 页浏览器样例：
+
+```bash
+cd apps/runtime
+PYTHONPATH=. .venv/bin/python scripts/generate_html_deck_samples.py
+```
+
+默认要求生产字体 `Noto Sans CJK SC` / `Inter`。macOS 本地预览可显式使用已安装字体，例如
+`--chinese-font "PingFang SC" --latin-font "Arial"`。输出在
+`apps/runtime/artifacts/deck-v2-samples/`，每套包含 sanitized HTML、3200×1800 PNG、逐页诊断、contact sheet 和 image-only PPTX。
+
+生产镜像构建时 `.env`、`config.yaml` 与本地产物不会进入 build context；运行服务时需挂载或注入配置：
+
+```bash
+docker build -t deck-runtime apps/runtime
+docker run --rm -v "$PWD/apps/runtime/config.yaml:/app/config.yaml:ro" deck-runtime
+```
+
+单元测试中的 fake renderer 不能代替真实环境 smoke test。发布前至少用一份中文输入在目标容器中生成完整 PPT，检查每张 PNG 为 `3200×1800`、`quality-report.json` 无 error、PPTX 页数与 `DeckPlan` 一致，并通过 WebSocket `after` 水位演练一次断线续传。
+
+## 10. 当前限制
+
+- 只支持 `16:9`，画布固定为 `1600×900` CSS px。
+- 附件会解析为文本和 provenance；上传图片不会进入生成节点，当前没有多模态视觉分析、图片生成或用户图片编排。
+- 没有 LangGraph checkpointer、人工审批、pause/resume 或从中间页续跑；MySQL 事件续传只恢复前端消费，不恢复 Python 图执行。
+- 页面串行生成，尚无多 worker 分页并发。
+- PPTX 是 image-only 交付，不支持在 PowerPoint 中编辑文字、图标、图表或版式元素。
+- HTML 不得依赖网络、远程字体、远程图片或 JavaScript；所有资产必须来自受控本地设计系统。
+- MySQL 持久化任务与事件，但最终二进制产物仍依赖共享文件系统，尚无对象存储后端。
+
+## 11. 代码导航
+
+| 位置 | 职责 |
+|---|---|
+| `apps/runtime/core/deck/runner.py` | 18 节点根图与两个条件路由 |
+| `apps/runtime/core/deck/schemas.py` | 版本化 Pydantic 边界 schema |
+| `apps/runtime/core/deck/state.py` | 分区、可序列化的 `DeckGraphState` |
+| `apps/runtime/core/deck/agents/*/nodes.py` | planning、design、逐页 HTML 生成与终端节点 |
+| `apps/runtime/core/deck/design_system/html/` | 4 主题、10 recipes、base CSS 和本地图标库 |
+| `apps/runtime/core/deck/html/` | parser-backed sanitizer、HTML assembler、图标注入与 fallback renderer |
+| `apps/runtime/core/deck/factuality.py` | 数字之外的人物、引语、客户与结果类来源守卫 |
+| `apps/runtime/core/deck/rendering/html_browser.py` | 隔离 Chromium、DOM QA、截图与 PNG 校验 |
+| `apps/runtime/core/deck/export/image_pptx.py` | image-only PPTX 导出与反向校验 |
+| `apps/runtime/core/deck/paths.py` | task-local 产物目录合约 |
+| `apps/runtime/scripts/generate_html_deck_samples.py` | 10-recipe 画廊与三套真实 Chromium 样例 |
+| `apps/runtime/core/deck/service.py` | gRPC 生成入口、资源 hydrate 与终态事件 |
+| `apps/api/internal/modules/pptagent/repository.go` | MySQL run/event 持久化与重启收口 |
+| `apps/api/internal/modules/pptagent/websocket.go` | WebSocket 命令、快照、重放和实时 fan-out |
+| `migrations/mysql/011_create_ppt_run_store.sql` | `ppt_runs` / `ppt_run_events` schema |
+| `migrations/mysql/012_widen_ppt_event_ids.sql` | 稳定 preview event ID 的 160 字节兼容迁移 |

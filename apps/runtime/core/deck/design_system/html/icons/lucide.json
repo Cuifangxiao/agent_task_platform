@@ -1,0 +1,887 @@
+{
+  "schema": "trusted-icon-registry.v1",
+  "source": "@lucide/vue 1.23.0",
+  "license": "ISC (some Feather-derived icons are MIT; see LICENSE.txt)",
+  "icons": [
+    {
+      "key": "rocket",
+      "tags": [
+        "launch",
+        "growth",
+        "start",
+        "产品",
+        "增长",
+        "启动"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05"
+          }
+        }
+      ]
+    },
+    {
+      "key": "route",
+      "tags": [
+        "journey",
+        "path",
+        "roadmap",
+        "路线",
+        "路径"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "6",
+            "cy": "19",
+            "r": "3"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"
+          }
+        },
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "18",
+            "cy": "5",
+            "r": "3"
+          }
+        }
+      ]
+    },
+    {
+      "key": "target",
+      "tags": [
+        "goal",
+        "objective",
+        "focus",
+        "目标",
+        "聚焦"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "12",
+            "cy": "12",
+            "r": "10"
+          }
+        },
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "12",
+            "cy": "12",
+            "r": "6"
+          }
+        },
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "12",
+            "cy": "12",
+            "r": "2"
+          }
+        }
+      ]
+    },
+    {
+      "key": "lightbulb",
+      "tags": [
+        "idea",
+        "insight",
+        "innovation",
+        "洞察",
+        "创意"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M9 18h6"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M10 22h4"
+          }
+        }
+      ]
+    },
+    {
+      "key": "chart-no-axes-combined",
+      "tags": [
+        "chart",
+        "growth",
+        "metric",
+        "趋势",
+        "指标"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 16v5"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M16 14.639V21"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M20 10.656V21"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m22 3-8.646 8.646a.5.5 0 0 1-.708 0L9.354 8.354a.5.5 0 0 0-.707 0L2 15"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M4 18.463V21"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M8 14.656V21"
+          }
+        }
+      ]
+    },
+    {
+      "key": "users",
+      "tags": [
+        "team",
+        "audience",
+        "customer",
+        "团队",
+        "用户"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M16 3.128a4 4 0 0 1 0 7.744"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M22 21v-2a4 4 0 0 0-3-3.87"
+          }
+        },
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "9",
+            "cy": "7",
+            "r": "4"
+          }
+        }
+      ]
+    },
+    {
+      "key": "shield-check",
+      "tags": [
+        "security",
+        "trust",
+        "compliance",
+        "安全",
+        "可信"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m9 12 2 2 4-4"
+          }
+        }
+      ]
+    },
+    {
+      "key": "clock",
+      "tags": [
+        "time",
+        "schedule",
+        "speed",
+        "时间",
+        "进度"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "12",
+            "cy": "12",
+            "r": "10"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 6v6l4 2"
+          }
+        }
+      ]
+    },
+    {
+      "key": "layers",
+      "tags": [
+        "stack",
+        "architecture",
+        "system",
+        "层级",
+        "架构"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"
+          }
+        }
+      ]
+    },
+    {
+      "key": "workflow",
+      "tags": [
+        "process",
+        "automation",
+        "flow",
+        "流程",
+        "自动化"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "rect",
+          "attributes": {
+            "height": "8",
+            "rx": "2",
+            "width": "8",
+            "x": "3",
+            "y": "3"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M7 11v4a2 2 0 0 0 2 2h4"
+          }
+        },
+        {
+          "tag": "rect",
+          "attributes": {
+            "height": "8",
+            "rx": "2",
+            "width": "8",
+            "x": "13",
+            "y": "13"
+          }
+        }
+      ]
+    },
+    {
+      "key": "circle-check",
+      "tags": [
+        "done",
+        "success",
+        "approved",
+        "完成",
+        "成功"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "12",
+            "cy": "12",
+            "r": "10"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m9 12 2 2 4-4"
+          }
+        }
+      ]
+    },
+    {
+      "key": "triangle-alert",
+      "tags": [
+        "risk",
+        "warning",
+        "problem",
+        "风险",
+        "警告"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 9v4"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 17h.01"
+          }
+        }
+      ]
+    },
+    {
+      "key": "sparkles",
+      "tags": [
+        "ai",
+        "new",
+        "quality",
+        "智能",
+        "创新"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M20 2v4"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M22 4h-4"
+          }
+        },
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "4",
+            "cy": "20",
+            "r": "2"
+          }
+        }
+      ]
+    },
+    {
+      "key": "globe",
+      "tags": [
+        "global",
+        "market",
+        "world",
+        "全球",
+        "市场"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "12",
+            "cy": "12",
+            "r": "10"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M2 12h20"
+          }
+        }
+      ]
+    },
+    {
+      "key": "database",
+      "tags": [
+        "data",
+        "storage",
+        "platform",
+        "数据",
+        "存储"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "ellipse",
+          "attributes": {
+            "cx": "12",
+            "cy": "5",
+            "rx": "9",
+            "ry": "3"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3 5V19A9 3 0 0 0 21 19V5"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3 12A9 3 0 0 0 21 12"
+          }
+        }
+      ]
+    },
+    {
+      "key": "cpu",
+      "tags": [
+        "compute",
+        "ai",
+        "technology",
+        "算力",
+        "技术"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 20v2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 2v2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M17 20v2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M17 2v2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M2 12h2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M2 17h2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M2 7h2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M20 12h2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M20 17h2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M20 7h2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M7 20v2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M7 2v2"
+          }
+        },
+        {
+          "tag": "rect",
+          "attributes": {
+            "height": "16",
+            "rx": "2",
+            "width": "16",
+            "x": "4",
+            "y": "4"
+          }
+        },
+        {
+          "tag": "rect",
+          "attributes": {
+            "height": "8",
+            "rx": "1",
+            "width": "8",
+            "x": "8",
+            "y": "8"
+          }
+        }
+      ]
+    },
+    {
+      "key": "network",
+      "tags": [
+        "connection",
+        "ecosystem",
+        "graph",
+        "连接",
+        "网络"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "rect",
+          "attributes": {
+            "height": "6",
+            "rx": "1",
+            "width": "6",
+            "x": "16",
+            "y": "16"
+          }
+        },
+        {
+          "tag": "rect",
+          "attributes": {
+            "height": "6",
+            "rx": "1",
+            "width": "6",
+            "x": "2",
+            "y": "16"
+          }
+        },
+        {
+          "tag": "rect",
+          "attributes": {
+            "height": "6",
+            "rx": "1",
+            "width": "6",
+            "x": "9",
+            "y": "2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 12V8"
+          }
+        }
+      ]
+    },
+    {
+      "key": "scale",
+      "tags": [
+        "balance",
+        "tradeoff",
+        "legal",
+        "平衡",
+        "权衡"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 3v18"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m19 8 3 8a5 5 0 0 1-6 0zV7"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m5 8 3 8a5 5 0 0 1-6 0zV7"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M7 21h10"
+          }
+        }
+      ]
+    },
+    {
+      "key": "arrow-up-right",
+      "tags": [
+        "increase",
+        "next",
+        "direction",
+        "增长",
+        "下一步"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M7 7h10v10"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M7 17 17 7"
+          }
+        }
+      ]
+    },
+    {
+      "key": "gauge",
+      "tags": [
+        "performance",
+        "speed",
+        "kpi",
+        "性能",
+        "指标"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m12 14 4-4"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3.34 19a10 10 0 1 1 17.32 0"
+          }
+        }
+      ]
+    },
+    {
+      "key": "book-open",
+      "tags": [
+        "research",
+        "learning",
+        "knowledge",
+        "研究",
+        "学习"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M12 7v14"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "heart-pulse",
+      "tags": [
+        "health",
+        "care",
+        "medical",
+        "健康",
+        "医疗"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3.22 13H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"
+          }
+        }
+      ]
+    },
+    {
+      "key": "handshake",
+      "tags": [
+        "partner",
+        "agreement",
+        "collaboration",
+        "合作",
+        "共识"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m11 17 2 2a1 1 0 1 0 3-3"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "m21 3 1 11h-2"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3 4h8"
+          }
+        }
+      ]
+    },
+    {
+      "key": "flag",
+      "tags": [
+        "milestone",
+        "finish",
+        "outcome",
+        "里程碑",
+        "结果"
+      ],
+      "view_box": "0 0 24 24",
+      "nodes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -146,6 +146,11 @@ class AgentEvent:
     page: PageDetail | None = None
     error: ErrorDetail | None = None
     final_result: FinalResult | None = None
+    event_id: str = ""
+    # Optional producer revision for an artifact.  Slide preview events use the
+    # persisted SlideArtifactMetadata.artifact_hash; legacy events leave it
+    # empty.
+    revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -158,6 +163,8 @@ class PipelineEvent:
     progress: Progress | None = None
     resources: tuple[ResourceRef, ...] = ()
     page: PageDetail | None = None
+    event_id: str = ""
+    revision: str = ""
 
 
 __all__ = [

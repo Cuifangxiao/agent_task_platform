@@ -3,8 +3,8 @@ import json
 import logging
 
 import core.deck.agents.generation.graph as generation_graph
-from core.deck.agents.design.graph import build_style_options
-from core.deck.design import get_template_pack, template_preview_path, template_svg_source
+from core.deck.agents.design.graph import build_art_direction, select_template_pack
+from core.deck.design import template_svg_source
 from core.deck.rendering.html import HTMLSlideRenderer
 from core.deck.rendering.artist import build_svg_artist_prompt, render_svg_artwork, resolve_page_blueprint, validate_artist_svg
 from core.deck.contract import EventType, PptStage
@@ -79,7 +79,7 @@ def _valid_svg(body="Enterprise renewals lead."):
 
 def _state():
     return {
-        "template_id": "consulting_signal",
+        "selected_template_id": "consulting_signal",
         "design_contract": {
             "spec_hash": "locked-hash",
             "pages": [
@@ -155,7 +155,7 @@ def test_catalog_materializes_layout_geometry_as_svg_structure():
 
 def test_prompt_falls_back_to_catalog_svg_when_blueprint_has_no_inline_source():
     deck, slide = _deck_and_slide()
-    state = {"template_id": "technical_blueprint", "page_blueprints": [{"index": 1, "layout_id": "blueprint_layers"}]}
+    state = {"selected_template_id": "technical_blueprint", "page_blueprints": [{"index": 1, "layout_id": "blueprint_layers"}]}
     blueprint = resolve_page_blueprint(state, slide, {})
 
     prompt = build_svg_artist_prompt(
@@ -314,26 +314,21 @@ def test_slide_pipeline_falls_back_after_one_invalid_designer_call(monkeypatch):
     assert result["artifacts"][0]["svg_renderer"] == "deterministic_fallback"
 
 
-def test_style_uses_one_static_catalog_cover_without_designer_rendering(tmp_path):
-    options = build_style_options(
-        {
-            "request_id": "static-style-covers",
-            "deck_title": "Clinical report",
-            "user_description": "医院病例与临床研究汇报",
-            "brief": {"audience": "医生", "goal": "说明临床证据"},
-            "plan": {"title": "Clinical report", "slides": [{"index": 1}]},
-        },
-        tmp_path,
-    )
+def test_template_selection_builds_direction_without_style_option_wrapper():
+    state = {
+        "request_id": "clinical-template",
+        "deck_title": "Clinical report",
+        "user_description": "医院病例与临床研究汇报",
+        "brief": {"audience": "医生", "goal": "说明临床证据"},
+        "plan": {"title": "Clinical report", "slides": [{"index": 1}]},
+        "requested_template_id": "auto",
+    }
 
-    assert len(options) == 1
-    assert options[0]["template_id"] == "medical_university"
-    assert options[0]["template_source"]["kind"] == "ppt-master"
-    assert all(option["sample_render_mode"] == "static_template_cover" for option in options)
-    assert all(option["cover_html"] == "" and option["thumb_b64"] == "" for option in options)
-    for option in options:
-        cover = tmp_path / "static-style-covers" / option["cover_png"]
-        source = template_preview_path(get_template_pack(option["template_id"]))
-        assert cover.is_file()
-        assert cover.suffix == ".png"
-        assert cover.read_bytes() == source.read_bytes()
+    pack = select_template_pack(state)
+    direction = build_art_direction(pack, state)
+
+    assert pack.template_id == "medical_university"
+    assert pack.source["kind"] == "ppt-master"
+    assert direction["name"] == pack.name
+    assert "cover_png" not in direction
+    assert "tokens" not in direction

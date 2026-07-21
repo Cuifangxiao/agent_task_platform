@@ -25,19 +25,25 @@ from core.deck.contract import (
     ResourceType,
 )
 from core.deck.errors import DeckError
+from core.deck.llm import ModelInvocationError
 from core.deck.model_config import build_ppt_llms, describe_model_assignment
 from core.deck.paths import DeckProjectPaths, artifact_dir
-from core.deck.rendering.browser import BrowserSession
+from core.deck.rendering.html_browser import SecureBrowserSession
 from core.deck.runner import PptGraph
+from core.deck.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 from core.deck.sources import (
     derive_deck_title,
-    materialize_source_images,
     parse_uploaded_files_with_provenance,
     persist_normalized_source_bundle,
 )
 
 
 logger = logging.getLogger(__name__)
+
+# Compatibility seam for existing runtime tests and downstream factories.
+# The implementation is the isolated HTML renderer session, not the legacy
+# SVG/browser session.
+BrowserSession = SecureBrowserSession
 
 
 class DeckService:
@@ -51,7 +57,7 @@ class DeckService:
         sequence = 0
         last_stage = PptStage.PREPARING
         started_at = time.perf_counter()
-        browser_session: BrowserSession | None = None
+        browser_session: SecureBrowserSession | None = None
 
         try:
             description = inp.description.strip()
@@ -72,7 +78,6 @@ class DeckService:
 
             llms = build_ppt_llms(inp)
             browser_session = BrowserSession()
-            source_images = materialize_source_images(inp, project.root)
             uploaded_file_names, uploaded_file_text, source_chunks = parse_uploaded_files_with_provenance(inp)
             persist_normalized_source_bundle(
                 project.root,
@@ -97,20 +102,42 @@ class DeckService:
             )
 
             deck_title = derive_deck_title(description, uploaded_file_names, uploaded_file_text)
+            aspect_ratio = inp.options.aspect_ratio.strip() or "16:9"
+            if aspect_ratio != "16:9":
+                raise ValueError("the HTML deck renderer currently supports only 16:9")
             initial_state = {
+                "schema_version": SCHEMA_VERSION,
+                "prompt_version": PROMPT_VERSION,
+                "renderer_version": RENDERER_VERSION,
                 "task_id": task_id,
+                "job_id": task_id,
+                "deck_id": task_id,
                 "request_id": task_id,
                 "project_dir": str(project.root),
+                "status": "created",
+                "last_error": None,
                 "deck_title": deck_title,
                 "uploaded_file_name": uploaded_file_names,
                 "uploaded_file_text": uploaded_file_text,
                 "source_chunks": source_chunks,
-                "source_images": source_images,
+                # This release intentionally treats uploads as text only.  The
+                # compatibility key remains serializable for older consumers.
+                "source_images": [],
                 "user_description": description,
                 "expected_slide_count": max(0, int(inp.options.expected_slide_count or 0)),
                 "language": inp.options.language.strip(),
-                "aspect_ratio": inp.options.aspect_ratio.strip() or "16:9",
-                "template_id": inp.options.template_id.strip() or "auto",
+                "aspect_ratio": aspect_ratio,
+                # The transport field remains ``template_id`` for API
+                # compatibility; internally it is only a request preference.
+                "requested_template_id": inp.options.template_id.strip() or "auto",
+                "generation_mode": "html_v2",
+                "current_slide_index": 0,
+                "completed_slides": {},
+                "layout_history": [],
+                "validation_issues": [],
+                "slides": [],
+                "final_slides": [],
+                "artifacts": [],
             }
             logger.info(
                 "generate ppt: task_id=%s models=%s attachments=%s",
@@ -150,6 +177,8 @@ class DeckService:
                     progress=hydrated.progress,
                     resources=hydrated.resources,
                     page=hydrated.page,
+                    event_id=hydrated.event_id,
+                    revision=hydrated.revision,
                 )
                 for resource in event.resources:
                     if resource.type is ResourceType.PPTX:
@@ -158,7 +187,12 @@ class DeckService:
 
             if ppt_resource is None:
                 ppt_resource = _ppt_resource_from_state(final_state, project)
-            slide_count = len(final_state.get("final_slides") or final_state.get("slides") or [])
+            completed = final_state.get("completed_slides")
+            slide_count = (
+                len(completed)
+                if isinstance(completed, dict) and completed
+                else len(final_state.get("final_slides") or final_state.get("slides") or [])
+            )
             elapsed_ms = round((time.perf_counter() - started_at) * 1000)
             sequence += 1
             yield _agent_event(
@@ -188,7 +222,7 @@ class DeckService:
                     code=_error_code(exc),
                     message=error_message,
                     debug_message=str(exc),
-                    retryable=not isinstance(exc, ValueError),
+                    retryable=_retryable_error(exc),
                 ),
             )
         finally:
@@ -211,6 +245,8 @@ def _agent_event(
     page=None,
     error: ErrorDetail | None = None,
     final_result: FinalResult | None = None,
+    event_id: str = "",
+    revision: str = "",
 ) -> AgentEvent:
     return AgentEvent(
         task_id=task_id,
@@ -224,6 +260,8 @@ def _agent_event(
         page=page,
         error=error,
         final_result=final_result,
+        event_id=event_id,
+        revision=revision,
     )
 
 
@@ -275,6 +313,13 @@ def _ppt_resource_from_state(state: dict[str, Any], project: DeckProjectPaths) -
 def _error_code(exc: Exception) -> str:
     name = type(exc).__name__
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower() or "ppt_runtime_error"
+
+
+def _retryable_error(exc: Exception) -> bool:
+    # Schema/content/configuration failures have already exhausted their local
+    # repair path.  Only provider/transport failures are useful to retry as a
+    # new task under the current public contract.
+    return isinstance(exc, ModelInvocationError)
 
 
 __all__ = ["DeckService"]

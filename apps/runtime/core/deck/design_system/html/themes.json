@@ -1,0 +1,135 @@
+{
+  "schema": "html-theme-catalog.v1",
+  "default_theme_id": "paper_editorial",
+  "aliases": {
+    "editorial_freeform": "paper_editorial",
+    "psychology_attachment": "paper_editorial",
+    "consulting_signal": "executive_signal",
+    "government_blue": "executive_signal",
+    "government_red": "executive_signal",
+    "technical_blueprint": "midnight_product",
+    "ai_ops": "midnight_product",
+    "keynote_canvas": "midnight_product",
+    "pixel_retro": "midnight_product",
+    "academic_defense": "alpine_research",
+    "medical_university": "alpine_research"
+  },
+  "themes": [
+    {
+      "theme_id": "paper_editorial",
+      "name": "Paper Editorial",
+      "summary": "暖白纸张、番茄红信号色与不对称编辑式构图，适合品牌、叙事、复盘和通用汇报。",
+      "keywords": ["品牌", "叙事", "复盘", "编辑", "温暖", "editorial", "story", "creative"],
+      "palette": {
+        "background": "#F4F0E8",
+        "surface": "#FFFDF8",
+        "text": "#182126",
+        "muted": "#667078",
+        "accent": "#E4573D",
+        "secondary": "#217C7E",
+        "divider": "#D8D1C5"
+      },
+      "typography": {
+        "chinese_font": "Noto Sans CJK SC",
+        "latin_font": "Inter",
+        "cover_title": {"size_px": 82, "weight": 800, "line_height": 1.04, "max_lines": 2},
+        "page_title": {"size_px": 52, "weight": 700, "line_height": 1.12, "max_lines": 2},
+        "body": {"size_px": 24, "weight": 400, "line_height": 1.48, "max_lines": 8},
+        "caption": {"size_px": 17, "weight": 500, "line_height": 1.35, "max_lines": 3}
+      },
+      "spacing": {"canvas_margin": 88, "base_unit": 8, "column_gap": 48},
+      "shape_style": {"radius": 10, "line_width": 2, "shadow": "none"},
+      "icon_style": "Lucide outline, 2px stroke, rounded joins, currentColor",
+      "background_style": "warm paper field with sparse offset geometry",
+      "motif": "cropped circles, editorial rules, and one vermilion signal mark",
+      "density_policy": "alternate dense evidence pages with breathing statement pages; avoid equal card grids"
+    },
+    {
+      "theme_id": "executive_signal",
+      "name": "Executive Signal",
+      "summary": "结论先行的管理层模板，白底、深蓝文字、单一橙色信号，强调证据与决策。",
+      "keywords": ["管理层", "经营", "战略", "董事会", "咨询", "财务", "executive", "board", "consulting"],
+      "palette": {
+        "background": "#F7F9FC",
+        "surface": "#FFFFFF",
+        "text": "#102A43",
+        "muted": "#5D7185",
+        "accent": "#005B8F",
+        "secondary": "#D45522",
+        "divider": "#CBD6E2"
+      },
+      "typography": {
+        "chinese_font": "Noto Sans CJK SC",
+        "latin_font": "Inter",
+        "cover_title": {"size_px": 78, "weight": 800, "line_height": 1.05, "max_lines": 2},
+        "page_title": {"size_px": 48, "weight": 700, "line_height": 1.14, "max_lines": 2},
+        "body": {"size_px": 23, "weight": 400, "line_height": 1.45, "max_lines": 8},
+        "caption": {"size_px": 16, "weight": 500, "line_height": 1.35, "max_lines": 3}
+      },
+      "spacing": {"canvas_margin": 80, "base_unit": 8, "column_gap": 40},
+      "shape_style": {"radius": 4, "line_width": 1, "shadow": "none"},
+      "icon_style": "Lucide outline, restrained use, one semantic icon per evidence cluster",
+      "background_style": "clean white evidence canvas with precise rules and a slim title rail",
+      "motif": "navy rule, orange decision marker, and aligned evidence baselines",
+      "density_policy": "one primary exhibit plus one implication zone; color communicates meaning, not decoration"
+    },
+    {
+      "theme_id": "midnight_product",
+      "name": "Midnight Product",
+      "summary": "深色产品发布与技术方案模板，荧光青、琥珀点缀和大尺度视觉锚点。",
+      "keywords": ["产品", "发布", "技术", "AI", "架构", "软件", "路演", "product", "launch", "technology"],
+      "palette": {
+        "background": "#0A1220",
+        "surface": "#142136",
+        "text": "#F4F8FC",
+        "muted": "#A5B4C5",
+        "accent": "#54D6C5",
+        "secondary": "#FFB547",
+        "divider": "#31435B"
+      },
+      "typography": {
+        "chinese_font": "Noto Sans CJK SC",
+        "latin_font": "Inter",
+        "cover_title": {"size_px": 88, "weight": 800, "line_height": 1.02, "max_lines": 2},
+        "page_title": {"size_px": 52, "weight": 700, "line_height": 1.1, "max_lines": 2},
+        "body": {"size_px": 24, "weight": 400, "line_height": 1.45, "max_lines": 7},
+        "caption": {"size_px": 17, "weight": 500, "line_height": 1.35, "max_lines": 3}
+      },
+      "spacing": {"canvas_margin": 88, "base_unit": 10, "column_gap": 48},
+      "shape_style": {"radius": 20, "line_width": 2, "shadow": "soft"},
+      "icon_style": "Lucide outline with luminous accent stroke; large symbols only",
+      "background_style": "midnight field with subtle radial glow and technical grid traces",
+      "motif": "orbital arcs, luminous nodes, and one oversized metric or symbol",
+      "density_policy": "preserve 35–55% negative space on anchor pages and keep supporting copy short"
+    },
+    {
+      "theme_id": "alpine_research",
+      "name": "Alpine Research",
+      "summary": "冷静、清晰的研究与教学模板，以云白、松绿和冰川蓝组织问题、方法和结论。",
+      "keywords": ["研究", "教学", "学术", "医疗", "方法", "答辩", "research", "education", "academic"],
+      "palette": {
+        "background": "#F3F7F5",
+        "surface": "#FFFFFF",
+        "text": "#17332D",
+        "muted": "#60756E",
+        "accent": "#177A68",
+        "secondary": "#4D7FA7",
+        "divider": "#CBDAD5"
+      },
+      "typography": {
+        "chinese_font": "Noto Sans CJK SC",
+        "latin_font": "Inter",
+        "cover_title": {"size_px": 76, "weight": 700, "line_height": 1.06, "max_lines": 2},
+        "page_title": {"size_px": 48, "weight": 700, "line_height": 1.14, "max_lines": 2},
+        "body": {"size_px": 23, "weight": 400, "line_height": 1.5, "max_lines": 8},
+        "caption": {"size_px": 16, "weight": 500, "line_height": 1.4, "max_lines": 3}
+      },
+      "spacing": {"canvas_margin": 84, "base_unit": 8, "column_gap": 44},
+      "shape_style": {"radius": 12, "line_width": 1, "shadow": "soft"},
+      "icon_style": "Lucide outline, calm green-blue stroke, used for method and evidence labels",
+      "background_style": "cloud-white field with quiet topographic contours",
+      "motif": "contour lines, measured brackets, and glacier-blue evidence markers",
+      "density_policy": "keep definitions and evidence legible; use sequence and comparison before dense tables"
+    }
+  ]
+}

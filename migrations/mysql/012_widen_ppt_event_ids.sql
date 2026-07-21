@@ -1,0 +1,5 @@
+ALTER TABLE ppt_runs
+    MODIFY COLUMN event_id VARCHAR(160) CHARACTER SET ascii COLLATE ascii_bin NULL;
+
+ALTER TABLE ppt_run_events
+    MODIFY COLUMN event_id VARCHAR(160) CHARACTER SET ascii COLLATE ascii_bin NOT NULL;

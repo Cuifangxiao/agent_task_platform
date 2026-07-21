@@ -17,7 +17,14 @@ class SuccessfulGraph:
             "custom",
             events.slide_preview(
                 "Page preview ready",
-                {"index": 1, "total": 1, "title": "Demo", "png": "previews/page-001.png"},
+                {
+                    "event_id": "slide-preview:task-1:s01:0123456789abcdef0123",
+                    "artifact_hash": "a" * 64,
+                    "index": 1,
+                    "total": 1,
+                    "title": "Demo",
+                    "png": "previews/page-001.png",
+                },
             ),
         )
         # A graph node cannot own the task terminal; the service emits it exactly once.
@@ -66,6 +73,9 @@ def test_service_sequences_events_and_emits_one_last_success_terminal(monkeypatc
     assert result[-1].final_result.ppt_file.relative_path == "exports/deck.pptx"
     assert result[-1].final_result.ppt_file.type is ResourceType.PPTX
     preview = next(resource for event in result for resource in event.resources if resource.type is ResourceType.PAGE_PREVIEW)
+    preview_event = next(event for event in result if preview in event.resources)
+    assert preview_event.event_id == "slide-preview:task-1:s01:0123456789abcdef0123"
+    assert preview_event.revision == "a" * 64
     assert preview.relative_path == "previews/page-001.png"
     assert not Path(preview.relative_path).is_absolute()
     assert preview.size_bytes == len(b"preview")

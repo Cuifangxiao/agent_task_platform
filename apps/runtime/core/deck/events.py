@@ -18,13 +18,34 @@ from core.deck.contract import (
 _STAGES = {
     "brief": PptStage.PREPARING,
     "outline": PptStage.PLANNING,
-    "style": PptStage.PLANNING,
+    "template_selection": PptStage.PLANNING,
     "design_lock": PptStage.GENERATING_ASSETS,
     "writer": PptStage.GENERATING_PAGES,
     "slides": PptStage.GENERATING_PAGES,
     "designer": PptStage.GENERATING_PAGES,
     "render": PptStage.GENERATING_PAGES,
     "export": PptStage.ASSEMBLING_PPT,
+    "normalize_request": PptStage.PREPARING,
+    "plan_deck": PptStage.PLANNING,
+    "select_template": PptStage.PLANNING,
+    "create_design_spec": PptStage.GENERATING_ASSETS,
+    # Once a page starts, keep the externally visible stage monotonic through
+    # its content, HTML, repair, and preview work.
+    "prepare_slide": PptStage.GENERATING_PAGES,
+    "generate_slide_content": PptStage.GENERATING_PAGES,
+    "generate_slide_html": PptStage.GENERATING_PAGES,
+    "sanitize_and_assemble_html": PptStage.GENERATING_PAGES,
+    "repair_slide_html": PptStage.GENERATING_PAGES,
+    "build_fallback_html": PptStage.GENERATING_PAGES,
+    "render_html_and_measure_dom": PptStage.RENDERING,
+    "validate_dom": PptStage.RENDERING,
+    "capture_png": PptStage.RENDERING,
+    "persist_slide_artifacts": PptStage.RENDERING,
+    "emit_slide_preview": PptStage.RENDERING,
+    "advance_slide": PptStage.GENERATING_PAGES,
+    "assemble_image_pptx": PptStage.ASSEMBLING_PPT,
+    # FINISHED remains owned by the service's terminal TASK_COMPLETED event.
+    "finalize_deck": PptStage.ASSEMBLING_PPT,
 }
 
 
@@ -61,13 +82,12 @@ def outline_ready(outline_markdown: str) -> PipelineEvent:
     return PipelineEvent(EventType.STEP_COMPLETED, PptStage.PLANNING, "Outline ready")
 
 
-def style_options(payload: dict[str, Any]) -> PipelineEvent:
-    options = payload.get("options") if isinstance(payload, dict) else []
-    name = str(options[0].get("name") or "") if isinstance(options, list) and options else ""
+def template_selected(name: str, template_id: str) -> PipelineEvent:
+    label = str(name or template_id or "").strip()
     return PipelineEvent(
         EventType.STEP_COMPLETED,
         PptStage.PLANNING,
-        f"Recommended style selected: {name}" if name else "Recommended style selected",
+        f"Template selected: {label}" if label else "Template selected",
     )
 
 
@@ -83,18 +103,23 @@ def slide_started(message: str, payload: dict[str, Any]) -> PipelineEvent:
 
 def slide_preview(message: str, payload: dict[str, Any]) -> PipelineEvent:
     index = _positive_int(payload.get("index"))
+    slide_id = str(payload.get("slide_id") or f"s{index:02d}").strip()
     resources: list[ResourceRef] = []
-    for key, resource_type, mime_type in (
-        ("png", ResourceType.PAGE_PREVIEW, "image/png"),
-        ("html", ResourceType.HTML, "text/html"),
-        ("svg", ResourceType.SVG, "image/svg+xml"),
+    # Production v2 emits only ``png``.  Keeping the helper compatible with
+    # legacy sanitized HTML/SVG callers avoids breaking the transport layer.
+    for key, resource_type, mime_type, suffix in (
+        ("png", ResourceType.PAGE_PREVIEW, "image/png", "preview"),
+        ("html", ResourceType.HTML, "text/html", "html"),
+        ("svg", ResourceType.SVG, "image/svg+xml", "svg"),
     ):
         relative_path = str(payload.get(key) or "").strip()
         if not relative_path:
             continue
         resources.append(
             ResourceRef(
-                resource_id=f"page-{index:03d}-{key}",
+                # Stable per-slide keys let current web clients replace a
+                # regenerated preview instead of showing duplicate cards.
+                resource_id=f"{slide_id}-{suffix}",
                 type=resource_type,
                 name=relative_path.rsplit("/", 1)[-1],
                 relative_path=relative_path,
@@ -108,6 +133,8 @@ def slide_preview(message: str, payload: dict[str, Any]) -> PipelineEvent:
         progress=_page_progress(payload),
         resources=tuple(resources),
         page=_page(payload),
+        event_id=str(payload.get("event_id") or "").strip(),
+        revision=str(payload.get("artifact_hash") or "").strip(),
     )
 
 
@@ -154,8 +181,9 @@ def _page(payload: dict[str, Any]) -> PageDetail | None:
     if not index:
         return None
     total = _positive_int(payload.get("total") or payload.get("page_count"))
+    slide_id = str(payload.get("slide_id") or f"s{index:02d}").strip()
     return PageDetail(
-        page_id=f"page-{index:03d}",
+        page_id=slide_id,
         page_index=index,
         page_count=total,
         title=str(payload.get("title") or ""),
@@ -179,5 +207,5 @@ __all__ = [
     "stage_for",
     "stage_progress",
     "stage_started",
-    "style_options",
+    "template_selected",
 ]
