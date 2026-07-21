@@ -22,6 +22,9 @@ from config import get_config
 logger = logging.getLogger(__name__)
 
 
+StructuredOutputMethod = Literal["json_schema", "json_mode", "function_calling"]
+
+
 PROVIDER_CHAT_MODELS: dict[str, type[ChatOpenAI]] = {
     "openai": ChatOpenAI,
     "deepseek": ChatOpenAI,
@@ -69,6 +72,7 @@ class ProviderModelDefinition(BaseModel):
     type: Literal["text", "multimodal", "image"] = "text"
     reasoning_supported: bool = False
     disabled: bool = False
+    structured_output_method: StructuredOutputMethod | None = None
     parameters: list[ProviderModelParameter] = Field(default_factory=list)
     default_parameters: dict[str, Any] = Field(default_factory=dict)
 
@@ -81,6 +85,7 @@ class ProviderDefinition(BaseModel):
     sdk: str = ""
     default_base_url: str = ""
     supports_custom_base_url: bool = True
+    structured_output_method: StructuredOutputMethod = "json_schema"
     credential_test: CredentialTestConfig = Field(default_factory=CredentialTestConfig)
     models: list[ProviderModelDefinition] = Field(default_factory=list)
 
@@ -90,6 +95,12 @@ class ProviderDefinition(BaseModel):
             if model.id == candidate or model.model_name == candidate:
                 return model
         return None
+
+    def structured_output_method_for(
+        self,
+        model: ProviderModelDefinition,
+    ) -> StructuredOutputMethod:
+        return model.structured_output_method or self.structured_output_method
 
 
 class ProviderConfigManager:
@@ -192,12 +203,58 @@ class ProviderConfigManager:
             "base_url": base_url or provider.default_base_url or None,
             "timeout": 60,
             "max_retries": 0,
-            "temperature": temperature,
             "max_tokens": max_tokens,
+            "metadata": {
+                "provider": provider.name,
+                "model_id": model.id,
+                "structured_output_method": provider.structured_output_method_for(model),
+            },
         }
         kwargs.update(self._runtime_kwargs_for_model(provider, model))
         kwargs.update(self._runtime_kwargs_for_options(provider, provider_options or {}))
-        kwargs["temperature"] = temperature
+
+        effective_options = {
+            **model.default_parameters,
+            **(provider_options or {}),
+        }
+        deepseek_thinking = (
+            provider.manager == "deepseek"
+            and "thinking" in effective_options
+            and str(effective_options["thinking"]).strip().lower() == "enabled"
+        )
+        qwen_thinking = (
+            provider.manager == "qwen"
+            and "enable_thinking" in effective_options
+            and _is_enabled_parameter_value(effective_options["enable_thinking"])
+        )
+
+        if _model_supports_parameter(model, "temperature") and not deepseek_thinking:
+            kwargs["temperature"] = temperature
+        else:
+            kwargs.pop("temperature", None)
+
+        if deepseek_thinking:
+            # DeepSeek documents these sampling controls as ignored in thinking
+            # mode, so do not send misleading no-op values to the provider.
+            for parameter_name in (
+                "top_p",
+                "frequency_penalty",
+                "presence_penalty",
+            ):
+                kwargs.pop(parameter_name, None)
+        elif provider.manager == "deepseek":
+            # Effort is only meaningful while DeepSeek thinking mode is enabled.
+            kwargs.pop("reasoning_effort", None)
+
+        if provider.manager == "qwen" and not qwen_thinking:
+            # Qwen's thinking budget is only valid when hybrid thinking is on.
+            extra_body = dict(kwargs.get("extra_body") or {})
+            extra_body.pop("thinking_budget", None)
+            if extra_body:
+                kwargs["extra_body"] = extra_body
+            else:
+                kwargs.pop("extra_body", None)
+
         kwargs["max_tokens"] = max_tokens
         return client_class(**kwargs)
 
@@ -228,11 +285,16 @@ class ProviderConfigManager:
                     "thinking": {"type": defaults["thinking"]},
                 }
 
-        if provider.manager == "qwen" and "enable_thinking" in defaults:
-            kwargs["extra_body"] = {
-                **dict(kwargs.get("extra_body") or {}),
-                "enable_thinking": bool(defaults["enable_thinking"]),
-            }
+        if provider.manager == "qwen":
+            extra_body = dict(kwargs.get("extra_body") or {})
+            if "enable_thinking" in defaults:
+                extra_body["enable_thinking"] = _is_enabled_parameter_value(
+                    defaults["enable_thinking"]
+                )
+            if "thinking_budget" in defaults:
+                extra_body["thinking_budget"] = defaults["thinking_budget"]
+            if extra_body:
+                kwargs["extra_body"] = extra_body
 
         return kwargs
 
@@ -256,11 +318,16 @@ class ProviderConfigManager:
                 "thinking": {"type": options["thinking"]},
             }
 
-        if provider.manager == "qwen" and "enable_thinking" in options:
-            kwargs["extra_body"] = {
-                **dict(kwargs.get("extra_body") or {}),
-                "enable_thinking": bool(options["enable_thinking"]),
-            }
+        if provider.manager == "qwen":
+            extra_body = dict(kwargs.get("extra_body") or {})
+            if "enable_thinking" in options:
+                extra_body["enable_thinking"] = _is_enabled_parameter_value(
+                    options["enable_thinking"]
+                )
+            if "thinking_budget" in options:
+                extra_body["thinking_budget"] = options["thinking_budget"]
+            if extra_body:
+                kwargs["extra_body"] = extra_body
 
         return kwargs
 
@@ -318,7 +385,12 @@ def _normalize_model_definition(model: dict[str, Any]) -> dict[str, Any]:
     normalized_model["default_parameters"] = defaults
 
     if "reasoning_supported" not in normalized_model:
-        reasoning_parameters = {"reasoning_effort", "thinking_level", "enable_thinking"}
+        reasoning_parameters = {
+            "reasoning_effort",
+            "thinking_level",
+            "enable_thinking",
+            "thinking_budget",
+        }
         normalized_model["reasoning_supported"] = any(
             parameter.get("name") in reasoning_parameters for parameter in parameters
         )
@@ -382,3 +454,16 @@ def _stringify_parameter_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def _is_enabled_parameter_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "enabled", "on"}
+
+
+def _model_supports_parameter(
+    model: ProviderModelDefinition,
+    parameter_name: str,
+) -> bool:
+    return any(parameter.name == parameter_name for parameter in model.parameters)

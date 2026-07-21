@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 SCHEMA_VERSION = "deck-state.v2"
-PROMPT_VERSION = "html-deck.v2"
+PROMPT_VERSION = "html-deck.v3"
 RENDERER_VERSION = "chromium-html.v1"
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 900
@@ -24,6 +24,7 @@ PreferenceText = Annotated[str, Field(min_length=1, max_length=120)]
 NarrativeText = Annotated[str, Field(min_length=1, max_length=500)]
 ContentItemText = Annotated[str, Field(min_length=1, max_length=180)]
 EmphasisText = Annotated[str, Field(min_length=1, max_length=180)]
+ContentRequirement = Annotated[str, Field(min_length=1, max_length=240)]
 IconKey = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 SourceReference = Annotated[str, Field(min_length=1, max_length=64)]
 
@@ -45,20 +46,44 @@ class SourceFact(StrictModel):
     source_excerpt: str = Field(default="", max_length=800)
 
 
-class DeckBrief(StrictModel):
+class DeckBriefInterpretation(StrictModel):
+    """Semantic request interpretation returned by the first deck model.
+
+    Runtime-owned source text and any future evidence ledger are deliberately
+    absent from this model-output schema. The brief model interprets the raw
+    request; application code only validates and carries its structured answer.
+    """
+
     topic: str = Field(min_length=1, max_length=180)
     audience: str = Field(min_length=1, max_length=180)
     goal: str = Field(min_length=1, max_length=300)
     audience_outcome: str = Field(min_length=1, max_length=300)
     tone: str = Field(min_length=1, max_length=120)
+    language: str = Field(min_length=2, max_length=20)
+    slide_count: int = Field(ge=1, le=30)
+    aspect_ratio: Literal["16:9"]
+    communication_job: str = Field(min_length=1, max_length=500)
+    content_requirements: list[ContentRequirement] = Field(max_length=16)
+    brand_preferences: list[PreferenceText] = Field(max_length=8)
+    color_preferences: list[PreferenceText] = Field(max_length=8)
+    style_preferences: list[PreferenceText] = Field(max_length=8)
+    source_mode: Literal["general_knowledge", "source_grounded"]
+
+
+class DeckBrief(DeckBriefInterpretation):
+    """Validated brief plus runtime-owned source context for downstream nodes."""
+
+    # Defaults remain on the persisted runtime schema so older checkpoints can
+    # still be loaded. The model-output schema above requires every field.
     language: str = Field(default="zh-CN", min_length=2, max_length=20)
     slide_count: int = Field(default=8, ge=1, le=30)
     aspect_ratio: Literal["16:9"] = "16:9"
-    source_text: str = Field(default="", max_length=60_000)
-    communication_job: str = Field(min_length=1, max_length=500)
+    content_requirements: list[ContentRequirement] = Field(default_factory=list, max_length=16)
     brand_preferences: list[PreferenceText] = Field(default_factory=list, max_length=8)
     color_preferences: list[PreferenceText] = Field(default_factory=list, max_length=8)
     style_preferences: list[PreferenceText] = Field(default_factory=list, max_length=8)
+    source_mode: Literal["general_knowledge", "source_grounded"] = "general_knowledge"
+    source_text: str = Field(default="", max_length=60_000)
     facts: list[SourceFact] = Field(default_factory=list, max_length=200)
 
 
@@ -324,6 +349,7 @@ __all__ = [
     "ContentBlock",
     "ContentBlockType",
     "DeckBrief",
+    "DeckBriefInterpretation",
     "DeckPlan",
     "DesignSpec",
     "DiagnosticCategory",

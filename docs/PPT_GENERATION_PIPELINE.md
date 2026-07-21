@@ -95,7 +95,7 @@ LLM 边界使用 `core/deck/domain/schemas.py` 中的严格 Pydantic schema，�
 
 | Schema | 职责 |
 |---|---|
-| `DeckBrief` | 主题、受众、沟通目标、语言、页数和带溯源信息的 `SourceFact` |
+| `DeckBriefInterpretation` / `DeckBrief` | 首个 Brief Agent 直接解释用户原始输入，产出主题、受众、沟通目标、语言、页数、内容要求与 source mode；运行时仅附带原始来源上下文，首步不提取 facts |
 | `DeckPlan` / `SlidePlan` | 整套叙事弧、连续的 `s01...` 页面名册、页面角色、结论式标题、布局族和节奏 |
 | `DesignSpec` | 全局主题 ID、色板、中英文字体、字号、间距、形状、图标风格和背景 motif |
 | `SlideContentSpec` | 单页结构化内容块、强调项、候选图标和 `source_refs` |
@@ -107,14 +107,14 @@ LLM 边界使用 `core/deck/domain/schemas.py` 中的严格 Pydantic schema，�
 
 | Prompt | 核心决策 |
 |---|---|
-| `deck_brief.md` | 区分硬约束、来源事实、用户偏好与保守推断，产出可检验的 communication job |
+| `deck_brief.md` | 直接接收原始用户指令，区分任务命令与真实主题，理解自然语言页数、受众、内容和风格要求，产出可检验的 communication job；不生成 fact ledger |
 | `deck_planner.md` | 选择叙事原型，按单页唯一任务分配证据、layout family 与页面节奏 |
 | `design_director.md` | 锁定 catalog token，只细化适配本次叙事的背景、motif 与 density policy |
 | `slide_content.md` | 按 recipe 选择 block 形态并逐项约束来源、限定条件、邻页去重与图标语义 |
 | `html_slide_designer.md` | 从焦点和阅读路径出发构图，完整执行 content、DOM、CSS、SVG、安全和几何合同 |
 | `html_repair.md` | 按诊断优先级和最小改动阶梯修复，不改事实、标题、主题或 layout family |
 
-当前机器可读版本标识为 `deck-state.v2`、`html-deck.v2` 和 `chromium-html.v1`。六个正式节点提示词统一采用岗位合同：输入权威顺序、决策流程、角色级质量门、失败策略和严格输出边界均由 prompt 明确定义。prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/pipeline/state.py` 将 state 分为七个逻辑区域：
+当前机器可读版本标识为 `deck-state.v2`、`html-deck.v3` 和 `chromium-html.v1`。六个正式节点提示词统一采用岗位合同：输入权威顺序、决策流程、角色级质量门、失败策略和严格输出边界均由 prompt 明确定义。prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/pipeline/state.py` 将 state 分为七个逻辑区域：
 
 - `DeckRunState`：版本、run/request ID 和图内状态；失败终态及错误详情由图外的 service 事件统一发布；
 - `DeckInputState`：用户描述、解析后文本、source chunks、页数、语言和模板偏好；

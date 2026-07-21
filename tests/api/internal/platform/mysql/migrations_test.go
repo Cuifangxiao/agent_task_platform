@@ -105,3 +105,36 @@ func TestPptEventIDMigrationSupportsStableProducerIDs(t *testing.T) {
 		t.Fatal("event_id widening must preserve the existing unique index")
 	}
 }
+
+func TestPptAgentDefinitionMigrationRestoresCurrentModelNodes(t *testing.T) {
+	dir, err := resolveMySQLMigrationDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(filepath.Join(dir, "013_restore_ppt_agent_definition.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(payload)
+	statements := splitSQLStatements(script)
+	if len(statements) != 2 {
+		t.Fatalf("migration statement count = %d, want 2", len(statements))
+	}
+	for _, required := range []string{
+		"INSERT INTO agents",
+		"'ppt_agent'",
+		"ON DUPLICATE KEY UPDATE",
+		"node_schema = VALUES(node_schema)",
+		"status = VALUES(status)",
+		"'key', 'brief'",
+		"'key', 'outline'",
+		"'key', 'style'",
+		"'key', 'writer'",
+		"'key', 'designer'",
+		"binding.node_key NOT IN ('brief', 'outline', 'style', 'writer', 'designer')",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("migration is missing %q", required)
+		}
+	}
+}

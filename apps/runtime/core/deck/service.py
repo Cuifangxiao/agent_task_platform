@@ -32,7 +32,6 @@ from core.deck.html.browser import SecureBrowserSession
 from core.deck.pipeline.graph import PptGraph
 from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 from core.deck.workspace.sources import (
-    derive_deck_title,
     parse_uploaded_files_with_provenance,
     persist_normalized_source_bundle,
 )
@@ -96,7 +95,6 @@ class DeckService:
                 ),
             )
 
-            deck_title = derive_deck_title(description, uploaded_file_names, uploaded_file_text)
             aspect_ratio = inp.options.aspect_ratio.strip() or "16:9"
             if aspect_ratio != "16:9":
                 raise ValueError("the HTML deck renderer currently supports only 16:9")
@@ -108,7 +106,9 @@ class DeckService:
                 "request_id": task_id,
                 "project_dir": str(project.root),
                 "status": "created",
-                "deck_title": deck_title,
+                # The first Brief Agent owns semantic interpretation, including
+                # the title. Do not derive one from the request in application code.
+                "deck_title": "",
                 "uploaded_file_text": uploaded_file_text,
                 "source_chunks": source_chunks,
                 "user_description": description,

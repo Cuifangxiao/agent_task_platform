@@ -28,6 +28,34 @@ def _human_payload(messages) -> dict:
     return json.loads(messages[-1][1])
 
 
+class BriefLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        payload = _human_payload(messages)
+        assert payload["raw_user_input"] == "验证完整规划、统一设计、逐页修订和图片型导出。"
+        assert payload["explicit_options"]["slide_count"] == 8
+        assert "deterministic_brief" not in payload
+        return {
+            "topic": "八页集成测试演示",
+            "audience": "演示系统开发与验收人员",
+            "goal": "验证演示文稿流水线的完整执行路径",
+            "audience_outcome": "确认规划、设计、修订和导出能够连续完成",
+            "tone": "清晰、技术导向",
+            "language": "zh-CN",
+            "slide_count": 8,
+            "aspect_ratio": "16:9",
+            "communication_job": "演示结束时，验收人员应能确认完整流水线可连续执行。",
+            "content_requirements": ["覆盖规划、统一设计、逐页修订和图片型导出"],
+            "brand_preferences": [],
+            "color_preferences": [],
+            "style_preferences": [],
+            "source_mode": "general_knowledge",
+        }
+
+
 class OutlineLLM:
     def __init__(self) -> None:
         self.calls = 0
@@ -206,7 +234,7 @@ def _initial_state(output_root: Path, request_id: str) -> dict:
         "request_id": request_id,
         "project_dir": str((output_root / request_id).resolve()),
         "status": "created",
-        "deck_title": "八页集成测试演示",
+        "deck_title": "",
         "user_description": "验证完整规划、统一设计、逐页修订和图片型导出。",
         "uploaded_file_text": "",
         "source_chunks": [],
@@ -222,12 +250,13 @@ def _initial_state(output_root: Path, request_id: str) -> dict:
 
 
 def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_path):
+    brief = BriefLLM()
     outline = OutlineLLM()
     content = ContentLLM()
     designer = DesignerLLM()
     browser = DeterministicBrowserRenderer()
     graph = PptGraph(
-        {"outline": outline, "writer": content, "designer": designer},
+        {"brief": brief, "outline": outline, "writer": content, "designer": designer},
         tmp_path,
         browser_session=object(),
         browser_renderer=browser,
@@ -256,6 +285,7 @@ def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_
             previews.append(data)
 
     assert page_events_saw_global_contract and all(page_events_saw_global_contract)
+    assert brief.calls == 1
     assert outline.calls == 1
     assert content.slide_ids == [f"s{index:02d}" for index in range(1, 9)]
     assert designer.initial_calls == [f"s{index:02d}" for index in range(1, 9)]

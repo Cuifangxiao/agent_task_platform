@@ -173,26 +173,5 @@ def join_source_file_names(source_files: list[InputResource], *, max_chars: int 
     return ", ".join(names)
 
 
-def derive_deck_title(description: str, file_name: str, uploaded_file_text: str) -> str:
-    for candidate in (description, file_name, uploaded_file_text):
-        candidate = (candidate or "").strip()
-        if candidate:
-            return compact_title(candidate)
-    return "Untitled presentation"
-
-
-def compact_title(value: str) -> str:
-    first_line = value.splitlines()[0].strip()
-    first_sentence = split_sentence(first_line)[0].strip()
-    title = first_sentence or first_line
-    if len(title) > 80:
-        return title[:77].rstrip() + "..."
-    return title
-
-
-def split_sentence(value: str) -> list[str]:
-    return re.split(r"[。.!?！？]", value, maxsplit=1)
-
-
 def _is_image_filename(filename: str) -> bool:
     return Path(str(filename or "")).suffix.casefold() in IMAGE_EXTENSIONS

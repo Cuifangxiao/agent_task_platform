@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -20,6 +20,7 @@ PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
 logger = logging.getLogger(__name__)
 _LLM_LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("deck_llm_log_context", default={})
 StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
+StructuredOutputMethod = Literal["json_schema", "json_mode", "function_calling"]
 
 
 class StructuredOutputError(ValueError):
@@ -107,7 +108,11 @@ def invoke_structured_with_retries(
     structured_llm: Any = None
     if hasattr(llm, "with_structured_output"):
         try:
-            structured_llm = llm.with_structured_output(model_type)
+            method = _structured_output_method(llm)
+            if method is None:
+                structured_llm = llm.with_structured_output(model_type)
+            else:
+                structured_llm = llm.with_structured_output(model_type, method=method)
         except (AttributeError, NotImplementedError, TypeError, ValueError):
             structured_llm = None
 
@@ -219,6 +224,16 @@ def _is_structured_validation_exception(exc: Exception) -> bool:
         "SchemaValidationError",
         "StructuredOutputValidationError",
     }
+
+
+def _structured_output_method(llm: Any) -> StructuredOutputMethod | None:
+    metadata = getattr(llm, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    method = str(metadata.get("structured_output_method") or "").strip().lower()
+    if method in {"json_schema", "json_mode", "function_calling"}:
+        return cast(StructuredOutputMethod, method)
+    return None
 
 
 def _log_call_start(llm: Any, *, kind: str, attempt: int, attempts: int, input_chars: int) -> None:

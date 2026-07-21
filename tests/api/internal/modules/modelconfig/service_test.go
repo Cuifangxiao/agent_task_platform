@@ -138,6 +138,55 @@ func testCatalogWithModelType(modelType string) *catalog.ListResponse {
 	}
 }
 
+func testDeepSeekCatalog() *catalog.ListResponse {
+	minTemperature := 0.0
+	maxTemperature := 2.0
+	minTokens := 1.0
+	maxTokens := 384000.0
+	return &catalog.ListResponse{
+		Providers: []catalog.ProviderResponse{
+			{
+				Name: "deepseek",
+				Models: []catalog.ModelResponse{
+					{
+						ID:        "deepseek-v4-flash",
+						ModelName: "deepseek-v4-flash",
+						Type:      "text",
+						Parameters: []catalog.ModelParameterResponse{
+							{Name: "thinking", Type: "enum", DefaultValue: "enabled", Options: []string{"enabled", "disabled"}},
+							{Name: "reasoning_effort", Type: "enum", DefaultValue: "high", Options: []string{"high", "max"}},
+							{Name: "temperature", Type: "number", DefaultValue: "1", Min: &minTemperature, Max: &maxTemperature},
+							{Name: "max_tokens", Type: "integer", DefaultValue: "4096", Min: &minTokens, Max: &maxTokens},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func testQwenCatalog() *catalog.ListResponse {
+	minThinkingBudget := 1.0
+	return &catalog.ListResponse{
+		Providers: []catalog.ProviderResponse{
+			{
+				Name: "qwen",
+				Models: []catalog.ModelResponse{
+					{
+						ID:        "qwen3.6-flash",
+						ModelName: "qwen3.6-flash",
+						Type:      "multimodal",
+						Parameters: []catalog.ModelParameterResponse{
+							{Name: "enable_thinking", Type: "boolean", DefaultValue: "true"},
+							{Name: "thinking_budget", Type: "integer", Min: &minThinkingBudget},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func testUser() actor.User {
 	return actor.User{
 		UserID:    1,
@@ -213,6 +262,98 @@ func TestCreateDoesNotSaveWhenCredentialTestFails(t *testing.T) {
 	}
 	if repo.createCalls != 0 {
 		t.Fatalf("expected create not to be called, got %d", repo.createCalls)
+	}
+}
+
+func TestCreateDropsReasoningEffortWhenThinkingIsDisabled(t *testing.T) {
+	repo := &stubRepository{}
+	credential := &stubCredentialService{
+		resp: &credential.TestCredentialResponse{Status: "ok"},
+	}
+	providerCatalog := &stubProviderCatalogService{resp: testDeepSeekCatalog()}
+	service := NewService(repo, credential, providerCatalog)
+
+	_, err := service.Create(context.Background(), testUser(), CreateRequest{
+		Name:            "deepseek",
+		Provider:        "deepseek",
+		ModelName:       "deepseek-v4-flash",
+		APIKey:          "sk-test",
+		ProviderOptions: json.RawMessage(`{"thinking":"disabled","reasoning_effort":"max"}`),
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if repo.lastCreated.ProviderOptions != `{"thinking":"disabled"}` {
+		t.Fatalf("unexpected provider options: %s", repo.lastCreated.ProviderOptions)
+	}
+}
+
+func TestCreateDropsQwenThinkingBudgetWhenThinkingIsDisabled(t *testing.T) {
+	repo := &stubRepository{}
+	credential := &stubCredentialService{
+		resp: &credential.TestCredentialResponse{Status: "ok"},
+	}
+	providerCatalog := &stubProviderCatalogService{resp: testQwenCatalog()}
+	service := NewService(repo, credential, providerCatalog)
+
+	_, err := service.Create(context.Background(), testUser(), CreateRequest{
+		Name:            "qwen",
+		Provider:        "qwen",
+		ModelName:       "qwen3.6-flash",
+		APIKey:          "sk-test",
+		ProviderOptions: json.RawMessage(`{"enable_thinking":false,"thinking_budget":16384}`),
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if repo.lastCreated.ProviderOptions != `{"enable_thinking":false}` {
+		t.Fatalf("unexpected provider options: %s", repo.lastCreated.ProviderOptions)
+	}
+}
+
+func TestCreateRejectsInvalidQwenThinkingBudget(t *testing.T) {
+	repo := &stubRepository{}
+	credential := &stubCredentialService{
+		resp: &credential.TestCredentialResponse{Status: "ok"},
+	}
+	providerCatalog := &stubProviderCatalogService{resp: testQwenCatalog()}
+	service := NewService(repo, credential, providerCatalog)
+
+	_, err := service.Create(context.Background(), testUser(), CreateRequest{
+		Name:            "qwen",
+		Provider:        "qwen",
+		ModelName:       "qwen3.6-flash",
+		APIKey:          "sk-test",
+		ProviderOptions: json.RawMessage(`{"enable_thinking":true,"thinking_budget":0}`),
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+	if repo.createCalls != 0 || credential.calls != 0 {
+		t.Fatalf("invalid thinking budget must fail before credential test and save")
+	}
+}
+
+func TestCreateRejectsInvalidCatalogProviderOption(t *testing.T) {
+	repo := &stubRepository{}
+	credential := &stubCredentialService{
+		resp: &credential.TestCredentialResponse{Status: "ok"},
+	}
+	providerCatalog := &stubProviderCatalogService{resp: testDeepSeekCatalog()}
+	service := NewService(repo, credential, providerCatalog)
+
+	_, err := service.Create(context.Background(), testUser(), CreateRequest{
+		Name:            "deepseek",
+		Provider:        "deepseek",
+		ModelName:       "deepseek-v4-flash",
+		APIKey:          "sk-test",
+		ProviderOptions: json.RawMessage(`{"thinking":"enabled","reasoning_effort":"extreme"}`),
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+	if repo.createCalls != 0 || credential.calls != 0 {
+		t.Fatalf("invalid options must fail before credential test and save")
 	}
 }
 

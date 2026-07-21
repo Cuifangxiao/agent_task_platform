@@ -1531,6 +1531,104 @@ label {
   font-size: 16px;
 }
 
+.generation-parameter-grid {
+  align-items: start;
+}
+
+.core-parameter-field,
+.provider-parameter-field {
+  align-content: start;
+}
+
+.parameter-label-text {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.field-help {
+  min-height: 17px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.core-parameter-field.is-disabled .parameter-label-text,
+.provider-parameter-field.is-disabled .parameter-label-text {
+  color: #94a3b8;
+}
+
+.core-parameter-field input:disabled,
+.provider-parameter-field input:disabled,
+.provider-parameter-field select:disabled {
+  cursor: not-allowed;
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.provider-parameter-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #dbe7e4;
+  border-radius: 9px;
+  background: #f8fbfa;
+  padding: 15px;
+}
+
+.provider-parameter-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.provider-parameter-head h3 {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.provider-parameter-head p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.provider-parameter-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid #cfe1dd;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--accent-strong);
+}
+
+.provider-parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.parameter-state-note {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 0;
+  border-radius: 7px;
+  background: #eef3f2;
+  color: #526561;
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.parameter-state-note svg {
+  flex: 0 0 auto;
+}
+
 .node-editor {
   display: grid;
   gap: 12px;
@@ -1553,6 +1651,43 @@ label {
 
 .check-row input[type='checkbox'] {
   width: auto;
+}
+
+.config-state-row {
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.default-model-option {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px !important;
+  align-items: start !important;
+  cursor: pointer;
+}
+
+.default-model-option input {
+  margin-top: 3px;
+}
+
+.default-model-option span {
+  display: grid;
+  gap: 2px;
+}
+
+.default-model-option strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.default-model-option small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.config-status-field {
+  width: min(180px, 100%);
 }
 
 .btn,
@@ -3215,7 +3350,8 @@ label {
   .workflow,
   .agent-grid,
   .model-type-options,
-  .form-grid {
+  .form-grid,
+  .provider-parameter-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3243,6 +3379,10 @@ label {
 
   .modal-actions .btn:first-child {
     margin-right: 0;
+  }
+
+  .config-status-field {
+    width: 100%;
   }
 
   .list-item {

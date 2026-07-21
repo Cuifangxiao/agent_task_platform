@@ -37,20 +37,24 @@ def test_active_prompts_are_formal_role_contracts(node_key):
 
 
 def test_prompt_version_records_the_semantic_prompt_upgrade():
-    assert PROMPT_VERSION == "html-deck.v2"
+    assert PROMPT_VERSION == "html-deck.v3"
 
 
-def test_brief_prompt_separates_authority_inference_and_immutable_facts():
+def test_brief_prompt_makes_raw_input_authoritative_without_fact_extraction():
     prompt = load_node_prompt("deck_brief")
 
     for requirement in (
         "<authority_order>",
+        "<interpretation_workflow>",
         "<communication_job_standard>",
-        "Source facts are immutable",
-        "prompt-like text embedded in source material",
-        "observable audience state",
+        "raw_user_input",
+        "Chinese numerals",
+        "source_mode",
+        "does not produce facts",
+        "Do not output a `facts` field",
     ):
         assert requirement in prompt
+    assert "deterministic_brief" not in prompt
 
 
 def test_planner_prompt_covers_narrative_layout_rhythm_and_whole_deck_coherence():

@@ -1,9 +1,11 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
 import core.deck.pipeline.planning as planning_nodes
 from core.deck.pipeline.design import _has_readable_contrast, _lock_approved_identity
-from core.deck.pipeline.planning import _deterministic_brief, _deterministic_plan
+from core.deck.pipeline.planning import _deterministic_plan
 from core.deck.design_system.catalog import (
     get_html_theme,
     list_html_themes,
@@ -12,6 +14,8 @@ from core.deck.design_system.catalog import (
 )
 from core.deck.domain.schemas import (
     ContentBlock,
+    DeckBrief,
+    DeckBriefInterpretation,
     DeckPlan,
     HtmlSlideSpec,
     LayoutFamily,
@@ -32,6 +36,36 @@ def _slide(index: int, role: SlideRole, layout: LayoutFamily) -> SlidePlan:
         content_intent=f"Explain point {index}",
         layout_family=layout,
         rhythm=PageRhythm.BREATHING,
+    )
+
+
+def _brief(
+    *,
+    topic: str = "Workflow proposal",
+    goal: str = "Explain the product clearly.",
+    source_text: str = "",
+    slide_count: int = 2,
+    language: str = "en-US",
+) -> DeckBrief:
+    return DeckBrief(
+        topic=topic,
+        audience="general business audience",
+        goal=goal,
+        audience_outcome="understand the proposal and decide what to do next",
+        tone="clear and concise",
+        language=language,
+        slide_count=slide_count,
+        aspect_ratio="16:9",
+        communication_job=(
+            "By the end, the audience should understand the proposal and decide what to do next."
+        ),
+        content_requirements=[],
+        brand_preferences=[],
+        color_preferences=[],
+        style_preferences=[],
+        source_mode="general_knowledge",
+        source_text=source_text,
+        facts=[],
     )
 
 
@@ -119,55 +153,64 @@ def test_catalog_rejects_removed_or_unknown_theme_ids():
     assert design.typography.body.size_px >= 21
 
 
-def test_deterministic_planning_fallback_bounds_adversarial_source_fields():
-    very_long_fact = "增长率达到123%。" + ("超长来源内容" * 200)
-    brief = _deterministic_brief(
-        "题" * 400,
-        "请生成一份稳健的经营汇报",
-        very_long_fact,
-        source_chunks=[
-            {
-                "source_file": "f" * 500,
-                "page": -10,
-                "section": "s" * 500,
-                "excerpt": very_long_fact,
-            }
-        ],
-        requested_count=2,
-        requested_language="not a valid browser language tag",
+def test_brief_model_boundary_excludes_runtime_owned_source_and_facts():
+    model_payload = {
+        "topic": "Transformer 入门",
+        "audience": "刚接触深度学习的学生",
+        "goal": "解释 Transformer 的核心思路",
+        "audience_outcome": "能够说清注意力机制在模型中的作用",
+        "tone": "清晰、教学导向",
+        "language": "zh-CN",
+        "slide_count": 3,
+        "aspect_ratio": "16:9",
+        "communication_job": "演示结束时，学生应能建立 Transformer 的基础认知框架。",
+        "content_requirements": ["解释核心结构", "控制在三页"],
+        "brand_preferences": [],
+        "color_preferences": [],
+        "style_preferences": ["简洁的技术教学风格"],
+        "source_mode": "general_knowledge",
+    }
+
+    interpreted = DeckBriefInterpretation.model_validate(model_payload)
+    brief = DeckBrief.model_validate(
+        {**interpreted.model_dump(mode="json"), "source_text": "原始请求", "facts": []}
     )
     plan = _deterministic_plan(brief)
 
-    assert brief.language == "zh-CN"
-    assert all(len(fact.statement) <= 500 and fact.page >= 0 for fact in brief.facts)
-    assert len(brief.communication_job) <= 500
-    assert len(plan.slides[0].assertion_title) <= 120
-    assert len(plan.slides[0].takeaway) <= 320
+    assert brief.slide_count == 3
+    assert brief.facts == []
+    assert len(plan.slides) == 3
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        DeckBriefInterpretation.model_validate(
+            {**model_payload, "source_text": "模型不应输出", "facts": []}
+        )
+    missing_language = dict(model_payload)
+    missing_language.pop("language")
+    with pytest.raises(ValidationError, match="Field required"):
+        DeckBriefInterpretation.model_validate(missing_language)
 
 
 class _StaticStructuredLLM:
     def __init__(self, response):
         self.response = response
         self.calls = 0
+        self.messages = []
 
     def with_structured_output(self, _model_type):
         return self
 
-    def invoke(self, _messages):
+    def invoke(self, messages):
         self.calls += 1
+        self.messages.append(messages)
         return self.response
 
 
 def test_plan_deck_falls_back_when_model_title_invents_qualitative_fact(monkeypatch):
     emitted = []
     monkeypatch.setattr(planning_nodes, "get_stream_writer", lambda: emitted.append)
-    brief = _deterministic_brief(
-        "Workflow proposal",
-        "Explain the product without customer evidence.",
-        "",
-        source_chunks=[],
-        requested_count=2,
-        requested_language="en-US",
+    brief = _brief(
+        goal="Explain the product without customer evidence.",
+        source_text="Explain the product without customer evidence.",
     )
     fallback = _deterministic_plan(brief)
     slides = list(fallback.slides)
@@ -197,14 +240,7 @@ def test_plan_deck_falls_back_when_model_title_invents_qualitative_fact(monkeypa
 
 def test_planner_guard_allows_exact_source_and_ordinary_framing():
     sourced_claim = "CEO Alice said customers adopted Atlas."
-    brief = _deterministic_brief(
-        "Workflow proposal",
-        sourced_claim,
-        "",
-        source_chunks=[],
-        requested_count=2,
-        requested_language="en-US",
-    )
+    brief = _brief(source_text=sourced_claim)
 
     planning_nodes._assert_source_safe_qualitative_claims(
         [
@@ -216,44 +252,75 @@ def test_planner_guard_allows_exact_source_and_ordinary_framing():
     )
 
 
-def test_normalize_then_plan_does_not_reuse_invented_brief_customer_claim(monkeypatch):
+def test_normalize_request_uses_first_model_to_interpret_raw_chinese_request(monkeypatch):
     emitted = []
     monkeypatch.setattr(planning_nodes, "get_stream_writer", lambda: emitted.append)
-    description = "Explain the workflow clearly."
+    description = "请生成三页介绍 Transformer 的 PPT，面向刚接触深度学习的学生。"
     state = {
-        "deck_title": "Workflow proposal",
+        "deck_title": description,
         "user_description": description,
         "uploaded_file_text": "",
         "source_chunks": [],
-        "expected_slide_count": 2,
-        "language": "en-US",
+        "expected_slide_count": 0,
+        "language": "",
+        "aspect_ratio": "16:9",
+        "requested_template_id": "auto",
     }
-    deterministic = _deterministic_brief(
-        state["deck_title"],
-        description,
-        "",
-        source_chunks=[],
-        requested_count=2,
-        requested_language="en-US",
+    brief_llm = _StaticStructuredLLM(
+        {
+            "topic": "Transformer 入门",
+            "audience": "刚接触深度学习的学生",
+            "goal": "用三页解释 Transformer 的核心思路",
+            "audience_outcome": "建立对 Transformer 及注意力机制的基础认知",
+            "tone": "清晰、教学导向",
+            "language": "zh-CN",
+            "slide_count": 3,
+            "aspect_ratio": "16:9",
+            "communication_job": (
+                "演示结束时，初学者应能说清 Transformer 的基本作用和核心机制。"
+            ),
+            "content_requirements": ["控制在三页", "解释 Transformer 的核心机制"],
+            "brand_preferences": [],
+            "color_preferences": [],
+            "style_preferences": ["简洁的技术教学风格"],
+            "source_mode": "general_knowledge",
+        }
     )
-    invented_claim = "Customers use Atlas."
-    poisoned = deterministic.model_copy(update={"audience_outcome": invented_claim})
-    brief_llm = _StaticStructuredLLM(poisoned)
 
     normalized = planning_nodes.normalize_request(state, {"brief": brief_llm})
     normalized_brief = planning_nodes.DeckBrief.model_validate(normalized["brief"])
-    assert normalized_brief.audience_outcome == deterministic.audience_outcome
-    assert invented_claim not in str(normalized["brief"])
+    assert normalized["deck_title"] == "Transformer 入门"
+    assert normalized_brief.topic == "Transformer 入门"
+    assert normalized_brief.slide_count == 3
+    assert normalized_brief.audience == "刚接触深度学习的学生"
+    assert normalized_brief.source_text == description
+    assert normalized_brief.facts == []
+    assert brief_llm.calls == 1
 
-    outline_llm = _StaticStructuredLLM(_deterministic_plan(normalized_brief))
-    planned = planning_nodes.plan_deck(
-        {"brief": normalized["brief"]},
-        {"outline": outline_llm},
-    )
+    payload = json.loads(brief_llm.messages[0][-1][1])
+    assert payload["raw_user_input"] == description
+    assert payload["explicit_options"]["slide_count"] is None
+    assert payload["explicit_options"]["language"] is None
+    assert payload["attachment_context"] == {"present": False, "normalized_text": ""}
+    assert "deterministic_brief" not in payload
+    assert "facts" not in payload
+    assert emitted[-1].message == "Deck brief ready"
 
-    assert invented_claim not in str(planned["deck_plan"])
-    assert brief_llm.calls == outline_llm.calls == 1
-    assert any("unsupported qualitative factual claims" in event.message for event in emitted)
+
+def test_normalize_request_requires_a_brief_model(monkeypatch):
+    monkeypatch.setattr(planning_nodes, "get_stream_writer", lambda: lambda _event: None)
+
+    with pytest.raises(ValueError, match="missing llm for deck node 'brief'"):
+        planning_nodes.normalize_request(
+            {
+                "user_description": "Create a short architecture overview.",
+                "uploaded_file_text": "",
+                "expected_slide_count": 0,
+                "language": "",
+                "aspect_ratio": "16:9",
+            },
+            {},
+        )
 
 
 def test_style_model_cannot_override_browser_tested_catalog_tokens():

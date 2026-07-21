@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"agent-task-platform/apps/api/internal/modules/provider/catalog"
@@ -230,6 +231,9 @@ func (s *Service) validateProviderModel(ctx context.Context, config *ModelConfig
 					}
 					config.ModelType = catalogType
 				}
+				if err := reconcileProviderOptionsWithCatalog(config, model); err != nil {
+					return err
+				}
 				config.ModelName = model.ModelName
 				return nil
 			}
@@ -239,6 +243,139 @@ func (s *Service) validateProviderModel(ctx context.Context, config *ModelConfig
 	}
 
 	return fmt.Errorf("%w: provider '%s' is not supported", ErrInvalidRequest, config.Provider)
+}
+
+func reconcileProviderOptionsWithCatalog(config *ModelConfig, model catalog.ModelResponse) error {
+	options := decodeProviderOptions(config.ProviderOptions)
+	parameters := make(map[string]catalog.ModelParameterResponse, len(model.Parameters))
+	for _, parameter := range model.Parameters {
+		parameters[parameter.Name] = parameter
+	}
+
+	if enabled, hasThinkingToggle := catalogThinkingEnabled(options, parameters); hasThinkingToggle && !enabled {
+		// Provider-specific thinking controls have no meaning when thinking is
+		// disabled. Removing them also repairs stale records created before the UI
+		// exposed this dependency.
+		delete(options, "reasoning_effort")
+		delete(options, "thinking_budget")
+	}
+
+	for name, value := range options {
+		parameter, known := parameters[name]
+		if !known {
+			// provider_options remains extensible for SDK-specific settings that
+			// are not intended to be rendered by the catalog-driven form.
+			continue
+		}
+		if err := validateCatalogParameterValue(parameter, value); err != nil {
+			return fmt.Errorf("%w: provider_options.%s %v", ErrInvalidRequest, name, err)
+		}
+	}
+
+	if parameter, ok := parameters["temperature"]; ok {
+		if err := validateCatalogParameterValue(parameter, config.Temperature); err != nil {
+			return fmt.Errorf("%w: temperature %v", ErrInvalidRequest, err)
+		}
+	}
+	if parameter, ok := parameters["max_tokens"]; ok {
+		if err := validateCatalogParameterValue(parameter, config.MaxTokens); err != nil {
+			return fmt.Errorf("%w: max_tokens %v", ErrInvalidRequest, err)
+		}
+	}
+
+	normalized, err := json.Marshal(options)
+	if err != nil {
+		return fmt.Errorf("%w: normalize provider_options failed", ErrInvalidRequest)
+	}
+	config.ProviderOptions = string(normalized)
+	return nil
+}
+
+func catalogThinkingEnabled(
+	options map[string]any,
+	parameters map[string]catalog.ModelParameterResponse,
+) (bool, bool) {
+	for _, name := range []string{"thinking", "enable_thinking"} {
+		parameter, ok := parameters[name]
+		if !ok {
+			continue
+		}
+		value, exists := options[name]
+		if !exists {
+			value = parameter.DefaultValue
+		}
+		if boolean, ok := value.(bool); ok {
+			return boolean, true
+		}
+		normalized := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+		return normalized == "enabled" || normalized == "true", true
+	}
+	return false, false
+}
+
+func validateCatalogParameterValue(parameter catalog.ModelParameterResponse, value any) error {
+	switch strings.ToLower(strings.TrimSpace(parameter.Type)) {
+	case "enum":
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("must be one of %s", strings.Join(parameter.Options, ", "))
+		}
+		for _, option := range parameter.Options {
+			if text == option {
+				return nil
+			}
+		}
+		return fmt.Errorf("must be one of %s", strings.Join(parameter.Options, ", "))
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("must be a boolean")
+		}
+		return nil
+	case "integer":
+		number, ok := catalogNumber(value)
+		if !ok || math.Trunc(number) != number {
+			return fmt.Errorf("must be an integer")
+		}
+		return validateCatalogNumberRange(parameter, number)
+	case "number", "float":
+		number, ok := catalogNumber(value)
+		if !ok {
+			return fmt.Errorf("must be a number")
+		}
+		return validateCatalogNumberRange(parameter, number)
+	case "string":
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("must be a string")
+		}
+	}
+	return nil
+}
+
+func catalogNumber(value any) (float64, bool) {
+	switch number := value.(type) {
+	case float64:
+		return number, true
+	case float32:
+		return float64(number), true
+	case int:
+		return float64(number), true
+	case int32:
+		return float64(number), true
+	case int64:
+		return float64(number), true
+	default:
+		return 0, false
+	}
+}
+
+func validateCatalogNumberRange(parameter catalog.ModelParameterResponse, number float64) error {
+	if parameter.Min != nil && number < *parameter.Min {
+		return fmt.Errorf("must be at least %v", *parameter.Min)
+	}
+	if parameter.Max != nil && number > *parameter.Max {
+		return fmt.Errorf("must be at most %v", *parameter.Max)
+	}
+	return nil
 }
 
 func modelTypeFromCatalog(raw string, modelName string) (ModelType, bool) {

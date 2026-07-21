@@ -778,9 +778,6 @@ func normalizeOptions(options PptOptions) PptOptions {
 	options.Language = strings.TrimSpace(options.Language)
 	options.AspectRatio = strings.TrimSpace(options.AspectRatio)
 	options.TemplateID = strings.TrimSpace(options.TemplateID)
-	if options.Language == "" {
-		options.Language = "zh-CN"
-	}
 	if options.AspectRatio == "" {
 		options.AspectRatio = "16:9"
 	}

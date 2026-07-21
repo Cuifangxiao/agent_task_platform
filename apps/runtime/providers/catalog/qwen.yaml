@@ -5,6 +5,7 @@ manager: qwen
 sdk: langchain_openai
 default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
 supports_custom_base_url: true
+structured_output_method: json_mode
 credential_test:
   enabled: true
   model: qwen-plus
@@ -20,6 +21,11 @@ models:
         display_name: Thinking mode
         type: boolean
         default: false
+      - name: thinking_budget
+        display_name: Thinking budget
+        type: integer
+        description: Maximum thinking tokens; leave empty to use the model default limit.
+        min: 1
       - name: temperature
         display_name: Temperature
         type: number
@@ -41,18 +47,23 @@ models:
   - id: qwen3.7-plus
     model_name: qwen3.7-plus
     display_name: Qwen3.7 Plus
-    type: text
+    type: multimodal
     parameters:
       - name: enable_thinking
         display_name: Thinking mode
         type: boolean
         default: true
+      - name: thinking_budget
+        display_name: Thinking budget
+        type: integer
+        description: Maximum thinking tokens; leave empty to use the model default limit.
+        min: 1
       - name: max_tokens
         display_name: Max tokens
         type: integer
         default: 4096
         min: 1
-        max: 32768
+        max: 65536
   - id: qwen3.7-max
     model_name: qwen3.7-max
     display_name: Qwen3.7 Max
@@ -62,12 +73,97 @@ models:
         display_name: Thinking mode
         type: boolean
         default: true
+      - name: thinking_budget
+        display_name: Thinking budget
+        type: integer
+        description: Maximum thinking tokens; leave empty to use the model default limit.
+        min: 1
       - name: max_tokens
         display_name: Max tokens
         type: integer
         default: 4096
         min: 1
         max: 32768
+  - id: qwen3.6-plus
+    model_name: qwen3.6-plus
+    display_name: Qwen3.6 Plus
+    type: multimodal
+    parameters:
+      - name: enable_thinking
+        display_name: Thinking mode
+        type: boolean
+        default: true
+      - name: thinking_budget
+        display_name: Thinking budget
+        type: integer
+        description: Maximum thinking tokens; leave empty to use the model default limit.
+        min: 1
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 65536
+  - id: qwen3.6-flash
+    model_name: qwen3.6-flash
+    display_name: Qwen3.6 Flash
+    type: multimodal
+    parameters:
+      - name: enable_thinking
+        display_name: Thinking mode
+        type: boolean
+        default: true
+      - name: thinking_budget
+        display_name: Thinking budget
+        type: integer
+        description: Maximum thinking tokens; leave empty to use the model default limit.
+        min: 1
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 65536
+  - id: qwen3.6-35b-a3b
+    model_name: qwen3.6-35b-a3b
+    display_name: Qwen3.6 35B A3B
+    type: multimodal
+    parameters:
+      - name: enable_thinking
+        display_name: Thinking mode
+        type: boolean
+        default: true
+      - name: thinking_budget
+        display_name: Thinking budget
+        type: integer
+        description: Maximum thinking tokens; leave empty to use the model default limit.
+        min: 1
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 65536
+  - id: qwen3.6-27b
+    model_name: qwen3.6-27b
+    display_name: Qwen3.6 27B
+    type: multimodal
+    parameters:
+      - name: enable_thinking
+        display_name: Thinking mode
+        type: boolean
+        default: true
+      - name: thinking_budget
+        display_name: Thinking budget
+        type: integer
+        description: Maximum thinking tokens; leave empty to use the model default limit.
+        min: 1
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 65536
   - id: qwen3-vl-plus
     model_name: qwen3-vl-plus
     display_name: Qwen3 VL Plus

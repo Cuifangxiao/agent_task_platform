@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
+import core.provider.model_utils as model_utils
 from core.provider.model_utils import ProviderConfigManager
+
+
+class RecordingChatModel:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
 
 
 def test_provider_catalog_loads_qwen_model_parameters():
@@ -19,6 +25,51 @@ def test_provider_catalog_loads_qwen_model_parameters():
     assert qwen_plus.default_parameters["enable_thinking"] is False
     assert qwen_plus.parameters[0].name == "enable_thinking"
     assert qwen_plus.parameters[0].default_value == "false"
+    thinking_budget = next(
+        parameter for parameter in qwen_plus.parameters if parameter.name == "thinking_budget"
+    )
+    assert thinking_budget.default_value == ""
+    assert thinking_budget.min == 1
+    assert thinking_budget.max is None
+    assert provider.structured_output_method_for(qwen_plus) == "json_mode"
+
+
+def test_deepseek_catalog_defaults_to_thinking_enabled():
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/deepseek.yaml")
+    )
+
+    flash = provider.find_model("deepseek-v4-flash")
+
+    assert flash is not None
+    assert flash.default_parameters["thinking"] == "enabled"
+    assert flash.default_parameters["reasoning_effort"] == "high"
+    assert any(parameter.name == "temperature" for parameter in flash.parameters)
+    assert provider.structured_output_method_for(flash) == "json_mode"
+
+
+def test_model_can_override_provider_structured_output_method(tmp_path):
+    catalog = tmp_path / "provider.yaml"
+    catalog.write_text(
+        """
+name: compatible
+display_name: Compatible
+manager: openai
+structured_output_method: json_mode
+models:
+  - id: schema-model
+    model_name: schema-model
+    display_name: Schema model
+    structured_output_method: json_schema
+""".strip(),
+        encoding="utf-8",
+    )
+
+    provider = ProviderConfigManager._load_provider_definition(catalog)
+    model = provider.find_model("schema-model")
+
+    assert model is not None
+    assert provider.structured_output_method_for(model) == "json_schema"
 
 
 def test_provider_catalog_loads_qwen_vision_model():
@@ -26,11 +77,26 @@ def test_provider_catalog_loads_qwen_vision_model():
         Path("providers/catalog/qwen.yaml")
     )
 
-    qwen_vl = provider.find_model("qwen3-vl-plus")
+    multimodal_models = (
+        "qwen3.7-plus",
+        "qwen3.6-plus",
+        "qwen3.6-flash",
+        "qwen3.6-35b-a3b",
+        "qwen3.6-27b",
+        "qwen3-vl-plus",
+        "qwen3-vl-flash",
+        "qwen-vl-plus",
+    )
 
-    assert qwen_vl is not None
-    assert qwen_vl.model_name == "qwen3-vl-plus"
-    assert qwen_vl.type == "multimodal"
+    for model_name in multimodal_models:
+        model = provider.find_model(model_name)
+        assert model is not None
+        assert model.model_name == model_name
+        assert model.type == "multimodal"
+
+    qwen_max = provider.find_model("qwen3.7-max")
+    assert qwen_max is not None
+    assert qwen_max.type == "text"
 
 
 def test_legacy_chat_model_type_is_normalized_to_text(tmp_path):
@@ -88,3 +154,103 @@ models:
             temperature=1,
             max_tokens=128,
         )
+
+
+def test_deepseek_disabled_thinking_omits_effort_and_keeps_temperature(monkeypatch):
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/deepseek.yaml")
+    )
+    manager = ProviderConfigManager()
+    manager._providers = {provider.name: provider}
+    manager._loaded = True
+    monkeypatch.setitem(model_utils.PROVIDER_CHAT_MODELS, "deepseek", RecordingChatModel)
+
+    client = manager.build_chat_client(
+        provider_name="deepseek",
+        model_name="deepseek-v4-flash",
+        api_key="sk-test",
+        base_url="",
+        temperature=0.6,
+        max_tokens=128,
+        provider_options={"thinking": "disabled", "reasoning_effort": "max"},
+    )
+
+    assert client.kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert client.kwargs["temperature"] == 0.6
+    assert "reasoning_effort" not in client.kwargs
+    assert client.kwargs["metadata"]["structured_output_method"] == "json_mode"
+
+
+def test_deepseek_enabled_thinking_omits_unsupported_sampling_controls(monkeypatch):
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/deepseek.yaml")
+    )
+    manager = ProviderConfigManager()
+    manager._providers = {provider.name: provider}
+    manager._loaded = True
+    monkeypatch.setitem(model_utils.PROVIDER_CHAT_MODELS, "deepseek", RecordingChatModel)
+
+    client = manager.build_chat_client(
+        provider_name="deepseek",
+        model_name="deepseek-v4-flash",
+        api_key="sk-test",
+        base_url="",
+        temperature=0.6,
+        max_tokens=128,
+        provider_options={
+            "thinking": "enabled",
+            "reasoning_effort": "max",
+            "top_p": 0.9,
+        },
+    )
+
+    assert client.kwargs["reasoning_effort"] == "max"
+    assert "temperature" not in client.kwargs
+    assert "top_p" not in client.kwargs
+
+
+def test_qwen_enabled_thinking_sends_numeric_budget_in_extra_body(monkeypatch):
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/qwen.yaml")
+    )
+    manager = ProviderConfigManager()
+    manager._providers = {provider.name: provider}
+    manager._loaded = True
+    monkeypatch.setitem(model_utils.PROVIDER_CHAT_MODELS, "qwen", RecordingChatModel)
+
+    client = manager.build_chat_client(
+        provider_name="qwen",
+        model_name="qwen3.6-flash",
+        api_key="sk-test",
+        base_url="",
+        temperature=0.6,
+        max_tokens=128,
+        provider_options={"enable_thinking": True, "thinking_budget": 16384},
+    )
+
+    assert client.kwargs["extra_body"] == {
+        "enable_thinking": True,
+        "thinking_budget": 16384,
+    }
+
+
+def test_qwen_disabled_thinking_omits_budget(monkeypatch):
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/qwen.yaml")
+    )
+    manager = ProviderConfigManager()
+    manager._providers = {provider.name: provider}
+    manager._loaded = True
+    monkeypatch.setitem(model_utils.PROVIDER_CHAT_MODELS, "qwen", RecordingChatModel)
+
+    client = manager.build_chat_client(
+        provider_name="qwen",
+        model_name="qwen3.6-flash",
+        api_key="sk-test",
+        base_url="",
+        temperature=0.6,
+        max_tokens=128,
+        provider_options={"enable_thinking": "false", "thinking_budget": 16384},
+    )
+
+    assert client.kwargs["extra_body"] == {"enable_thinking": False}

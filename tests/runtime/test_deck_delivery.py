@@ -45,7 +45,7 @@ def test_delivery_assembles_image_only_pptx_and_reports(tmp_path, monkeypatch):
             "html_hash": "b" * 64,
             "artifact_hash": "c" * 64,
             "renderer_version": "chromium-html.v1",
-            "prompt_version": "html-deck.v2",
+            "prompt_version": "html-deck.v3",
             "repair_attempts": 1,
             "fallback_used": False,
         }

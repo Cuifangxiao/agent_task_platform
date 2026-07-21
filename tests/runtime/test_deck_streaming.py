@@ -6,8 +6,12 @@ from core.deck.service import DeckService
 
 
 class SuccessfulGraph:
+    def __init__(self):
+        self.initial_state = None
+
     def stream(self, initial_state, *, stream_mode):
         assert stream_mode == ["custom", "values"]
+        self.initial_state = dict(initial_state)
         root = Path(initial_state["project_dir"])
         preview = root / "previews" / "page-001.png"
         preview.write_bytes(b"preview")
@@ -65,8 +69,9 @@ def _service(monkeypatch, tmp_path, graph):
 
 
 def test_service_sequences_events_and_emits_one_last_success_terminal(monkeypatch, tmp_path):
+    graph = SuccessfulGraph()
     result = list(
-        _service(monkeypatch, tmp_path, SuccessfulGraph()).generate_ppt(
+        _service(monkeypatch, tmp_path, graph).generate_ppt(
             GeneratePptInput(task_id="task-1", description="Create a one-page demo")
         )
     )
@@ -87,6 +92,8 @@ def test_service_sequences_events_and_emits_one_last_success_terminal(monkeypatc
     assert not Path(preview.relative_path).is_absolute()
     assert preview.size_bytes == len(b"preview")
     assert (tmp_path / "task-1" / "exports" / "deck.pptx").is_file()
+    assert graph.initial_state["user_description"] == "Create a one-page demo"
+    assert graph.initial_state["deck_title"] == ""
 
 
 def test_service_failure_is_the_only_terminal_and_is_last(monkeypatch, tmp_path):

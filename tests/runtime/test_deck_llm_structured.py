@@ -15,11 +15,14 @@ class OutputParserException(Exception):
 
 
 class _StructuredLLM:
-    def __init__(self, responses):
+    def __init__(self, responses, *, metadata=None):
         self.responses = list(responses)
         self.calls = 0
+        self.metadata = metadata
+        self.structured_output_kwargs = None
 
-    def with_structured_output(self, _model_type):
+    def with_structured_output(self, _model_type, **kwargs):
+        self.structured_output_kwargs = kwargs
         return self
 
     def invoke(self, _messages):
@@ -56,3 +59,21 @@ def test_exhausted_structured_parser_failures_remain_non_transport_errors():
             user="A value is required.",
             attempts=2,
         )
+
+
+def test_structured_output_uses_method_from_managed_model_metadata():
+    llm = _StructuredLLM(
+        [{"value": 7}],
+        metadata={"structured_output_method": "json_mode"},
+    )
+
+    result = invoke_structured_with_retries(
+        llm,
+        _Payload,
+        system="Return a payload.",
+        user="A value is required.",
+        attempts=1,
+    )
+
+    assert result.value == 7
+    assert llm.structured_output_kwargs == {"method": "json_mode"}
