@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = resolve(here, '../../..')
 const lucideIcons = join(repositoryRoot, 'apps/web/node_modules/@lucide/vue/dist/esm/icons')
-const output = join(repositoryRoot, 'apps/runtime/core/deck/design_system/html/icons/lucide.json')
+const output = join(repositoryRoot, 'apps/runtime/core/deck/design_system/icons/lucide.json')
 
 const requested = {
   rocket: ['launch', 'growth', 'start', '产品', '增长', '启动'],

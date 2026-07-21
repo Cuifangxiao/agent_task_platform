@@ -3,10 +3,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from core.deck.design.html_catalog import get_html_theme
+from core.deck.design.catalog import get_html_theme
 from core.deck.html.assembler import HTMLAssembler
 from core.deck.html.fallback import build_fallback_html_spec
-from core.deck.rendering.html_browser import (
+from core.deck.html.browser import (
     BrowserEnvironmentError,
     HTMLBrowserRenderer,
     RenderProfile,
@@ -170,4 +170,3 @@ def test_browser_blocks_remote_requests_even_without_shell_csp(chromium_renderer
     measurement = chromium_renderer.measure(document, font_families=())
 
     assert "https://deck.invalid/tracker.png" in measurement.blocked_requests
-

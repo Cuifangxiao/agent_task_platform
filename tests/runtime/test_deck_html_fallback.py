@@ -1,6 +1,6 @@
 import pytest
 
-from core.deck.design.html_catalog import get_html_theme
+from core.deck.design.catalog import get_html_theme
 from core.deck.html.assembler import HTMLAssembler
 from core.deck.helpers import extract_number_tokens
 from core.deck.html.fallback import _truncate_display_width, build_fallback_html_spec

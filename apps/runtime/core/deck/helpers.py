@@ -6,33 +6,6 @@ import re
 import unicodedata
 from typing import Any
 
-import core.deck.events as events
-from core.deck.state import DeckGraphState
-
-
-def emit_agent(writer: Any, stage: str, agent: str, message: str) -> None:
-    writer(events.agent_message(stage, agent, message))
-
-
-def fallback_slide_title(index: int, state: DeckGraphState) -> str:
-    deck_title = str(state.get("deck_title") or "Untitled presentation")
-    if index == 1:
-        return deck_title
-    return f"{deck_title} - Part {index}"
-
-
-def component_from_layout(value: Any, index: int) -> str:
-    layout = str(value or "").strip().lower()
-    if index == 0 or layout == "title":
-        return "cover"
-    if layout == "section":
-        return "section"
-    if layout == "comparison":
-        return "comparison"
-    if layout == "summary":
-        return "summary"
-    return "content-basic"
-
 
 def clamp_slide_count(value: Any) -> int:
     try:

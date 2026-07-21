@@ -899,7 +899,7 @@ request_id, connection_id, owner_id, thread_id, run_id, event_id, sequence, stag
 - 第一阶段设置 HTTP header read timeout、WS read limit、90 秒 read/idle timeout 和 write deadline；
 - JSON decoder拒绝未知 command 和非法字段；
 - artifact path 继续做 canonical path 和目录边界校验；
-- HTML/SVG preview 保留 CSP、sandbox 和 `nosniff`；
+- 当前 PPT Runtime 只发布 PNG preview；协议保留的 HTML/SVG 产物仍必须使用 CSP、sandbox 和 `nosniff`；
 - provider credentials 只在 Go 调 Python 前解析，永远不进入 Task/Event；
 - 异常错误对用户返回稳定 code/message，debug detail 只写脱敏日志；
 - 当前 token/session 只是握手快照；连接存续期间的 token 过期、blacklist 和 session 注销不会主动终止 socket；

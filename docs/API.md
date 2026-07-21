@@ -722,7 +722,7 @@ Run 快照和 canonical 事件以 MySQL 为权威；TaskHub 只提供当前进�
 | `GENERATING_CONTENT` | writer 生成逐页内容 |
 | `GENERATING_ASSETS` | 准备页面资源 |
 | `GENERATING_PAGES` | designer 生成页面 |
-| `RENDERING` | 渲染 SVG/HTML/预览 |
+| `RENDERING` | 渲染 HTML、执行 DOM QA 并生成 PNG 预览 |
 | `ASSEMBLING_PPT` | 组装 PPTX |
 | `FINISHED` | 成功完成 |
 
@@ -752,14 +752,14 @@ deck-<task_id>.pptx
 
 `GET /api/v1/ppt/tasks/:task_id/artifacts/*asset_path`
 
-`asset_path` 来自事件 `resources[].url`，可能指向 SVG、HTML 或页面预览。Go 校验：
+`asset_path` 来自事件 `resources[].url`。当前 Runtime 只发布 PNG 页面预览和最终 PPTX；协议中的 HTML/SVG 类型仅保留给其他生产者或历史数据。Go 校验：
 
 - `task_id` 是规范 UUID，并属于当前用户；
 - 相对路径不是绝对路径、卷路径或 `..` 穿越；
 - 解析后的绝对路径仍位于 `python_agent.artifacts_dir/<task_id>/`；
 - 目标是实际存在的普通文件。
 
-HTML/SVG 响应附加 CSP、sandbox 和 `X-Content-Type-Options: nosniff`。Python 事件传输 `relative_path`，公开 URL 由 Go 生成；事件不得泄露 Runtime 绝对路径。
+若服务历史数据或其他生产者产生 HTML/SVG，响应仍附加 CSP、sandbox 和 `X-Content-Type-Options: nosniff`。Python 事件传输 `relative_path`，公开 URL 由 Go 生成；事件不得泄露 Runtime 绝对路径。
 
 Go 的 `python_agent.artifacts_dir` 与 Python 的 `DECK_ARTIFACTS_DIR` 必须指向同一个物理目录。不同容器需要共享卷，不共享文件系统的跨主机部署暂不支持产物下载。
 

@@ -30,11 +30,11 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 if str(RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNTIME_ROOT))
 
-from core.deck.design.html_catalog import get_html_theme  # noqa: E402
+from core.deck.design.catalog import get_html_theme  # noqa: E402
 from core.deck.export.image_pptx import ImagePptxExporter  # noqa: E402
 from core.deck.html.assembler import HTMLAssembler  # noqa: E402
 from core.deck.html.fallback import build_fallback_html_spec  # noqa: E402
-from core.deck.rendering.html_browser import (  # noqa: E402
+from core.deck.html.browser import (  # noqa: E402
     HTMLBrowserRenderer,
     RenderProfile,
     SecureBrowserSession,
@@ -411,8 +411,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=RUNTIME_ROOT / "artifacts" / "deck-v2-samples",
-        help="Artifact parent directory (default: apps/runtime/artifacts/deck-v2-samples).",
+        default=RUNTIME_ROOT / "artifacts" / "deck-samples",
+        help="Artifact parent directory (default: apps/runtime/artifacts/deck-samples).",
     )
     parser.add_argument(
         "--chinese-font",

@@ -28,8 +28,8 @@ from core.deck.errors import DeckError
 from core.deck.llm import ModelInvocationError
 from core.deck.model_config import build_ppt_llms, describe_model_assignment
 from core.deck.paths import DeckProjectPaths, artifact_dir
-from core.deck.rendering.html_browser import SecureBrowserSession
-from core.deck.runner import PptGraph
+from core.deck.html.browser import SecureBrowserSession
+from core.deck.pipeline.graph import PptGraph
 from core.deck.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 from core.deck.sources import (
     derive_deck_title,
@@ -39,11 +39,6 @@ from core.deck.sources import (
 
 
 logger = logging.getLogger(__name__)
-
-# Compatibility seam for existing runtime tests and downstream factories.
-# The implementation is the isolated HTML renderer session, not the legacy
-# SVG/browser session.
-BrowserSession = SecureBrowserSession
 
 
 class DeckService:
@@ -77,7 +72,7 @@ class DeckService:
             )
 
             llms = build_ppt_llms(inp)
-            browser_session = BrowserSession()
+            browser_session = SecureBrowserSession()
             uploaded_file_names, uploaded_file_text, source_chunks = parse_uploaded_files_with_provenance(inp)
             persist_normalized_source_bundle(
                 project.root,
@@ -110,34 +105,23 @@ class DeckService:
                 "prompt_version": PROMPT_VERSION,
                 "renderer_version": RENDERER_VERSION,
                 "task_id": task_id,
-                "job_id": task_id,
-                "deck_id": task_id,
                 "request_id": task_id,
                 "project_dir": str(project.root),
                 "status": "created",
-                "last_error": None,
                 "deck_title": deck_title,
-                "uploaded_file_name": uploaded_file_names,
                 "uploaded_file_text": uploaded_file_text,
                 "source_chunks": source_chunks,
-                # This release intentionally treats uploads as text only.  The
-                # compatibility key remains serializable for older consumers.
-                "source_images": [],
                 "user_description": description,
                 "expected_slide_count": max(0, int(inp.options.expected_slide_count or 0)),
                 "language": inp.options.language.strip(),
                 "aspect_ratio": aspect_ratio,
-                # The transport field remains ``template_id`` for API
-                # compatibility; internally it is only a request preference.
+                # The public transport calls this ``template_id``; inside the
+                # graph it is a preference resolved against the current catalog.
                 "requested_template_id": inp.options.template_id.strip() or "auto",
-                "generation_mode": "html_v2",
                 "current_slide_index": 0,
                 "completed_slides": {},
                 "layout_history": [],
                 "validation_issues": [],
-                "slides": [],
-                "final_slides": [],
-                "artifacts": [],
             }
             logger.info(
                 "generate ppt: task_id=%s models=%s attachments=%s",
@@ -188,11 +172,7 @@ class DeckService:
             if ppt_resource is None:
                 ppt_resource = _ppt_resource_from_state(final_state, project)
             completed = final_state.get("completed_slides")
-            slide_count = (
-                len(completed)
-                if isinstance(completed, dict) and completed
-                else len(final_state.get("final_slides") or final_state.get("slides") or [])
-            )
+            slide_count = len(completed) if isinstance(completed, dict) else 0
             elapsed_ms = round((time.perf_counter() - started_at) * 1000)
             sequence += 1
             yield _agent_event(

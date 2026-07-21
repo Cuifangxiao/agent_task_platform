@@ -1,4 +1,4 @@
-# PPT HTML-first v2 生成流水线
+# PPT HTML-first 生成流水线
 
 当前生产路径是一条固定为 `16:9` 的 HTML-first 流水线：LLM 先生成结构化内容和单页 HTML/CSS 片段，Runtime 再在受控 Chromium 中完成 DOM 检测与 PNG 截图，最终将每页 PNG 全出血铺入 PPTX。PPTX 与页面预览图视觉一致，但页面内容不可在 PowerPoint 中逐元素编辑。
 
@@ -47,7 +47,7 @@ Go 在创建任务前解析 `brief`、`outline`、`style`、`writer`、`designer
 
 ## 2. 扁平 18 节点 LangGraph
 
-`core/deck/runner.py` 不再将 planning/design/generation/postprocessor 封装为四张子图。所有关键步骤和条件分支都在根图可见，节点定义顺序为：
+`core/deck/pipeline/graph.py` 将 planning/design/generation/delivery 的关键步骤和条件分支全部放在一张根图中，节点定义顺序为：
 
 1. `normalize_request`
 2. `plan_deck`
@@ -103,21 +103,32 @@ LLM 边界使用 `core/deck/schemas.py` 中的严格 Pydantic schema，默认 `e
 | `RendererDiagnostic` | `security` / `content` / `environment` 分类，严重度、selector、几何信息与修复建议 |
 | `SlideArtifactMetadata` | 每页 HTML/PNG 路径、内容哈希、渲染环境、模型元数据、repair/fallback 结果 |
 
-当前版本标识为 `deck-state.v2`、`html-deck.v1` 和 `chromium-html.v1`。`core/deck/state.py` 将 state 分为七个逻辑区域：
+六个 active prompt 均采用“角色/任务、输入合同、权威顺序、决策规则、质量门、输出合同”的正式结构：
+
+| Prompt | 核心决策 |
+|---|---|
+| `deck_brief.md` | 区分硬约束、来源事实、用户偏好与保守推断，产出可检验的 communication job |
+| `deck_planner.md` | 选择叙事原型，按单页唯一任务分配证据、layout family 与页面节奏 |
+| `design_director.md` | 锁定 catalog token，只细化适配本次叙事的背景、motif 与 density policy |
+| `slide_content.md` | 按 recipe 选择 block 形态并逐项约束来源、限定条件、邻页去重与图标语义 |
+| `html_slide_designer.md` | 从焦点和阅读路径出发构图，完整执行 content、DOM、CSS、SVG、安全和几何合同 |
+| `html_repair.md` | 按诊断优先级和最小改动阶梯修复，不改事实、标题、主题或 layout family |
+
+当前机器可读版本标识为 `deck-state.v2`、`html-deck.v2` 和 `chromium-html.v1`。六个正式节点提示词统一采用岗位合同：输入权威顺序、决策流程、角色级质量门、失败策略和严格输出边界均由 prompt 明确定义。prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/state.py` 将 state 分为七个逻辑区域：
 
 - `DeckRunState`：版本、run/request ID 和图内状态；失败终态及错误详情由图外的 service 事件统一发布；
 - `DeckInputState`：用户描述、解析后文本、source chunks、页数、语言和模板偏好；
 - `DeckPlanningState`：规范 `brief` 与 `deck_plan`；
-- `DeckDesignState`：选中主题、`design_spec`、page blueprints 与 immutable execution lock；
+- `DeckDesignState`：选中主题与规范 `design_spec`；page blueprints 和 execution lock 只落盘，不进入 state；
 - `DeckCurrentSlideState`：当前页内容、HTML、清洗结果、诊断、repair 次数和 PNG 元数据；
 - `DeckGenerationState`：以 `slide_id` 为键的 `completed_slides` 幂等映射、构图历史和质量问题；
-- `DeckOutputState`：最终 PPTX、导出元数据和 generation manifest。
+- `DeckOutputState`：最终 PPTX 的 `artifact_path`。
 
 state 中存的 schema 对象都是 `model_dump(mode="json")` 后的可序列化字典。`current_slide_index` 是零基偏移，`SlidePlan.index` 和对外页码是一基。
 
 ## 4. 完整主题、布局 recipe 与图标
 
-`core/deck/design_system/html/` 是 HTML v2 的设计系统真源。主题和布局分层定义：一套主题锁定整份 deck 的色彩、字体、间距和 motif；每页再在相同主题下选用一个 recipe。因此每套主题都拥有完整的 10 种页型，而不是只有一张封面。
+`core/deck/design_system/` 是 HTML 设计系统真源。主题和布局分层定义：一套主题锁定整份 deck 的色彩、字体、间距和 motif；每页再在相同主题下选用一个 recipe。因此每套主题都拥有完整的 10 种页型，而不是只有一张封面。
 
 | 主题 ID | 适用场景 | 核心风格 |
 |---|---|---|
@@ -126,7 +137,7 @@ state 中存的 schema 对象都是 `model_dump(mode="json")` 后的可序列化
 | `midnight_product` | 产品发布、AI、技术方案、路演 | 深色背景、荧光青/琥珀、大尺度视觉锚点 |
 | `alpine_research` | 研究、教学、学术、医疗 | 云白、松绿和冰川蓝，问题—方法—结论结构 |
 
-旧的 template ID 仍可通过 `themes.json` 的 alias 解析到上述四套主题；未知 ID 回退到 `paper_editorial`。
+模板参数只接受 `auto` 或上述四个当前主题 ID；显式传入未知或已删除的 ID 会直接报错。
 
 10 个 layout family 为：`cover_minimal`、`section_break`、`statement_focus`、`editorial_split`、`three_points`、`comparison`、`process`、`timeline`、`key_metric`、`closing_resolution`。`recipes.json` 对每个 family 明确角色、slot、容量、结构、variant 和视觉锚点；缺少任一 family 或重复定义都会在 catalog 加载时失败。
 
@@ -159,12 +170,12 @@ DOM QA 至少检查：
 
 ## 6. 预览事件与 PPTX
 
-生产 v2 在每页 `capture_png -> persist_slide_artifacts` 成功后发送一个 `ARTIFACT_READY`：
+生产流程在每页 `capture_png -> persist_slide_artifacts` 成功后发送一个 `ARTIFACT_READY`：
 
 - `resources` 中只有 `PAGE_PREVIEW` / `image/png`；
 - `resource_id` 是稳定的 `sXX-preview`，同页重新发布时前端会替换而不是追加；
 - `event_id` 由 `(request_id, slide_id, content_hash, preview_hash)` 确定；相同页面重放保持不变，内容或 PNG 改变时产生新 ID；
-- `revision` 是该页已持久化 `SlideArtifactMetadata.artifact_hash`；旧 Runtime 可以省略，Go 会原样持久化并经 WebSocket 交给客户端；
+- `revision` 是该页已持久化的 `SlideArtifactMetadata.artifact_hash`，属于页预览事件必填字段；
 - `page.page_id` 是稳定 `slide_id`，`page_index` 保持一基；
 - 已清洗 HTML 仍持久化到任务目录供审计，但不作为页预览事件发布；
 - 对外 `PptStage` 与事件类型保持稳定，新增的内部节点不暴露给前端。
@@ -278,7 +289,7 @@ PYTHONPATH=. .venv/bin/python scripts/generate_html_deck_samples.py
 
 默认要求生产字体 `Noto Sans CJK SC` / `Inter`。macOS 本地预览可显式使用已安装字体，例如
 `--chinese-font "PingFang SC" --latin-font "Arial"`。输出在
-`apps/runtime/artifacts/deck-v2-samples/`，每套包含 sanitized HTML、3200×1800 PNG、逐页诊断、contact sheet 和 image-only PPTX。
+`apps/runtime/artifacts/deck-samples/`，每套包含 sanitized HTML、3200×1800 PNG、逐页诊断、contact sheet 和 image-only PPTX。
 
 生产镜像构建时 `.env`、`config.yaml` 与本地产物不会进入 build context；运行服务时需挂载或注入配置：
 
@@ -303,14 +314,14 @@ docker run --rm -v "$PWD/apps/runtime/config.yaml:/app/config.yaml:ro" deck-runt
 
 | 位置 | 职责 |
 |---|---|
-| `apps/runtime/core/deck/runner.py` | 18 节点根图与两个条件路由 |
+| `apps/runtime/core/deck/pipeline/graph.py` | 18 节点根图与两个条件路由 |
 | `apps/runtime/core/deck/schemas.py` | 版本化 Pydantic 边界 schema |
 | `apps/runtime/core/deck/state.py` | 分区、可序列化的 `DeckGraphState` |
-| `apps/runtime/core/deck/agents/*/nodes.py` | planning、design、逐页 HTML 生成与终端节点 |
-| `apps/runtime/core/deck/design_system/html/` | 4 主题、10 recipes、base CSS 和本地图标库 |
-| `apps/runtime/core/deck/html/` | parser-backed sanitizer、HTML assembler、图标注入与 fallback renderer |
+| `apps/runtime/core/deck/pipeline/{planning,design,generation,delivery}.py` | 规划、设计、逐页 HTML 生成与交付节点 |
+| `apps/runtime/core/deck/design/catalog.py` | 主题与 layout recipe 的严格 catalog |
+| `apps/runtime/core/deck/design_system/` | 4 主题、10 recipes、base CSS 和本地图标库 |
+| `apps/runtime/core/deck/html/` | sanitizer、assembler、图标注入、Chromium DOM QA 与 fallback |
 | `apps/runtime/core/deck/factuality.py` | 数字之外的人物、引语、客户与结果类来源守卫 |
-| `apps/runtime/core/deck/rendering/html_browser.py` | 隔离 Chromium、DOM QA、截图与 PNG 校验 |
 | `apps/runtime/core/deck/export/image_pptx.py` | image-only PPTX 导出与反向校验 |
 | `apps/runtime/core/deck/paths.py` | task-local 产物目录合约 |
 | `apps/runtime/scripts/generate_html_deck_samples.py` | 10-recipe 画廊与三套真实 Chromium 样例 |

@@ -10,10 +10,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from core.deck.design.html_catalog import HTML_DESIGN_SYSTEM_DIR
+from core.deck.design.catalog import DESIGN_SYSTEM_DIR
 
 
-REGISTRY_PATH = HTML_DESIGN_SYSTEM_DIR / "icons" / "lucide.json"
+REGISTRY_PATH = DESIGN_SYSTEM_DIR / "icons" / "lucide.json"
 ALLOWED_TAGS = frozenset({"path", "circle", "ellipse", "line", "polyline", "polygon", "rect"})
 ALLOWED_ATTRIBUTES = frozenset(
     {"d", "cx", "cy", "r", "rx", "ry", "x", "y", "x1", "x2", "y1", "y2", "width", "height", "points"}

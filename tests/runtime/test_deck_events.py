@@ -1,3 +1,5 @@
+import pytest
+
 from core.deck import events
 from core.deck.contract import EventType, PptStage, ResourceType
 
@@ -14,8 +16,6 @@ def test_preview_event_uses_typed_page_and_relative_resources():
             "total": 5,
             "title": "Architecture",
             "png": "previews/page-002.png",
-            "html": "previews/page-002.html",
-            "svg": "svg_output/page-002.svg",
         },
     )
 
@@ -29,27 +29,9 @@ def test_preview_event_uses_typed_page_and_relative_resources():
     assert event.progress.total == 5
     assert event.progress.percent == 40.0
     assert event.progress.unit == "page"
-    assert [item.type for item in event.resources] == [
-        ResourceType.PAGE_PREVIEW,
-        ResourceType.HTML,
-        ResourceType.SVG,
-    ]
-    assert [item.relative_path for item in event.resources] == [
-        "previews/page-002.png",
-        "previews/page-002.html",
-        "svg_output/page-002.svg",
-    ]
+    assert [item.type for item in event.resources] == [ResourceType.PAGE_PREVIEW]
+    assert [item.relative_path for item in event.resources] == ["previews/page-002.png"]
     assert all("_v" not in item.relative_path for item in event.resources)
-
-
-def test_preview_event_keeps_event_id_optional_for_legacy_callers():
-    event = events.slide_preview(
-        "Preview ready",
-        {"index": 1, "total": 1, "png": "previews/page-001.png"},
-    )
-
-    assert event.event_id == ""
-    assert event.revision == ""
 
 
 def test_page_start_uses_the_same_page_stage_and_progress_shape_as_preview():
@@ -69,7 +51,14 @@ def test_page_start_uses_the_same_page_stage_and_progress_shape_as_preview():
 
 
 def test_stage_progress_maps_done_to_step_completed():
-    event = events.stage_progress("writer", "writer completed", {"status": "done"})
+    event = events.stage_progress(
+        "generate_slide_content", "content completed", {"status": "done"}
+    )
 
     assert event.type is EventType.STEP_COMPLETED
     assert event.stage is PptStage.GENERATING_PAGES
+
+
+def test_removed_or_unknown_stage_names_are_rejected():
+    with pytest.raises(ValueError, match="unknown deck pipeline stage"):
+        events.stage_for("writer")

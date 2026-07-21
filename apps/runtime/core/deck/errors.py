@@ -14,14 +14,6 @@ class DeckError(Exception):
             self.stage = stage
 
 
-class DeckInputError(DeckError):
-    """The request is missing required or user-fixable input."""
-
-
-class ModelOutputError(DeckError):
-    """An LLM response could not be parsed or normalized after retries."""
-
-
 class RenderError(DeckError):
     """Browser or fallback rendering failed."""
 

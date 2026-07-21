@@ -45,12 +45,6 @@ def end_node_metrics(token: Token[NodeMetricCollector | None]) -> None:
     _CURRENT.reset(token)
 
 
-def record_model_response(response: Any) -> None:
-    collector = _CURRENT.get()
-    if collector is not None:
-        collector.add(tokens=_response_tokens(response), calls=1)
-
-
 def record_model_call() -> None:
     collector = _CURRENT.get()
     if collector is not None:

@@ -1,25 +1,8 @@
-"""PPTX export package for rendered deck artifacts."""
+"""Image-only PPTX delivery for rendered HTML slides."""
 
-from core.deck.export.text_layer import HIDE_TEXT_JS, TEXT_LAYER_JS
+from core.deck.export.image_pptx import ImagePptxExportResult, ImagePptxExporter
 
 __all__ = [
-    "DeckExporter",
-    "ExportResult",
-    "HIDE_TEXT_JS",
     "ImagePptxExportResult",
     "ImagePptxExporter",
-    "TEXT_LAYER_JS",
-    "extract_text_layer",
 ]
-
-
-def __getattr__(name: str):
-    if name in {"DeckExporter", "ExportResult", "extract_text_layer"}:
-        from core.deck.export import pptx
-
-        return getattr(pptx, name)
-    if name in {"ImagePptxExporter", "ImagePptxExportResult"}:
-        from core.deck.export import image_pptx
-
-        return getattr(image_pptx, name)
-    raise AttributeError(name)

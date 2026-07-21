@@ -14,13 +14,6 @@ def artifact_dir() -> Path:
     return (Path.cwd() / "artifacts" / "decks").resolve()
 
 
-def source_dir() -> Path:
-    configured = os.getenv("DECK_SOURCES_DIR", "").strip()
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return (artifact_dir().parent / "deck-sources").resolve()
-
-
 @dataclass(frozen=True)
 class DeckProjectPaths:
     """Canonical authoring, preview, QA, and delivery paths for one deck."""
@@ -43,14 +36,6 @@ class DeckProjectPaths:
     @property
     def sources(self) -> Path:
         return self.root / "sources"
-
-    @property
-    def analysis(self) -> Path:
-        return self.root / "analysis"
-
-    @property
-    def images(self) -> Path:
-        return self.root / "images"
 
     @property
     def slide_specs(self) -> Path:
@@ -79,24 +64,8 @@ class DeckProjectPaths:
         return (base / self.root.name / "raw-model-output").resolve()
 
     @property
-    def templates(self) -> Path:
-        return self.root / "templates"
-
-    @property
-    def svg_output(self) -> Path:
-        return self.root / "svg_output"
-
-    @property
     def previews(self) -> Path:
         return self.root / "previews"
-
-    @property
-    def styles(self) -> Path:
-        return self.previews / "styles"
-
-    @property
-    def notes(self) -> Path:
-        return self.root / "notes"
 
     @property
     def reports(self) -> Path:
@@ -105,10 +74,6 @@ class DeckProjectPaths:
     @property
     def exports(self) -> Path:
         return self.root / "exports"
-
-    @property
-    def backup(self) -> Path:
-        return self.root / "backup"
 
     @property
     def design_spec_json(self) -> Path:
@@ -139,10 +104,6 @@ class DeckProjectPaths:
         return self.root / "spec-lock.md"
 
     @property
-    def deck_spec(self) -> Path:
-        return self.root / "spec.json"
-
-    @property
     def deck_pptx(self) -> Path:
         return self.exports / "deck.pptx"
 
@@ -162,21 +123,11 @@ class DeckProjectPaths:
     def quality_report(self) -> Path:
         return self.reports / "quality-report.json"
 
-    @property
-    def notes_total(self) -> Path:
-        return self.notes / "total.md"
-
-    def svg(self, page: int) -> Path:
-        return self.svg_output / _page_filename(page, ".svg")
-
     def preview_html(self, page: int) -> Path:
         return self.previews / _page_filename(page, ".html")
 
     def preview_png(self, page: int) -> Path:
         return self.previews / _page_filename(page, ".png")
-
-    def preview_background(self, page: int) -> Path:
-        return self.previews / f"page-{_positive_page(page):03d}_bg.png"
 
     def slide_content_spec(self, page: int) -> Path:
         return self.slide_specs / f"page-{_positive_page(page):03d}.content.json"
@@ -195,19 +146,12 @@ class DeckProjectPaths:
         for path in (
             self.root,
             self.sources,
-            self.analysis,
-            self.images,
             self.slide_specs,
             self.diagnostics,
             self.private_debug,
-            self.templates,
-            self.svg_output,
             self.previews,
-            self.styles,
-            self.notes,
             self.reports,
             self.exports,
-            self.backup,
         ):
             path.mkdir(parents=True, exist_ok=True)
         return self
@@ -227,4 +171,4 @@ def _positive_page(page: int) -> int:
     return value
 
 
-__all__ = ["DeckProjectPaths", "artifact_dir", "source_dir"]
+__all__ = ["DeckProjectPaths", "artifact_dir"]

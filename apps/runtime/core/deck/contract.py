@@ -33,12 +33,6 @@ class InputResource:
     sha256: str = ""
 
     @property
-    def filename(self) -> str:
-        """Compatibility name used by the local document/image readers."""
-
-        return self.name
-
-    @property
     def size_bytes(self) -> int:
         return len(self.content)
 
@@ -82,6 +76,8 @@ class PptStage(str, Enum):
 
 
 class ResourceType(str, Enum):
+    # The transport enum is shared with persisted events. The current deck
+    # runtime publishes PAGE_PREVIEW and PPTX; SVG/HTML remain protocol values.
     INPUT_ATTACHMENT = "input_attachment"
     IMAGE = "image"
     SVG = "svg"
@@ -147,9 +143,7 @@ class AgentEvent:
     error: ErrorDetail | None = None
     final_result: FinalResult | None = None
     event_id: str = ""
-    # Optional producer revision for an artifact.  Slide preview events use the
-    # persisted SlideArtifactMetadata.artifact_hash; legacy events leave it
-    # empty.
+    # Slide preview events use the persisted artifact hash as a stable revision.
     revision: str = ""
 
 

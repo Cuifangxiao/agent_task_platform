@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 SCHEMA_VERSION = "deck-state.v2"
-PROMPT_VERSION = "html-deck.v1"
+PROMPT_VERSION = "html-deck.v2"
 RENDERER_VERSION = "chromium-html.v1"
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 900
@@ -318,44 +318,24 @@ class SlideArtifactMetadata(StrictModel):
     diagnostics_path: str = Field(default="", max_length=500)
 
 
-class LastError(StrictModel):
-    code: str = Field(min_length=1, max_length=100)
-    stage: str = Field(min_length=1, max_length=100)
-    message: str = Field(min_length=1, max_length=1000)
-    retryable: bool = False
-
-
-DECK_BRIEF_JSON_SCHEMA = DeckBrief.model_json_schema()
-DECK_PLAN_JSON_SCHEMA = DeckPlan.model_json_schema()
-DESIGN_SPEC_JSON_SCHEMA = DesignSpec.model_json_schema()
-SLIDE_CONTENT_JSON_SCHEMA = SlideContentSpec.model_json_schema()
-HTML_SLIDE_JSON_SCHEMA = HtmlSlideSpec.model_json_schema()
-
-
 __all__ = [
     "CANVAS_HEIGHT",
     "CANVAS_WIDTH",
     "ContentBlock",
     "ContentBlockType",
-    "DECK_BRIEF_JSON_SCHEMA",
-    "DECK_PLAN_JSON_SCHEMA",
-    "DESIGN_SPEC_JSON_SCHEMA",
     "DeckBrief",
     "DeckPlan",
     "DesignSpec",
     "DiagnosticCategory",
     "DiagnosticSeverity",
-    "HTML_SLIDE_JSON_SCHEMA",
     "HtmlSlideSpec",
     "LayoutFamily",
-    "LastError",
     "PROMPT_VERSION",
     "PageRhythm",
     "PaletteSpec",
     "RENDERER_VERSION",
     "RendererDiagnostic",
     "SCHEMA_VERSION",
-    "SLIDE_CONTENT_JSON_SCHEMA",
     "ShapeStyleSpec",
     "SlideArtifactMetadata",
     "SlideContentSpec",

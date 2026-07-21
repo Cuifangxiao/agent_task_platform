@@ -35,19 +35,26 @@ class SuccessfulGraph:
         yield (
             "custom",
             events.artifact(
-                "export",
+                "assemble_image_pptx",
                 "PPTX ready",
                 str(pptx),
                 {"relative_path": "exports/deck.pptx", "filename": "deck.pptx"},
             ),
         )
-        yield ("values", {**initial_state, "artifact_path": str(pptx), "final_slides": [{"index": 1}]})
+        yield (
+            "values",
+            {
+                **initial_state,
+                "artifact_path": str(pptx),
+                "completed_slides": {"s01": {"slide_id": "s01", "index": 1}},
+            },
+        )
 
 
 class FailingGraph:
     def stream(self, _initial_state, *, stream_mode):
         assert stream_mode == ["custom", "values"]
-        yield ("custom", events.stage_started("outline", "Planning"))
+        yield ("custom", events.stage_started("plan_deck", "Planning"))
         raise RuntimeError("private pipeline details")
 
 
@@ -117,7 +124,7 @@ def test_service_builds_fresh_graph_and_browser_session_for_each_request(monkeyp
         "core.deck.service.build_ppt_llms",
         lambda inp: {"task_id": inp.task_id},
     )
-    monkeypatch.setattr("core.deck.service.BrowserSession", TrackingBrowserSession)
+    monkeypatch.setattr("core.deck.service.SecureBrowserSession", TrackingBrowserSession)
     service = DeckService(graph_factory=factory)
 
     first = list(
@@ -158,7 +165,7 @@ def test_service_uses_ppt_graph_when_no_factory_is_injected(monkeypatch, tmp_pat
 
     monkeypatch.setenv("DECK_ARTIFACTS_DIR", str(tmp_path))
     monkeypatch.setattr("core.deck.service.build_ppt_llms", lambda _inp: {"brief": object()})
-    monkeypatch.setattr("core.deck.service.BrowserSession", TrackingBrowserSession)
+    monkeypatch.setattr("core.deck.service.SecureBrowserSession", TrackingBrowserSession)
     monkeypatch.setattr("core.deck.service.PptGraph", ppt_graph)
 
     result = list(

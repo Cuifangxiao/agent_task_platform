@@ -27,8 +27,11 @@ apps/runtime/
 ├── core/                    # 领域内核: 零 proto/grpc 依赖, 可独立单测
 │   ├── provider/            #   contract.py(Input/Output DTO) + service.py(业务)
 │   ├── deck/                #   PPT contract、HTML-first LangGraph、本地渲染与导出
-│   │   ├── agents/          #   planning/design/generation/postprocessor 扁平节点
-│   │   ├── runner.py        #   18 节点根图与 repair/fallback/逐页条件路由
+│   │   ├── pipeline/        #   根图，以及 planning/design/generation/delivery 节点
+│   │   ├── design/          #   当前主题与布局 recipe catalog
+│   │   ├── design_system/   #   主题、recipes、base CSS 与本地图标
+│   │   ├── html/            #   sanitizer、assembler、Chromium DOM QA 与 fallback
+│   │   ├── export/          #   image-only PPTX 导出
 │   │   ├── llm.py           #   模型调用、prompt 与结构化输出工具
 │   │   └── state.py         #   分区、可序列化的状态 schema
 │   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
@@ -72,8 +75,8 @@ cp .env.example .env                 # 按需填密钥
 ## PPT 生成运行依赖
 
 PPT 使用独立的 gRPC 服务端流。Go 发送一次 `GeneratePpt` 请求，Runtime 为每个
-run 创建独立的 `core/deck/runner.py::PptGraph`，通过 custom stream 持续返回 `AgentEvent`。
-当前是 HTML-first v2，根图直接暴露 18 个节点，不再组装四个 phase 子图：
+run 创建独立的 `core/deck/pipeline/graph.py::PptGraph`，通过 custom stream 持续返回 `AgentEvent`。
+当前 HTML-first 根图直接暴露 18 个节点：
 
 ```text
 normalize_request -> plan_deck -> select_template -> create_design_spec
@@ -89,7 +92,7 @@ LLM 边界使用 `DeckBrief`、`DeckPlan`、`DesignSpec`、`SlideContentSpec` �
 `completed_slides` 是以 `slide_id` 为键的幂等结果映射。每个请求从头执行，当前没有
 LangGraph checkpointer、人工 review 或 pause/resume。
 
-设计系统位于 `core/deck/design_system/html/`，提供 4 套完整主题（`paper_editorial`、
+设计系统位于 `core/deck/design_system/`，提供 4 套完整主题（`paper_editorial`、
 `executive_signal`、`midnight_product`、`alpine_research`）、10 个 layout recipe 和 24 个本地 Lucide 图标。
 模型生成的 HTML/CSS 会经过 parser-backed allowlist 清洗，再装入含 CSP、全局 DesignSpec token 和
 trusted base CSS 的文档壳。Chromium 对每页执行越界、溢出、重叠、最小字号、节点预算和字体可用性检查；
@@ -98,11 +101,11 @@ trusted base CSS 的文档壳。Chromium 对每页执行越界、溢出、重叠
 
 渲染画布为 `1600×900` CSS px，`deviceScaleFactor=2`，每页输出 `3200×1800` PNG。生产预览事件
 只发布 `PAGE_PREVIEW` PNG，使用稳定的 `sXX-preview` resource ID；已清洗 HTML 会持久化供审计，
-但不通过页预览事件暴露。每条新版页预览事件还携带以 `artifact_hash` 为值的可选 `revision`，
+但不通过页预览事件暴露。每条页预览事件还携带以 `artifact_hash` 为值的必填 `revision`，
 用于客户端精确识别已持久化页面版本。最终 PPTX 每页只含一张全出血 PNG，因此视觉稳定但页内元素不可编辑。
 
 模型角色仍固定为 `brief`、`outline`、`style`、`writer`、`designer`，配置由 Go 请求注入。
-上传文件当前只用于文本/provenance；上传图片不会进入生成节点，这一版没有多模态视觉分析。
+上传文件当前只用于文本/provenance；上传图片不会进入生成节点，当前没有多模态视觉分析。
 
 安装 Python 依赖后，还需要 Playwright Chromium：
 
@@ -127,7 +130,7 @@ sudo apt-get install -y fontconfig fonts-noto-cjk fonts-inter
 PYTHONPATH=. .venv/bin/python scripts/generate_html_deck_samples.py
 ```
 
-输出位于 `artifacts/deck-v2-samples/`；macOS 可通过 `--chinese-font "PingFang SC" --latin-font "Arial"`
+输出位于 `artifacts/deck-samples/`；macOS 可通过 `--chinese-font "PingFang SC" --latin-font "Arial"`
 使用本机字体进行开发预览。生产验收仍应使用 `Noto Sans CJK SC` / `Inter`。
 
 生成产物写入 `DECK_ARTIFACTS_DIR/{task_id}/`，默认为 `apps/runtime/artifacts/decks`。若 Go 与 Runtime

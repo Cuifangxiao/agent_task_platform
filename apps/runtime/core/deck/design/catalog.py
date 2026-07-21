@@ -1,160 +1,191 @@
-"""Load the active presentation template catalog used by Strategist and Artist."""
+"""Validated HTML theme and layout-recipe catalog.
+
+Themes define the global visual language.  Recipes define page composition.
+Keeping them separate gives every theme a complete page set without copying
+ten near-identical HTML templates four times.
+"""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from core.deck.spec import ThemeTokens, default_theme
+from pydantic import Field
+
+from core.deck.schemas import (
+    DesignSpec,
+    LayoutFamily,
+    PaletteSpec,
+    ShapeStyleSpec,
+    SpacingSpec,
+    StrictModel,
+    TypographySpec,
+)
 
 
-DESIGN_SYSTEM_ROOT = Path(__file__).resolve().parent.parent / "design_system"
-CATALOG_PATH = DESIGN_SYSTEM_ROOT / "template_packs.json"
+DESIGN_SYSTEM_DIR = Path(__file__).resolve().parent.parent / "design_system"
+THEMES_PATH = DESIGN_SYSTEM_DIR / "themes.json"
+RECIPES_PATH = DESIGN_SYSTEM_DIR / "recipes.json"
 
 
-@dataclass(frozen=True)
-class TemplatePack:
-    template_id: str
-    name: str
-    communication_mode: str
-    template_mode: str
-    summary: str
-    visual_style: str
-    keywords: list[str]
-    source: dict[str, Any]
-    theme: ThemeTokens
-    layout_principles: list[str]
-    layouts: list[dict[str, Any]]
-    icon_strategy: dict[str, Any]
-    image_strategy: str
+class ThemeDefinition(StrictModel):
+    theme_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,63}$")
+    name: str = Field(min_length=1, max_length=120)
+    summary: str = Field(min_length=1, max_length=400)
+    keywords: list[str] = Field(default_factory=list, max_length=40)
+    palette: PaletteSpec
+    typography: TypographySpec
+    spacing: SpacingSpec
+    shape_style: ShapeStyleSpec
+    icon_style: str
+    background_style: str
+    motif: str
+    density_policy: str
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_design_spec(self) -> DesignSpec:
+        return DesignSpec.model_validate(
+            self.model_dump(exclude={"name", "summary", "keywords"})
+        )
+
+
+class RecipeCapacity(StrictModel):
+    title_lines: int = Field(ge=1, le=4)
+    body_chars: int = Field(ge=0, le=1200)
+    items: int = Field(ge=0, le=12)
+
+
+class RecipeDefinition(StrictModel):
+    family: LayoutFamily
+    roles: list[str] = Field(min_length=1, max_length=12)
+    purpose: str = Field(min_length=1, max_length=400)
+    slots: list[str] = Field(min_length=1, max_length=16)
+    capacity: RecipeCapacity
+    structure: str = Field(min_length=1, max_length=500)
+    variants: list[str] = Field(min_length=1, max_length=12)
+    visual_anchors: list[str] = Field(default_factory=list, max_length=10)
+
+    def prompt_manifest(self) -> dict[str, Any]:
         return {
-            "template_id": self.template_id,
-            "name": self.name,
-            "communication_mode": self.communication_mode,
-            "template_mode": self.template_mode,
-            "summary": self.summary,
-            "visual_style": self.visual_style,
-            "keywords": list(self.keywords),
-            "source": dict(self.source),
-            "theme": self.theme.to_dict(),
-            "layout_principles": list(self.layout_principles),
-            "layouts": [dict(item) for item in self.layouts],
-            "icon_strategy": dict(self.icon_strategy),
-            "image_strategy": self.image_strategy,
+            "family": self.family.value,
+            "purpose": self.purpose,
+            "slots": self.slots,
+            "capacity": self.capacity.model_dump(mode="json"),
+            "structure": self.structure,
+            "variants": self.variants,
+            "visual_anchors": self.visual_anchors,
         }
+
+
+class ThemeCatalog(StrictModel):
+    catalog_schema: str = Field(alias="schema")
+    default_theme_id: str
+    themes: list[ThemeDefinition]
+
+
+class RecipeCatalog(StrictModel):
+    catalog_schema: str = Field(alias="schema")
+    recipes: list[RecipeDefinition]
 
 
 @lru_cache(maxsize=1)
-def list_template_packs() -> tuple[TemplatePack, ...]:
-    try:
-        raw = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return (_fallback_pack(),)
-    packs: list[TemplatePack] = []
-    for item in raw.get("packs") or []:
-        if not isinstance(item, dict):
-            continue
-        template_id = str(item.get("template_id") or "").strip()
-        if not template_id:
-            continue
-        packs.append(
-            TemplatePack(
-                template_id=template_id,
-                name=str(item.get("name") or template_id).strip(),
-                communication_mode=str(item.get("communication_mode") or "general").strip(),
-                template_mode=str(item.get("template_mode") or "free_design").strip(),
-                summary=str(item.get("summary") or "").strip(),
-                visual_style=str(item.get("visual_style") or "").strip(),
-                keywords=[str(value).strip() for value in item.get("keywords") or [] if str(value).strip()],
-                source=dict(item.get("source") or {"kind": "native"}),
-                theme=ThemeTokens.from_dict(item.get("theme") or {}),
-                layout_principles=[str(value).strip() for value in item.get("layout_principles") or [] if str(value).strip()],
-                layouts=[dict(value) for value in item.get("layouts") or [] if isinstance(value, dict)],
-                icon_strategy=dict(item.get("icon_strategy") or {}),
-                image_strategy=str(item.get("image_strategy") or "none").strip(),
-            )
-        )
-    return tuple(packs or [_fallback_pack()])
+def theme_catalog() -> ThemeCatalog:
+    catalog = ThemeCatalog.model_validate(json.loads(THEMES_PATH.read_text(encoding="utf-8")))
+    identifiers = [theme.theme_id for theme in catalog.themes]
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("theme catalog must define each theme_id exactly once")
+    if catalog.default_theme_id not in set(identifiers):
+        raise ValueError("theme catalog default_theme_id must reference a defined theme")
+    return catalog
 
 
-def get_template_pack(template_id: str, *, fallback: str = "editorial_freeform") -> TemplatePack:
-    by_id = {pack.template_id: pack for pack in list_template_packs()}
-    return by_id.get(str(template_id or "").strip(), by_id.get(fallback, next(iter(by_id.values()))))
+@lru_cache(maxsize=1)
+def recipe_catalog() -> RecipeCatalog:
+    catalog = RecipeCatalog.model_validate(json.loads(RECIPES_PATH.read_text(encoding="utf-8")))
+    families = [item.family for item in catalog.recipes]
+    expected = set(LayoutFamily)
+    if set(families) != expected or len(families) != len(expected):
+        raise ValueError("recipe catalog must define every layout family exactly once")
+    return catalog
 
 
-def public_template_catalog() -> list[dict[str, Any]]:
+def list_html_themes() -> tuple[ThemeDefinition, ...]:
+    return tuple(theme_catalog().themes)
+
+
+def resolve_theme_id(requested_theme_id: str) -> str:
+    catalog = theme_catalog()
+    requested = str(requested_theme_id or "").strip().casefold()
+    if not requested or requested == "auto":
+        return catalog.default_theme_id
+    known = {theme.theme_id for theme in catalog.themes}
+    if requested not in known:
+        raise ValueError(f"unknown HTML deck theme: {requested_theme_id}")
+    return requested
+
+
+def get_html_theme(theme_id: str) -> ThemeDefinition:
+    resolved = resolve_theme_id(theme_id)
+    by_id = {theme.theme_id: theme for theme in theme_catalog().themes}
+    return by_id[resolved]
+
+
+def select_html_theme(requested_theme_id: str, context: str) -> ThemeDefinition:
+    requested = str(requested_theme_id or "").strip()
+    if requested and requested.casefold() != "auto":
+        return get_html_theme(requested)
+    haystack = str(context or "").casefold()
+    catalog = theme_catalog()
+    ranked = sorted(
+        catalog.themes,
+        key=lambda theme: (
+            -sum(1 for keyword in theme.keywords if keyword.casefold() in haystack),
+            theme.theme_id != catalog.default_theme_id,
+            theme.theme_id,
+        ),
+    )
+    return ranked[0]
+
+
+def get_recipe(family: LayoutFamily | str) -> RecipeDefinition:
+    normalized = family if isinstance(family, LayoutFamily) else LayoutFamily(str(family))
+    for recipe in recipe_catalog().recipes:
+        if recipe.family is normalized:
+            return recipe
+    raise KeyError(normalized.value)
+
+
+def recipe_for_role(role: str, *, index: int = 0, total: int = 0) -> RecipeDefinition:
+    normalized = str(role or "").strip().casefold()
+    if index == 1 or normalized == "cover":
+        return get_recipe(LayoutFamily.COVER_MINIMAL)
+    if total and index == total or normalized == "closing":
+        return get_recipe(LayoutFamily.CLOSING_RESOLUTION)
+    matches = [recipe for recipe in recipe_catalog().recipes if normalized in recipe.roles]
+    return matches[0] if matches else get_recipe(LayoutFamily.EDITORIAL_SPLIT)
+
+
+def recipe_prompt_manifest(families: list[str] | None = None) -> list[dict[str, Any]]:
+    selected = set(families or [])
     return [
-        {
-            "template_id": pack.template_id,
-            "name": pack.name,
-            "communication_mode": pack.communication_mode,
-            "template_mode": pack.template_mode,
-            "summary": pack.summary,
-            "visual_style": pack.visual_style,
-            "keywords": list(pack.keywords),
-            "source": dict(pack.source),
-        }
-        for pack in list_template_packs()
+        recipe.prompt_manifest()
+        for recipe in recipe_catalog().recipes
+        if not selected or recipe.family.value in selected
     ]
 
 
-def compatible_layouts(pack: TemplatePack, *, component: str, rhythm: str) -> list[dict[str, Any]]:
-    exact = [layout for layout in pack.layouts if component in layout.get("components", []) and rhythm in layout.get("rhythms", [])]
-    if exact:
-        return exact
-    component_matches = [layout for layout in pack.layouts if component in layout.get("components", [])]
-    if component_matches:
-        return component_matches
-    rhythm_matches = [layout for layout in pack.layouts if rhythm in layout.get("rhythms", [])]
-    return rhythm_matches or list(pack.layouts)
-
-
-def template_svg_source(template_id: str, layout_id: str = "") -> str:
-    """Return a complete restricted-SVG reference for one catalog layout."""
-
-    # Keep this stable compatibility entry point while the renderer lives in a
-    # dedicated module.  The local import avoids a catalog/sources import cycle.
-    from core.deck.design.sources import render_template_reference_svg
-
-    return render_template_reference_svg(template_id, layout_id)
-
-
-def _fallback_pack() -> TemplatePack:
-    return TemplatePack(
-        template_id="editorial_freeform",
-        name="Editorial Freeform",
-        communication_mode="general",
-        template_mode="free_design",
-        summary="Editorial free design with deliberate rhythm changes.",
-        visual_style="editorial minimalism",
-        keywords=["general", "editorial"],
-        source={"kind": "native"},
-        theme=default_theme(),
-        layout_principles=["Conclusion-led titles", "Asymmetric composition", "Use whitespace as structure"],
-        layouts=[
-            {
-                "layout_id": "editorial_split",
-                "components": ["content-basic", "comparison", "chart-takeaway"],
-                "rhythms": ["dense", "breathing"],
-                "composition": "Asymmetric 7:3 evidence and implication split",
-                "geometry": {"primary": [70, 180, 760, 430], "secondary": [875, 210, 330, 360]},
-            }
-        ],
-        icon_strategy={"library": "geometric", "weight": "medium"},
-        image_strategy="optional",
-    )
-
-
 __all__ = [
-    "TemplatePack",
-    "compatible_layouts",
-    "get_template_pack",
-    "list_template_packs",
-    "public_template_catalog",
-    "template_svg_source",
+    "DESIGN_SYSTEM_DIR",
+    "RecipeDefinition",
+    "ThemeDefinition",
+    "get_html_theme",
+    "get_recipe",
+    "list_html_themes",
+    "recipe_catalog",
+    "recipe_for_role",
+    "recipe_prompt_manifest",
+    "resolve_theme_id",
+    "select_html_theme",
+    "theme_catalog",
 ]

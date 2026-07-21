@@ -7,7 +7,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from langgraph.config import get_stream_writer
 from langgraph.errors import GraphBubbleUp
 
 from core.deck.llm import llm_log_context
@@ -78,17 +77,4 @@ def instrument_node(
     return run
 
 
-def run_phase_graph(graph: Any, state: DeckGraphState) -> dict[str, Any]:
-    """Run one child graph and forward its custom events to the parent graph."""
-
-    writer = get_stream_writer()
-    final_state: dict[str, Any] = dict(state)
-    for mode, data in graph.stream(state, stream_mode=["custom", "values"]):
-        if mode == "custom":
-            writer(data)
-        elif mode == "values" and isinstance(data, dict):
-            final_state = data
-    return final_state
-
-
-__all__ = ["instrument_node", "run_phase_graph"]
+__all__ = ["instrument_node"]

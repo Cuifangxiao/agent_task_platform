@@ -87,7 +87,7 @@ flowchart LR
 
 ## PPT 生成流程
 
-通信、持久化、并发和失败语义以 [Agent Run / WebSocket 架构](docs/AGENT_RUN_STREAMING_ARCHITECTURE.md) 为准；页面生成、HTML 安全边界和图片型 PPTX 产物详见 [PPT HTML-first v2 流水线](docs/PPT_GENERATION_PIPELINE.md)。
+通信、持久化、并发和失败语义以 [Agent Run / WebSocket 架构](docs/AGENT_RUN_STREAMING_ARCHITECTURE.md) 为准；页面生成、HTML 安全边界和图片型 PPTX 产物详见 [PPT HTML-first 流水线](docs/PPT_GENERATION_PIPELINE.md)。
 
 ```text
 POST 创建任务

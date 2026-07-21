@@ -8,7 +8,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from core.deck.contract import EventType, PipelineEvent, ResourceType
-from core.deck.runner import PptGraph
+from core.deck.pipeline.graph import PptGraph
 from core.deck.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 
 
@@ -89,6 +89,7 @@ class DesignerLLM:
     def __init__(self) -> None:
         self.initial_calls: list[str] = []
         self.repair_calls: list[tuple[str, int]] = []
+        self.repair_icon_shortlists: list[list[str]] = []
 
     def invoke(self, messages):
         payload = _human_payload(messages)
@@ -96,6 +97,7 @@ class DesignerLLM:
             slide = payload["slide_plan"]
             attempt = int(payload["repair_attempt"])
             self.repair_calls.append((slide["slide_id"], attempt))
+            self.repair_icon_shortlists.append(payload["available_icon_keys"])
             marker = (
                 "repair-success" if slide["slide_id"] == "s03" else "always-invalid"
             )
@@ -201,30 +203,21 @@ def _initial_state(output_root: Path, request_id: str) -> dict:
         "prompt_version": PROMPT_VERSION,
         "renderer_version": RENDERER_VERSION,
         "task_id": request_id,
-        "job_id": request_id,
-        "deck_id": request_id,
         "request_id": request_id,
         "project_dir": str((output_root / request_id).resolve()),
         "status": "created",
-        "last_error": None,
         "deck_title": "八页集成测试演示",
         "user_description": "验证完整规划、统一设计、逐页修订和图片型导出。",
-        "uploaded_file_name": "",
         "uploaded_file_text": "",
         "source_chunks": [],
-        "source_images": [],
         "expected_slide_count": 8,
         "language": "zh-CN",
         "aspect_ratio": "16:9",
         "requested_template_id": "executive_signal",
-        "generation_mode": "html_v2",
         "current_slide_index": 0,
         "completed_slides": {},
         "layout_history": [],
         "validation_issues": [],
-        "slides": [],
-        "final_slides": [],
-        "artifacts": [],
     }
 
 
@@ -267,6 +260,8 @@ def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_
     assert content.slide_ids == [f"s{index:02d}" for index in range(1, 9)]
     assert designer.initial_calls == [f"s{index:02d}" for index in range(1, 9)]
     assert designer.repair_calls == [("s03", 1), ("s05", 1), ("s05", 2)]
+    assert len(designer.repair_icon_shortlists) == 3
+    assert all(len(keys) <= 12 for keys in designer.repair_icon_shortlists)
 
     assert [event.page.page_index for event in previews] == list(range(1, 9))
     assert [event.page.page_id for event in previews] == [
@@ -280,6 +275,11 @@ def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_
 
     assert latest_state["status"] == "completed"
     assert latest_state["current_slide_index"] == 8
+    assert all(
+        {"slide_id", "layout_family", "layout_variant", "composition_summary", "estimated_density"}
+        <= item.keys()
+        for item in latest_state["layout_history"]
+    )
     completed = sorted(
         latest_state["completed_slides"].values(), key=lambda item: item["index"]
     )

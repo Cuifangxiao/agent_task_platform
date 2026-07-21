@@ -16,15 +16,6 @@ from core.deck.contract import (
 
 
 _STAGES = {
-    "brief": PptStage.PREPARING,
-    "outline": PptStage.PLANNING,
-    "template_selection": PptStage.PLANNING,
-    "design_lock": PptStage.GENERATING_ASSETS,
-    "writer": PptStage.GENERATING_PAGES,
-    "slides": PptStage.GENERATING_PAGES,
-    "designer": PptStage.GENERATING_PAGES,
-    "render": PptStage.GENERATING_PAGES,
-    "export": PptStage.ASSEMBLING_PPT,
     "normalize_request": PptStage.PREPARING,
     "plan_deck": PptStage.PLANNING,
     "select_template": PptStage.PLANNING,
@@ -50,11 +41,11 @@ _STAGES = {
 
 
 def stage_for(name: str) -> PptStage:
-    return _STAGES.get(str(name or "").strip(), PptStage.PREPARING)
-
-
-def agent_message(stage: str, agent: str, message: str) -> PipelineEvent:
-    return PipelineEvent(EventType.STEP_PROGRESS, stage_for(stage), f"{agent}: {message}")
+    normalized = str(name or "").strip()
+    try:
+        return _STAGES[normalized]
+    except KeyError as exc:
+        raise ValueError(f"unknown deck pipeline stage: {normalized or '<empty>'}") from exc
 
 
 def stage_started(stage: str, message: str, payload: dict[str, Any] | None = None) -> PipelineEvent:
@@ -67,14 +58,6 @@ def stage_progress(stage: str, message: str, payload: dict[str, Any] | None = No
     event_type = EventType.STEP_COMPLETED if payload.get("status") == "done" else EventType.STEP_PROGRESS
     progress = _progress(payload)
     return PipelineEvent(event_type, stage_for(stage), message, progress=progress, page=_page(payload))
-
-
-def fact_sheet_ready(payload: dict[str, Any]) -> PipelineEvent:
-    return PipelineEvent(
-        EventType.STEP_COMPLETED,
-        PptStage.PREPARING,
-        f"Brief ready with {int(payload.get('facts_count') or 0)} source facts",
-    )
 
 
 def outline_ready(outline_markdown: str) -> PipelineEvent:
@@ -104,37 +87,27 @@ def slide_started(message: str, payload: dict[str, Any]) -> PipelineEvent:
 def slide_preview(message: str, payload: dict[str, Any]) -> PipelineEvent:
     index = _positive_int(payload.get("index"))
     slide_id = str(payload.get("slide_id") or f"s{index:02d}").strip()
-    resources: list[ResourceRef] = []
-    # Production v2 emits only ``png``.  Keeping the helper compatible with
-    # legacy sanitized HTML/SVG callers avoids breaking the transport layer.
-    for key, resource_type, mime_type, suffix in (
-        ("png", ResourceType.PAGE_PREVIEW, "image/png", "preview"),
-        ("html", ResourceType.HTML, "text/html", "html"),
-        ("svg", ResourceType.SVG, "image/svg+xml", "svg"),
-    ):
-        relative_path = str(payload.get(key) or "").strip()
-        if not relative_path:
-            continue
-        resources.append(
-            ResourceRef(
-                # Stable per-slide keys let current web clients replace a
-                # regenerated preview instead of showing duplicate cards.
-                resource_id=f"{slide_id}-{suffix}",
-                type=resource_type,
-                name=relative_path.rsplit("/", 1)[-1],
-                relative_path=relative_path,
-                mime_type=mime_type,
-            )
-        )
+    relative_path = str(payload.get("png") or "").strip()
+    event_id = str(payload.get("event_id") or "").strip()
+    revision = str(payload.get("artifact_hash") or "").strip()
+    if not index or not relative_path or not event_id or not revision:
+        raise ValueError("slide preview requires index, png, event_id, and artifact_hash")
+    resource = ResourceRef(
+        resource_id=f"{slide_id}-preview",
+        type=ResourceType.PAGE_PREVIEW,
+        name=relative_path.rsplit("/", 1)[-1],
+        relative_path=relative_path,
+        mime_type="image/png",
+    )
     return PipelineEvent(
         EventType.ARTIFACT_READY,
         PptStage.GENERATING_PAGES,
         message,
         progress=_page_progress(payload),
-        resources=tuple(resources),
+        resources=(resource,),
         page=_page(payload),
-        event_id=str(payload.get("event_id") or "").strip(),
-        revision=str(payload.get("artifact_hash") or "").strip(),
+        event_id=event_id,
+        revision=revision,
     )
 
 
@@ -198,9 +171,7 @@ def _positive_int(value: Any) -> int:
 
 
 __all__ = [
-    "agent_message",
     "artifact",
-    "fact_sheet_ready",
     "outline_ready",
     "slide_preview",
     "slide_started",

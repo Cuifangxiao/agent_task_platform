@@ -10,13 +10,13 @@ from pathlib import Path
 
 import html5lib
 
-from core.deck.design.html_catalog import HTML_DESIGN_SYSTEM_DIR
+from core.deck.design.catalog import DESIGN_SYSTEM_DIR
 from core.deck.html.icons import IconRegistry, icon_registry
 from core.deck.html.sanitizer import SanitizationDiagnostic, sanitize_css, sanitize_html_fragment
 from core.deck.schemas import DesignSpec
 
 
-BASE_CSS_PATH = HTML_DESIGN_SYSTEM_DIR / "base.css"
+BASE_CSS_PATH = DESIGN_SYSTEM_DIR / "base.css"
 CSP = (
     "default-src 'none'; "
     "script-src 'none'; "
