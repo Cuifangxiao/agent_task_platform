@@ -16,12 +16,12 @@ from langgraph.graph import END, START, StateGraph
 from core.deck.export.image_pptx import ImagePptxExporter
 from core.deck.html import HTMLAssembler
 from core.deck.html.browser import HTMLBrowserRenderer, SecureBrowserSession
-from core.deck.instrumentation import instrument_node
+from core.deck.pipeline.instrumentation import instrument_node
 from core.deck.pipeline.delivery import DeliveryNodes
 from core.deck.pipeline.design import DesignNodes
 from core.deck.pipeline.generation import GenerationNodes
 from core.deck.pipeline.planning import PlanningNodes
-from core.deck.state import DeckGraphState
+from core.deck.pipeline.state import DeckGraphState
 
 
 NODE_SEQUENCE = (

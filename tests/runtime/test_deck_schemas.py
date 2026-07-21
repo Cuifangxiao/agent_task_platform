@@ -4,13 +4,13 @@ from pydantic import ValidationError
 import core.deck.pipeline.planning as planning_nodes
 from core.deck.pipeline.design import _has_readable_contrast, _lock_approved_identity
 from core.deck.pipeline.planning import _deterministic_brief, _deterministic_plan
-from core.deck.design.catalog import (
+from core.deck.design_system.catalog import (
     get_html_theme,
     list_html_themes,
     recipe_catalog,
     resolve_theme_id,
 )
-from core.deck.schemas import (
+from core.deck.domain.schemas import (
     ContentBlock,
     DeckPlan,
     HtmlSlideSpec,

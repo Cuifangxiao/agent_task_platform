@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import Field
 
-from core.deck.schemas import (
+from core.deck.domain.schemas import (
     DesignSpec,
     LayoutFamily,
     PaletteSpec,
@@ -25,7 +25,7 @@ from core.deck.schemas import (
 )
 
 
-DESIGN_SYSTEM_DIR = Path(__file__).resolve().parent.parent / "design_system"
+DESIGN_SYSTEM_DIR = Path(__file__).resolve().parent
 THEMES_PATH = DESIGN_SYSTEM_DIR / "themes.json"
 RECIPES_PATH = DESIGN_SYSTEM_DIR / "recipes.json"
 

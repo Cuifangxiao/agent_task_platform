@@ -26,14 +26,16 @@ apps/runtime/
 │   └── ppt_handler.py       #   PPT AgentEvent proto <-> core
 ├── core/                    # 领域内核: 零 proto/grpc 依赖, 可独立单测
 │   ├── provider/            #   contract.py(Input/Output DTO) + service.py(业务)
-│   ├── deck/                #   PPT contract、HTML-first LangGraph、本地渲染与导出
-│   │   ├── pipeline/        #   根图，以及 planning/design/generation/delivery 节点
-│   │   ├── design/          #   当前主题与布局 recipe catalog
-│   │   ├── design_system/   #   主题、recipes、base CSS 与本地图标
+│   ├── deck/                #   PPT HTML-first 领域模块
+│   │   ├── service.py       #   应用入口与终态事件
+│   │   ├── domain/          #   contracts、Pydantic schemas、错误与事实规则
+│   │   ├── pipeline/        #   根图、节点、state、events 与 instrumentation
+│   │   ├── runtime/         #   LLM 调用、模型注册与请求级指标
+│   │   ├── workspace/       #   来源解析与 task-local 路径
+│   │   ├── design_system/   #   catalog、主题、recipes、base CSS 与本地图标
 │   │   ├── html/            #   sanitizer、assembler、Chromium DOM QA 与 fallback
 │   │   ├── export/          #   image-only PPTX 导出
-│   │   ├── llm.py           #   模型调用、prompt 与结构化输出工具
-│   │   └── state.py         #   分区、可序列化的状态 schema
+│   │   └── prompts/         #   六个正式节点提示词
 │   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
 │   ├── llm/                 #   模型接入层: 各 provider 客户端(统一 BaseLLMClient 接口)
 │   ├── rag/  memory/  tools/
@@ -42,6 +44,8 @@ apps/runtime/
 ```
 
 测试统一放在仓库根目录的 `tests/runtime/`。
+
+Deck 内部依赖保持单向：`service -> pipeline -> {html, export, runtime, workspace, design_system} -> domain`。各子包的 `__init__.py` 不做 eager re-export，避免普通包导入提前加载 LangGraph、Playwright 或形成初始化循环。
 
 ## 分层约定
 

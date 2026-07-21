@@ -1,16 +1,16 @@
 import pytest
 
-from core.deck.design.catalog import get_html_theme
+from core.deck.design_system.catalog import get_html_theme
 from core.deck.pipeline.generation import (
     _assert_content_source_safe,
     _content_contract_diagnostics,
 )
-from core.deck.helpers import extract_number_tokens
+from core.deck.domain.text import extract_number_tokens
 from core.deck.html.assembler import HTMLAssembler
 from core.deck.html.icons import icon_registry
 from core.deck.html.sanitizer import sanitize_css, sanitize_html_fragment
-from core.deck.llm import StructuredOutputError
-from core.deck.schemas import ContentBlock, DeckBrief, SlideContentSpec, SlidePlan, SourceFact
+from core.deck.runtime.llm import StructuredOutputError
+from core.deck.domain.schemas import ContentBlock, DeckBrief, SlideContentSpec, SlidePlan, SourceFact
 
 
 def _codes(result) -> set[str]:

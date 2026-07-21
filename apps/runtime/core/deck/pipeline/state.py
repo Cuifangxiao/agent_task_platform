@@ -1,4 +1,4 @@
-"""Serializable state contract for the HTML-first LangGraph workflow.
+"""Serializable LangGraph state for the HTML-first pipeline.
 
 Only request data, schema-validated dictionaries, diagnostics, and lightweight
 artifact metadata enter the graph state. Browser objects, LLM clients, file

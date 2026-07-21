@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from core.deck.paths import DeckProjectPaths
-from core.deck.sources import persist_normalized_source_bundle
+from core.deck.workspace.paths import DeckProjectPaths
+from core.deck.workspace.sources import persist_normalized_source_bundle
 
 
 def test_deck_project_paths_separate_author_sources_previews_and_delivery(tmp_path):

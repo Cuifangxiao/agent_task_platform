@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from core.deck.design.catalog import DESIGN_SYSTEM_DIR
+from core.deck.design_system.catalog import DESIGN_SYSTEM_DIR
 
 
 REGISTRY_PATH = DESIGN_SYSTEM_DIR / "icons" / "lucide.json"

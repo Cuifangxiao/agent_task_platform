@@ -1,6 +1,6 @@
 """Validated themes and page recipes for the HTML deck pipeline."""
 
-from core.deck.design.catalog import (
+from core.deck.design_system.catalog import (
     DESIGN_SYSTEM_DIR,
     RecipeDefinition,
     ThemeDefinition,

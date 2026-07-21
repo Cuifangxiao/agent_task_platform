@@ -4,7 +4,7 @@ from core.deck.pipeline.graph import (
     _route_after_advance,
     _route_after_validation,
 )
-from core.deck.state import DeckGraphState
+from core.deck.pipeline.state import DeckGraphState
 
 
 FLAT_EDGES = {

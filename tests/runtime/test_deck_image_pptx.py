@@ -6,7 +6,7 @@ from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-from core.deck.errors import ExportError
+from core.deck.domain.errors import ExportError
 from core.deck.export.image_pptx import ImagePptxExporter
 
 

@@ -30,7 +30,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 if str(RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNTIME_ROOT))
 
-from core.deck.design.catalog import get_html_theme  # noqa: E402
+from core.deck.design_system.catalog import get_html_theme  # noqa: E402
 from core.deck.export.image_pptx import ImagePptxExporter  # noqa: E402
 from core.deck.html.assembler import HTMLAssembler  # noqa: E402
 from core.deck.html.fallback import build_fallback_html_spec  # noqa: E402
@@ -39,7 +39,7 @@ from core.deck.html.browser import (  # noqa: E402
     RenderProfile,
     SecureBrowserSession,
 )
-from core.deck.schemas import (  # noqa: E402
+from core.deck.domain.schemas import (  # noqa: E402
     PROMPT_VERSION,
     RENDERER_VERSION,
     ContentBlock,

@@ -6,7 +6,7 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from api import ppt_agent_pb2
-from core.deck.contract import (
+from core.deck.domain.contracts import (
     AgentEvent,
     EventType,
     GeneratePptInput,

@@ -1,4 +1,4 @@
-"""Filesystem contract for self-contained, recoverable deck projects."""
+"""Filesystem layout for self-contained, recoverable deck workspaces."""
 
 from __future__ import annotations
 

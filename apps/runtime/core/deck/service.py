@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from core.deck.contract import (
+from core.deck.domain.contracts import (
     AgentEvent,
     ErrorDetail,
     EventType,
@@ -24,14 +24,14 @@ from core.deck.contract import (
     ResourceRef,
     ResourceType,
 )
-from core.deck.errors import DeckError
-from core.deck.llm import ModelInvocationError
-from core.deck.model_config import build_ppt_llms, describe_model_assignment
-from core.deck.paths import DeckProjectPaths, artifact_dir
+from core.deck.domain.errors import DeckError
+from core.deck.runtime.llm import ModelInvocationError
+from core.deck.runtime.model_config import build_ppt_llms, describe_model_assignment
+from core.deck.workspace.paths import DeckProjectPaths, artifact_dir
 from core.deck.html.browser import SecureBrowserSession
 from core.deck.pipeline.graph import PptGraph
-from core.deck.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
-from core.deck.sources import (
+from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
+from core.deck.workspace.sources import (
     derive_deck_title,
     parse_uploaded_files_with_provenance,
     persist_normalized_source_bundle,

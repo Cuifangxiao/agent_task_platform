@@ -1,4 +1,4 @@
-"""Versioned, serializable contracts for the HTML-first deck pipeline.
+"""Versioned, serializable domain schemas for the HTML-first deck pipeline.
 
 The LangGraph state stores ``model_dump(mode="json")`` dictionaries rather
 than Pydantic instances.  This keeps checkpoints transport-safe while every

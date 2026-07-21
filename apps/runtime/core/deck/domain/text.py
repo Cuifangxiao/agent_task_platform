@@ -1,4 +1,4 @@
-"""Small deterministic helpers shared by concrete agent graphs."""
+"""Small deterministic text and content-boundary helpers."""
 
 from __future__ import annotations
 

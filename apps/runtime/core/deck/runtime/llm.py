@@ -13,10 +13,10 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from core.deck.runtime_metrics import record_model_call, record_retry, record_token_usage
+from core.deck.runtime.metrics import record_model_call, record_retry, record_token_usage
 
 
-PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
+PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
 logger = logging.getLogger(__name__)
 _LLM_LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("deck_llm_log_context", default={})
 StructuredModel = TypeVar("StructuredModel", bound=BaseModel)

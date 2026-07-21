@@ -7,9 +7,9 @@ from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-from core.deck.contract import EventType, PipelineEvent, ResourceType
+from core.deck.domain.contracts import EventType, PipelineEvent, ResourceType
 from core.deck.pipeline.graph import PptGraph
-from core.deck.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
+from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 
 
 SLIDE_ROSTER = (

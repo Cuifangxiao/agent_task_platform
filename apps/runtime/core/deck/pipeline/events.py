@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.deck.contract import (
+from core.deck.domain.contracts import (
     EventType,
     PageDetail,
     PipelineEvent,

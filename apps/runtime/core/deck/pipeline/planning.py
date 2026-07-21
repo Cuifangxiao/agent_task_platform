@@ -10,11 +10,11 @@ from typing import Any
 
 from langgraph.config import get_stream_writer
 
-import core.deck.events as events
-from core.deck.design.catalog import recipe_prompt_manifest
-from core.deck.factuality import qualitative_claims, unsupported_qualitative_claims
-from core.deck.helpers import clamp_slide_count, extract_number_tokens, truncate
-from core.deck.llm import (
+import core.deck.pipeline.events as events
+from core.deck.design_system.catalog import recipe_prompt_manifest
+from core.deck.domain.factuality import qualitative_claims, unsupported_qualitative_claims
+from core.deck.domain.text import clamp_slide_count, extract_number_tokens, truncate
+from core.deck.runtime.llm import (
     ModelInvocationError,
     StructuredOutputError,
     invoke_structured_with_retries,
@@ -22,9 +22,9 @@ from core.deck.llm import (
     load_node_prompt,
     normalize_llm_registry,
 )
-from core.deck.paths import DeckProjectPaths
-from core.deck.runtime_metrics import record_fallback
-from core.deck.schemas import (
+from core.deck.workspace.paths import DeckProjectPaths
+from core.deck.runtime.metrics import record_fallback
+from core.deck.domain.schemas import (
     DeckBrief,
     DeckPlan,
     LayoutFamily,
@@ -33,7 +33,7 @@ from core.deck.schemas import (
     SlideRole,
     SourceFact,
 )
-from core.deck.state import DeckGraphState
+from core.deck.pipeline.state import DeckGraphState
 
 
 SOURCE_TEXT_LIMIT = 60_000

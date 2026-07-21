@@ -14,8 +14,8 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Inches
 
-from core.deck.errors import ExportError
-from core.deck.paths import DeckProjectPaths
+from core.deck.domain.errors import ExportError
+from core.deck.workspace.paths import DeckProjectPaths
 
 
 PAGE_WIDTH = Inches(13.3333333333)

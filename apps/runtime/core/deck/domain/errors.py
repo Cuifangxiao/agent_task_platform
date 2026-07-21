@@ -1,4 +1,4 @@
-"""Deck error hierarchy used at service and pipeline boundaries."""
+"""Deck error hierarchy shared by service, rendering, and export boundaries."""
 
 from __future__ import annotations
 

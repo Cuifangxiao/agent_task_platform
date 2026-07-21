@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.deck.contract import GeneratePptInput, MODEL_NODE_KEYS, ModelConfig
+from core.deck.domain.contracts import GeneratePptInput, MODEL_NODE_KEYS, ModelConfig
 from core.provider.model_utils import provider_config_manager
 
 

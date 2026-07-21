@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from core.deck.design.catalog import get_html_theme
+from core.deck.design_system.catalog import get_html_theme
 from core.deck.html.assembler import HTMLAssembler
 from core.deck.html.fallback import build_fallback_html_spec
 from core.deck.html.browser import (
@@ -11,7 +11,7 @@ from core.deck.html.browser import (
     HTMLBrowserRenderer,
     RenderProfile,
 )
-from core.deck.schemas import (
+from core.deck.domain.schemas import (
     ContentBlock,
     ContentBlockType,
     LayoutFamily,

@@ -6,7 +6,7 @@ import pytest
 
 from api import ppt_agent_pb2
 from config import GrpcServerConfig
-from core.deck.contract import AgentEvent, EventType, PptStage, ResourceRef, ResourceType
+from core.deck.domain.contracts import AgentEvent, EventType, PptStage, ResourceRef, ResourceType
 from handler.ppt_handler import PptHandler, _resource_to_proto, _to_proto
 from server.grpc import GrpcServer, PptAgentServicer, ProviderRuntimeServicer, RUNTIME_ERROR_MESSAGE
 

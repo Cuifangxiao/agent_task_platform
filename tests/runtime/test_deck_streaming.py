@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from core.deck import events
-from core.deck.contract import EventType, GeneratePptInput, PipelineEvent, PptStage, ResourceType
+from core.deck.pipeline import events
+from core.deck.domain.contracts import EventType, GeneratePptInput, PipelineEvent, PptStage, ResourceType
 from core.deck.service import DeckService
 
 

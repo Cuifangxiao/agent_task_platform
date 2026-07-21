@@ -8,9 +8,9 @@ import unicodedata
 from collections import defaultdict
 from typing import Iterable
 
-from core.deck.design.catalog import get_recipe
+from core.deck.design_system.catalog import get_recipe
 from core.deck.html.icons import icon_registry
-from core.deck.schemas import (
+from core.deck.domain.schemas import (
     ContentBlock,
     ContentBlockType,
     HtmlSlideSpec,

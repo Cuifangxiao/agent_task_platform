@@ -1,11 +1,11 @@
 import pytest
 
-from core.deck.design.catalog import get_html_theme
+from core.deck.design_system.catalog import get_html_theme
 from core.deck.html.assembler import HTMLAssembler
-from core.deck.helpers import extract_number_tokens
+from core.deck.domain.text import extract_number_tokens
 from core.deck.html.fallback import _truncate_display_width, build_fallback_html_spec
 from core.deck.html.icons import icon_registry
-from core.deck.schemas import (
+from core.deck.domain.schemas import (
     ContentBlock,
     ContentBlockType,
     LayoutFamily,

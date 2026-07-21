@@ -1,7 +1,7 @@
 import pytest
 
-from core.deck import events
-from core.deck.contract import EventType, PptStage, ResourceType
+from core.deck.pipeline import events
+from core.deck.domain.contracts import EventType, PptStage, ResourceType
 
 
 def test_preview_event_uses_typed_page_and_relative_resources():

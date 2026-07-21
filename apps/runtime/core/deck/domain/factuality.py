@@ -1,4 +1,4 @@
-"""Deterministic red-flag checks for source-sensitive presentation claims.
+"""Deterministic domain rules for source-sensitive presentation claims.
 
 This is intentionally narrower than general fact checking.  It identifies a
 small set of high-risk claim shapes that a presentation model must either copy

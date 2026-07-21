@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from core.deck.llm import StructuredOutputError, invoke_structured_with_retries
+from core.deck.runtime.llm import StructuredOutputError, invoke_structured_with_retries
 
 
 class _Payload(BaseModel):

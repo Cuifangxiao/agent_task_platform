@@ -2,8 +2,8 @@ import hashlib
 
 import pytest
 
-from core.deck.contract import GeneratePptInput, InputResource
-from core.deck.sources import parse_uploaded_files_with_provenance
+from core.deck.domain.contracts import GeneratePptInput, InputResource
+from core.deck.workspace.sources import parse_uploaded_files_with_provenance
 
 
 def _input(*resources: InputResource) -> GeneratePptInput:

@@ -18,11 +18,11 @@ from typing import Any
 
 from langgraph.config import get_stream_writer
 
-import core.deck.events as events
+import core.deck.pipeline.events as events
 from core.deck.export.image_pptx import ImagePptxExporter
-from core.deck.paths import DeckProjectPaths
-from core.deck.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
-from core.deck.state import DeckGraphState
+from core.deck.workspace.paths import DeckProjectPaths
+from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
+from core.deck.pipeline.state import DeckGraphState
 
 
 GENERATION_MANIFEST_SCHEMA = "deck-generation-manifest.v2"

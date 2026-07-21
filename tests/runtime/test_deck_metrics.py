@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 from pydantic import BaseModel, ConfigDict
 
-import core.deck.instrumentation as instrumentation
-from core.deck.llm import invoke_structured_with_retries
-from core.deck.runtime_metrics import begin_node_metrics, end_node_metrics, record_fallback
+import core.deck.pipeline.instrumentation as instrumentation
+from core.deck.runtime.llm import invoke_structured_with_retries
+from core.deck.runtime.metrics import begin_node_metrics, end_node_metrics, record_fallback
 
 
 class RetryingUsageLLM:

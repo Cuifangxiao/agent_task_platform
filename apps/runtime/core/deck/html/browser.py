@@ -15,8 +15,8 @@ from typing import Any
 
 from PIL import Image
 
-from core.deck.errors import RenderError
-from core.deck.schemas import CANVAS_HEIGHT, CANVAS_WIDTH
+from core.deck.domain.errors import RenderError
+from core.deck.domain.schemas import CANVAS_HEIGHT, CANVAS_WIDTH
 
 
 logger = logging.getLogger(__name__)

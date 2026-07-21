@@ -91,7 +91,7 @@ START
 
 ## 3. Schema 与 state
 
-LLM 边界使用 `core/deck/schemas.py` 中的严格 Pydantic schema，默认 `extra="forbid"`。模型输出优先使用 structured output；退化路径也必须是完整 JSON，不从 Markdown fence 或文本子串中猜测 JSON。
+LLM 边界使用 `core/deck/domain/schemas.py` 中的严格 Pydantic schema，默认 `extra="forbid"`。模型输出优先使用 structured output；退化路径也必须是完整 JSON，不从 Markdown fence 或文本子串中猜测 JSON。
 
 | Schema | 职责 |
 |---|---|
@@ -114,7 +114,7 @@ LLM 边界使用 `core/deck/schemas.py` 中的严格 Pydantic schema，默认 `e
 | `html_slide_designer.md` | 从焦点和阅读路径出发构图，完整执行 content、DOM、CSS、SVG、安全和几何合同 |
 | `html_repair.md` | 按诊断优先级和最小改动阶梯修复，不改事实、标题、主题或 layout family |
 
-当前机器可读版本标识为 `deck-state.v2`、`html-deck.v2` 和 `chromium-html.v1`。六个正式节点提示词统一采用岗位合同：输入权威顺序、决策流程、角色级质量门、失败策略和严格输出边界均由 prompt 明确定义。prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/state.py` 将 state 分为七个逻辑区域：
+当前机器可读版本标识为 `deck-state.v2`、`html-deck.v2` 和 `chromium-html.v1`。六个正式节点提示词统一采用岗位合同：输入权威顺序、决策流程、角色级质量门、失败策略和严格输出边界均由 prompt 明确定义。prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/pipeline/state.py` 将 state 分为七个逻辑区域：
 
 - `DeckRunState`：版本、run/request ID 和图内状态；失败终态及错误详情由图外的 service 事件统一发布；
 - `DeckInputState`：用户描述、解析后文本、source chunks、页数、语言和模板偏好；
@@ -315,15 +315,13 @@ docker run --rm -v "$PWD/apps/runtime/config.yaml:/app/config.yaml:ro" deck-runt
 | 位置 | 职责 |
 |---|---|
 | `apps/runtime/core/deck/pipeline/graph.py` | 18 节点根图与两个条件路由 |
-| `apps/runtime/core/deck/schemas.py` | 版本化 Pydantic 边界 schema |
-| `apps/runtime/core/deck/state.py` | 分区、可序列化的 `DeckGraphState` |
-| `apps/runtime/core/deck/pipeline/{planning,design,generation,delivery}.py` | 规划、设计、逐页 HTML 生成与交付节点 |
-| `apps/runtime/core/deck/design/catalog.py` | 主题与 layout recipe 的严格 catalog |
-| `apps/runtime/core/deck/design_system/` | 4 主题、10 recipes、base CSS 和本地图标库 |
+| `apps/runtime/core/deck/domain/` | 传输契约、版本化 Pydantic schema、错误与事实规则 |
+| `apps/runtime/core/deck/pipeline/` | 根图、四阶段节点、state、events 与 instrumentation |
+| `apps/runtime/core/deck/runtime/` | LLM 调用、模型注册、prompt 加载与请求级指标 |
+| `apps/runtime/core/deck/workspace/` | 来源解析与 task-local 产物目录合约 |
+| `apps/runtime/core/deck/design_system/` | 严格 catalog、4 主题、10 recipes、base CSS 和本地图标库 |
 | `apps/runtime/core/deck/html/` | sanitizer、assembler、图标注入、Chromium DOM QA 与 fallback |
-| `apps/runtime/core/deck/factuality.py` | 数字之外的人物、引语、客户与结果类来源守卫 |
 | `apps/runtime/core/deck/export/image_pptx.py` | image-only PPTX 导出与反向校验 |
-| `apps/runtime/core/deck/paths.py` | task-local 产物目录合约 |
 | `apps/runtime/scripts/generate_html_deck_samples.py` | 10-recipe 画廊与三套真实 Chromium 样例 |
 | `apps/runtime/core/deck/service.py` | gRPC 生成入口、资源 hydrate 与终态事件 |
 | `apps/api/internal/modules/pptagent/repository.go` | MySQL run/event 持久化与重启收口 |

@@ -8,8 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from core.deck.contract import GeneratePptInput, InputResource
-from core.deck.paths import DeckProjectPaths
+from core.deck.domain.contracts import GeneratePptInput, InputResource
+from core.deck.workspace.paths import DeckProjectPaths
 from core.tools.document_parser import parse_uploaded_document
 
 MAX_SOURCE_BYTES = 20 * 1024 * 1024

@@ -5,9 +5,9 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 import core.deck.pipeline.delivery as nodes
-from core.deck.contract import EventType, ResourceType
+from core.deck.domain.contracts import EventType, ResourceType
 from core.deck.export.image_pptx import ImagePptxExporter
-from core.deck.paths import DeckProjectPaths
+from core.deck.workspace.paths import DeckProjectPaths
 
 
 def test_delivery_assembles_image_only_pptx_and_reports(tmp_path, monkeypatch):

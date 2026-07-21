@@ -1,4 +1,4 @@
-"""Thread-safe per-node runtime metrics collected from actual model calls."""
+"""Thread-safe per-node metrics collected from actual model calls."""
 
 from __future__ import annotations
 

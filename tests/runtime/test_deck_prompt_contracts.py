@@ -2,8 +2,8 @@ import re
 
 import pytest
 
-from core.deck.llm import load_node_prompt
-from core.deck.schemas import PROMPT_VERSION
+from core.deck.runtime.llm import load_node_prompt
+from core.deck.domain.schemas import PROMPT_VERSION
 
 
 ACTIVE_PROMPTS = (

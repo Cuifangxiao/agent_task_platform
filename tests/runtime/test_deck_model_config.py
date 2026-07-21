@@ -1,6 +1,6 @@
 import pytest
 
-import core.deck.model_config as deck_model_config
+import core.deck.runtime.model_config as deck_model_config
 
 
 def test_build_chat_client_preserves_configured_max_tokens(monkeypatch):

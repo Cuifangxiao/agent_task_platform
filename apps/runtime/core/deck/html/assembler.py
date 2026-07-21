@@ -10,10 +10,10 @@ from pathlib import Path
 
 import html5lib
 
-from core.deck.design.catalog import DESIGN_SYSTEM_DIR
+from core.deck.design_system.catalog import DESIGN_SYSTEM_DIR
 from core.deck.html.icons import IconRegistry, icon_registry
 from core.deck.html.sanitizer import SanitizationDiagnostic, sanitize_css, sanitize_html_fragment
-from core.deck.schemas import DesignSpec
+from core.deck.domain.schemas import DesignSpec
 
 
 BASE_CSS_PATH = DESIGN_SYSTEM_DIR / "base.css"

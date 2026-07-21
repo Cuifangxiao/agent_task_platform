@@ -10,24 +10,24 @@ from typing import Any
 
 from langgraph.config import get_stream_writer
 
-import core.deck.events as events
-from core.deck.design.catalog import (
+import core.deck.pipeline.events as events
+from core.deck.design_system.catalog import (
     ThemeDefinition,
     get_recipe,
     list_html_themes,
     select_html_theme,
 )
-from core.deck.llm import (
+from core.deck.runtime.llm import (
     ModelInvocationError,
     StructuredOutputError,
     invoke_structured_with_retries,
     load_node_prompt,
     normalize_llm_registry,
 )
-from core.deck.paths import DeckProjectPaths
-from core.deck.runtime_metrics import record_fallback
-from core.deck.schemas import DeckBrief, DeckPlan, DesignSpec, PROMPT_VERSION, RENDERER_VERSION
-from core.deck.state import DeckGraphState
+from core.deck.workspace.paths import DeckProjectPaths
+from core.deck.runtime.metrics import record_fallback
+from core.deck.domain.schemas import DeckBrief, DeckPlan, DesignSpec, PROMPT_VERSION, RENDERER_VERSION
+from core.deck.pipeline.state import DeckGraphState
 
 
 class DesignNodes:

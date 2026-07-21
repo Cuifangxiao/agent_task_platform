@@ -13,17 +13,17 @@ from typing import Any
 import html5lib
 from langgraph.config import get_stream_writer
 
-import core.deck.events as events
-from core.deck.design.catalog import get_recipe
-from core.deck.factuality import (
+import core.deck.pipeline.events as events
+from core.deck.design_system.catalog import get_recipe
+from core.deck.domain.factuality import (
     canonical_claim_text as _canonical_claim_text,
     deduplicate_qualitative_claims as _deduplicate_qualitative_claims,
     qualitative_claims as _qualitative_claims,
     unsupported_qualitative_claims,
 )
 from core.deck.html import HTMLAssembler, build_fallback_html_spec, icon_registry
-from core.deck.helpers import extract_number_tokens, truncate
-from core.deck.llm import (
+from core.deck.domain.text import extract_number_tokens, truncate
+from core.deck.runtime.llm import (
     ModelInvocationError,
     StructuredOutputError,
     invoke_structured_with_retries,
@@ -31,14 +31,14 @@ from core.deck.llm import (
     load_node_prompt,
     normalize_llm_registry,
 )
-from core.deck.paths import DeckProjectPaths
+from core.deck.workspace.paths import DeckProjectPaths
 from core.deck.html.browser import (
     BrowserContentError,
     BrowserEnvironmentError,
     HTMLBrowserRenderer,
 )
-from core.deck.runtime_metrics import record_fallback
-from core.deck.schemas import (
+from core.deck.runtime.metrics import record_fallback
+from core.deck.domain.schemas import (
     ContentBlock,
     ContentBlockType,
     DeckBrief,
@@ -55,7 +55,7 @@ from core.deck.schemas import (
     SlideContentSpec,
     SlidePlan,
 )
-from core.deck.state import DeckGraphState
+from core.deck.pipeline.state import DeckGraphState
 
 
 MAX_SEMANTIC_REPAIRS = 2
