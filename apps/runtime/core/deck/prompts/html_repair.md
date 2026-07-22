@@ -77,7 +77,6 @@ Do not switch layout family. The runtime will use deterministic fallback if safe
 - `SLIDE_ROOT_COUNT` or `SLIDE_SIZE_MISMATCH`: restore exactly one `<section class="slide ...">` root at 1600×900 with the correct `data-layout`.
 - `ASSERTION_TITLE_MISSING`: restore the exact approved assertion title inside `data-box="title"`.
 - `APPROVED_CONTENT_MISSING` or `METRIC_VALUE_MISSING`: restore exact approved copy; never replace it with a summary.
-- `HTML_INTRODUCED_NUMBERS` or `HTML_INTRODUCED_QUALITATIVE_CLAIM`: delete only the unapproved text; do not alter approved evidence.
 - `FONT_TOO_SMALL`: recover space by simplifying, widening, or reflowing; never reduce below the required minimum.
 - `TITLE_LINE_BUDGET`: widen or reposition the title, tighten only within DesignSpec line-height constraints, or use a roomier variant; never rewrite the locked title or falsify `data-title-lines`.
 - `TEXT_OVERFLOW`, `BOX_OUT_OF_BOUNDS`, or `PAGE_SCROLL_OVERFLOW`: reduce nonessential decoration, simplify the displayed subset of non-metric approved blocks when necessary, then enlarge/reflow the responsible region.

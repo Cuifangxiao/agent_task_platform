@@ -38,11 +38,11 @@ def test_render_skips_speculative_capture_when_sanitizer_already_reported_error(
             raise AssertionError("existing errors must use measurement without capture")
 
     diagnostic = {
-        "code": "HTML_INTRODUCED_NUMBERS",
+        "code": "ASSERTION_TITLE_MISSING",
         "category": "content",
         "severity": "error",
         "selector": "",
-        "message": "HTML introduced an unsupported number.",
+        "message": "HTML omitted the approved title.",
         "suggestion": "Use only approved content.",
         "box": {},
         "details": {},

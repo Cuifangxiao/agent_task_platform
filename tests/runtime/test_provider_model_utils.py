@@ -89,6 +89,7 @@ def test_kimi_catalog_exposes_k3_and_k2_6_with_model_specific_thinking():
     assert k2_6.type == "multimodal"
     assert k2_6.default_parameters["thinking"] == "enabled"
     assert provider.structured_output_method_for(k3) == "json_schema"
+    assert provider.structured_output_method_for(k2_6) == "json_schema"
 
 
 def test_model_can_override_provider_structured_output_method(tmp_path):
@@ -356,9 +357,11 @@ def test_kimi_uses_compatible_endpoint_and_model_specific_thinking(monkeypatch):
     )
 
     assert k3_client.kwargs["base_url"] == "https://api.moonshot.cn/v1"
+    assert k3_client.kwargs["metadata"]["structured_output_method"] == "json_schema"
     assert k3_client.kwargs["reasoning_effort"] == "high"
     assert "temperature" not in k3_client.kwargs
     assert k2_client.kwargs["extra_body"] == {
         "thinking": {"type": "disabled"}
     }
+    assert k2_client.kwargs["metadata"]["structured_output_method"] == "json_schema"
     assert "temperature" not in k2_client.kwargs

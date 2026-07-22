@@ -21,8 +21,7 @@ from core.deck.agents.preprocessor.schema import (
     SceneNarrativeTemplate,
 )
 from core.deck.agents.preprocessor.templates import SceneTemplateRepository
-from core.deck.domain.factuality import qualitative_claims, unsupported_qualitative_claims
-from core.deck.domain.text import extract_number_tokens, truncate
+from core.deck.domain.text import truncate
 from core.deck.pipeline.instrumentation import instrument_node
 from core.deck.pipeline.state import DeckGraphState
 from core.deck.runtime.llm import (
@@ -180,9 +179,6 @@ def create_logical_outline(
         attempts=3,
     )
     outline = outline.model_copy(update={"title": meta.title})
-    outline_values = _outline_values(outline)
-    _assert_source_safe_numbers(outline_values, meta.source_text)
-    _assert_source_safe_qualitative_claims(outline_values, meta)
 
     project = _project_paths(output_dir, state)
     if project is not None:
@@ -231,9 +227,6 @@ def map_outline_to_pages(
         )
         page_plan = page_plan.model_copy(update={"scene": template.scene})
         _validate_page_plan(page_plan, template, target_page_count)
-        page_topics = [page.topic for page in page_plan.pages]
-        _assert_source_safe_numbers(page_topics, meta.source_text)
-        _assert_source_safe_qualitative_claims(page_topics, meta)
     except StructuredOutputError as exc:
         record_fallback()
         writer(
@@ -406,47 +399,6 @@ def _validate_page_plan(
     if missing:
         values = ", ".join(sorted(category.value for category in missing))
         raise StructuredOutputError(f"PagePlan is missing mandatory page categories: {values}")
-
-
-def _outline_values(outline: LogicalOutline) -> list[str]:
-    return [
-        outline.title,
-        outline.central_thesis,
-        outline.narrative_strategy,
-        *(
-            value
-            for section in outline.sections
-            for value in (
-                section.title,
-                section.purpose,
-                *(item for topic in section.topics for item in (topic.title, topic.intent, *topic.key_points)),
-            )
-        ),
-    ]
-
-
-def _assert_source_safe_numbers(values: list[str], source_text: str) -> None:
-    allowed = set(extract_number_tokens(source_text))
-    used = {token for value in values for token in extract_number_tokens(value)}
-    unknown = sorted(used - allowed)
-    if unknown:
-        raise StructuredOutputError(
-            "preprocessor introduced source-free numeric tokens: " + ", ".join(unknown[:8])
-        )
-
-
-def _assert_source_safe_qualitative_claims(values: list[str], meta: GlobalMeta) -> None:
-    claims = [claim for value in values for claim in qualitative_claims(value)]
-    if not claims:
-        return
-    unsupported = unsupported_qualitative_claims(claims, [meta.title, meta.source_text])
-    if unsupported:
-        summary = "; ".join(
-            f"{kind}={truncate(value, 100)!r}" for kind, value in unsupported[:4]
-        )
-        raise StructuredOutputError(
-            "preprocessor introduced unsupported qualitative factual claims: " + summary
-        )
 
 
 def _project_paths(output_dir: Path | None, state: DeckGraphState) -> DeckProjectPaths | None:

@@ -16,12 +16,6 @@ from langgraph.config import get_stream_writer
 
 import core.deck.pipeline.events as events
 from core.deck.design_system.catalog import get_recipe
-from core.deck.domain.factuality import (
-    canonical_claim_text as _canonical_claim_text,
-    deduplicate_qualitative_claims as _deduplicate_qualitative_claims,
-    qualitative_claims as _qualitative_claims,
-    unsupported_qualitative_claims,
-)
 from core.deck.html import HTMLAssembler, build_fallback_html_spec, icon_registry
 from core.deck.domain.text import extract_number_tokens, truncate
 from core.deck.runtime.llm import (
@@ -221,13 +215,12 @@ def generate_slide_content(state: DeckGraphState, llm_registry: dict[str, Any]) 
             }
         )
         content = _normalize_content_for_recipe(content, brief, slide)
-        _assert_content_source_safe(content, brief, slide)
     except StructuredOutputError as exc:
         record_fallback()
         get_stream_writer()(
             events.stage_progress(
                 "generate_slide_content",
-                f"Page {slide.index} content schema failed; used source-safe fallback: {exc}",
+                f"Page {slide.index} content schema failed; used deterministic fallback: {exc}",
                 {"status": "warning", "index": slide.index, "total": len(plan.slides)},
             )
         )
@@ -836,64 +829,6 @@ def _normalize_content_for_recipe(
     )
 
 
-def _assert_content_source_safe(
-    content: SlideContentSpec,
-    brief: DeckBrief,
-    slide: SlidePlan,
-) -> None:
-    source = "\n".join(
-        [
-            brief.source_text,
-            slide.assertion_title,
-            slide.takeaway,
-        ]
-    )
-    allowed = set(extract_number_tokens(source))
-    values: list[str] = [*content.emphasis]
-    for block in content.content_blocks:
-        values.extend([block.text, *block.items, block.value])
-        if block.type not in {
-            ContentBlockType.PROCESS_STEP,
-            ContentBlockType.TIMELINE_ITEM,
-            ContentBlockType.ICON_LABEL,
-        }:
-            values.append(block.label)
-    used = {token for value in values for token in extract_number_tokens(value)}
-    unknown = sorted(used - allowed)
-    if unknown:
-        raise StructuredOutputError(
-            "SlideContentSpec introduced source-free numeric tokens: " + ", ".join(unknown[:8])
-        )
-
-    risky_claims = _content_qualitative_claims(content)
-    if not risky_claims:
-        return
-
-    unsupported = unsupported_qualitative_claims(risky_claims, [brief.source_text])
-    if unsupported:
-        summary = "; ".join(
-            f"{kind}={truncate(value, 100)!r}" for kind, value in unsupported[:4]
-        )
-        raise StructuredOutputError(
-            "SlideContentSpec introduced unsupported qualitative factual claims: " + summary
-        )
-
-
-def _content_qualitative_claims(content: SlideContentSpec) -> list[tuple[str, str]]:
-    claims: list[tuple[str, str]] = []
-    for value in [
-        content.assertion_title,
-        content.takeaway,
-        *content.emphasis,
-    ]:
-        claims.extend(_qualitative_claims(value))
-    for block in content.content_blocks:
-        is_quote = block.type is ContentBlockType.QUOTE
-        for value in [block.text, *block.items, block.label, block.value]:
-            claims.extend(_qualitative_claims(value, force_quote=is_quote))
-    return _deduplicate_qualitative_claims(claims)
-
-
 def _neighbor_plans(plan: DeckPlan, index: int) -> dict[str, Any]:
     offset = index - 1
     return {
@@ -966,9 +901,9 @@ def _content_contract_diagnostics(
     """Reject visually plausible HTML that changes or drops page semantics.
 
     Browser geometry cannot determine whether the model preserved the approved
-    title, content, or evidence.  The deterministic recipe may deliberately
-    truncate prose to fit, so strict text coverage applies to model-authored
-    HTML while the numeric evidence check applies to both paths.
+    title, content, or evidence. The deterministic recipe may deliberately
+    truncate prose to fit, so strict text coverage applies only to model-authored
+    HTML.
     """
 
     parser = html5lib.HTMLParser(namespaceHTMLElements=False)
@@ -978,45 +913,9 @@ def _content_contract_diagnostics(
     rendered_canonical = _canonical_visible_text(rendered)
     diagnostics: list[dict[str, Any]] = []
 
-    authoritative_values = [
-        slide.assertion_title,
-        slide.takeaway,
-        content.assertion_title,
-        content.takeaway,
-        *content.emphasis,
-    ]
     body_candidates: list[str] = [content.takeaway]
     for block in content.content_blocks:
-        authoritative_values.extend(
-            [block.text, *block.items, block.label, block.value, str(block.ordinal or "")]
-        )
         body_candidates.extend([block.text, *block.items, block.label, block.value])
-
-    allowed_numbers = {
-        *extract_number_tokens("\n".join(authoritative_values)),
-        str(slide.index),
-        f"{slide.index:02d}",
-    }
-    if slide.layout_family in {
-        LayoutFamily.THREE_POINTS,
-        LayoutFamily.PROCESS,
-        LayoutFamily.TIMELINE,
-    }:
-        for ordinal in range(1, get_recipe(slide.layout_family).capacity.items + 1):
-            allowed_numbers.update({str(ordinal), f"{ordinal:02d}"})
-    used_numbers = set(extract_number_tokens(rendered))
-    unexpected_numbers = sorted(used_numbers - allowed_numbers)
-    if unexpected_numbers:
-        diagnostics.append(
-            _content_diagnostic(
-                "HTML_INTRODUCED_NUMBERS",
-                "Rendered HTML introduced numeric claims absent from SlideContentSpec.",
-                "Use only source-backed numbers already present in the approved content.",
-                {"unexpected_numbers": unexpected_numbers[:12]},
-            )
-        )
-
-    diagnostics.extend(_html_qualitative_claim_diagnostics(root, content))
 
     if fallback_used:
         return diagnostics
@@ -1052,7 +951,7 @@ def _content_contract_diagnostics(
             diagnostics.append(
                 _content_diagnostic(
                     "METRIC_VALUE_MISSING",
-                    "A source-backed metric value is absent from the rendered HTML.",
+                    "An approved metric value is absent from the rendered HTML.",
                     "Restore the exact approved metric value.",
                     {"value": block.value},
                 )
@@ -1063,184 +962,6 @@ def _content_contract_diagnostics(
 def _canonical_visible_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     return re.sub(r"\s+", "", normalized)
-
-
-def _html_qualitative_claim_diagnostics(
-    root: Any,
-    content: SlideContentSpec,
-) -> list[dict[str, Any]]:
-    approved = _content_qualitative_claims(content)
-    rendered_claims: list[tuple[str, str]] = []
-    semantic_tags = {
-        "p",
-        "li",
-        "q",
-        "cite",
-        "blockquote",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-    }
-
-    for element in root.iter():
-        tag = str(getattr(element, "tag", "")).rsplit("}", 1)[-1].casefold()
-        if tag == "blockquote":
-            quote = " ".join(str(item).strip() for item in element.itertext() if str(item).strip())
-            rendered_claims.extend(_qualitative_claims(quote, force_quote=True))
-
-    rendered_claims.extend(
-        _container_local_text_qualitative_claims(root, approved, semantic_tags)
-    )
-
-    # Inline markup can split a single assertion across several text nodes.
-    # Reconstruct only semantic text containers, and only when their individual
-    # nodes did not already expose a claim, to avoid treating a whole layout box
-    # as one synthetic sentence.
-    for element in root.iter():
-        tag = str(getattr(element, "tag", "")).rsplit("}", 1)[-1].casefold()
-        if tag not in semantic_tags and not getattr(element, "attrib", {}).get("data-box"):
-            continue
-        parts = [str(item).strip() for item in element.itertext() if str(item).strip()]
-        if len(parts) < 2 or any(_qualitative_claims(part) for part in parts):
-            continue
-        rendered_claims.extend(_qualitative_claims(" ".join(parts)))
-
-    # A designer can distribute one visual sentence across sibling elements
-    # so that no individual text node contains a red-flag pattern. Rebuild
-    # short adjacent windows under the same parent and evaluate the sentence
-    # the audience actually reads.
-    rendered_claims.extend(_adjacent_sibling_qualitative_claims(root))
-
-    introduced = [
-        (kind, value)
-        for kind, value in _deduplicate_qualitative_claims(rendered_claims)
-        if not _rendered_claim_is_approved(kind, value, approved)
-    ]
-    if not introduced:
-        return []
-    return [
-        _content_diagnostic(
-            "HTML_INTRODUCED_QUALITATIVE_CLAIM",
-            "Rendered HTML introduced a quote or factual claim absent from SlideContentSpec.",
-            "Use only the approved quote, attribution, customer case, and realized-outcome text.",
-            {
-                "claims": [
-                    {"kind": kind, "text": truncate(value, 160)}
-                    for kind, value in introduced[:8]
-                ]
-            },
-        )
-    ]
-
-
-def _container_local_text_qualitative_claims(
-    root: Any,
-    approved: list[tuple[str, str]],
-    semantic_tags: set[str],
-) -> list[tuple[str, str]]:
-    approved_values = {
-        _canonical_claim_text(value)
-        for _kind, value in approved
-        if _canonical_claim_text(value)
-    }
-    container_values: dict[int, str] = {}
-    claims: list[tuple[str, str]] = []
-
-    def container_canonical(element: Any) -> str:
-        key = id(element)
-        if key not in container_values:
-            visible = " ".join(
-                str(item).strip() for item in element.itertext() if str(item).strip()
-            )
-            container_values[key] = _canonical_claim_text(visible)
-        return container_values[key]
-
-    def add_text(value: str, container: Any | None) -> None:
-        text = str(value or "").strip()
-        if not text:
-            return
-        container_value = container_canonical(container) if container is not None else ""
-        container_is_exact = bool(container_value and container_value in approved_values)
-        for kind, claim in _qualitative_claims(text):
-            canonical = _canonical_claim_text(claim)
-            if (
-                container_is_exact
-                and canonical
-                and canonical != container_value
-                and canonical in container_value
-            ):
-                continue
-            claims.append((kind, claim))
-
-    def visit(element: Any, container: Any | None) -> None:
-        tag = str(getattr(element, "tag", "")).rsplit("}", 1)[-1].casefold()
-        current = (
-            element
-            if tag in semantic_tags or getattr(element, "attrib", {}).get("data-box")
-            else container
-        )
-        add_text(str(getattr(element, "text", "") or ""), current)
-        for child in list(element):
-            visit(child, current)
-            add_text(str(getattr(child, "tail", "") or ""), current)
-
-    visit(root, None)
-    return claims
-
-
-def _adjacent_sibling_qualitative_claims(root: Any) -> list[tuple[str, str]]:
-    claims: list[tuple[str, str]] = []
-    for parent in root.iter():
-        parts: list[str] = []
-        parent_text = str(getattr(parent, "text", "") or "").strip()
-        if parent_text:
-            parts.append(parent_text)
-        for child in list(parent):
-            child_text = " ".join(
-                str(item).strip() for item in child.itertext() if str(item).strip()
-            )
-            if child_text:
-                parts.append(child_text)
-            tail = str(getattr(child, "tail", "") or "").strip()
-            if tail:
-                parts.append(tail)
-        if len(parts) < 2:
-            continue
-        for width in (2, 3):
-            for offset in range(0, len(parts) - width + 1):
-                window = parts[offset : offset + width]
-                if any(_qualitative_claims(part) for part in window):
-                    continue
-                claims.extend(_qualitative_claims(" ".join(window)))
-    return claims
-
-
-def _rendered_claim_is_approved(
-    kind: str,
-    value: str,
-    approved: list[tuple[str, str]],
-) -> bool:
-    canonical = _canonical_claim_text(value)
-    if not canonical:
-        return True
-
-    if kind == "quote":
-        approved_quotes = {
-            _canonical_claim_text(item)
-            for approved_kind, item in approved
-            if approved_kind == "quote" and _canonical_claim_text(item)
-        }
-        return canonical in approved_quotes
-
-    approved_values = {
-        _canonical_claim_text(item)
-        for _approved_kind, item in approved
-        if _canonical_claim_text(item)
-    }
-    return canonical in approved_values
 
 
 def _content_diagnostic(

@@ -77,3 +77,21 @@ def test_structured_output_uses_method_from_managed_model_metadata():
 
     assert result.value == 7
     assert llm.structured_output_kwargs == {"method": "json_mode"}
+
+
+def test_structured_output_passes_json_schema_method_to_model():
+    llm = _StructuredLLM(
+        [{"value": 7}],
+        metadata={"provider": "kimi", "structured_output_method": "json_schema"},
+    )
+
+    result = invoke_structured_with_retries(
+        llm,
+        _Payload,
+        system="Return a payload.",
+        user="A value is required.",
+        attempts=1,
+    )
+
+    assert result.value == 7
+    assert llm.structured_output_kwargs == {"method": "json_schema"}
