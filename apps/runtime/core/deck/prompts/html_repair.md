@@ -11,7 +11,7 @@ The user message is one JSON object containing:
 
 - `design_spec`: immutable global design tokens;
 - `slide_plan`: locked slide identity, assertion, role, family, and rhythm;
-- `slide_content`: approved copy, facts, numbers, source refs, and icons;
+- `slide_content`: approved copy, source-backed numbers, and icons;
 - `current_html_spec`: the complete current implementation to repair;
 - `diagnostics`: the authoritative list of detected failures and suggestions;
 - `recipe`: the layout family's variants, capacity, and geometry contract;

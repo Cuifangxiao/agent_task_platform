@@ -1,6 +1,9 @@
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 from PIL import Image
@@ -92,25 +95,37 @@ class OutlineLLM:
 class ContentLLM:
     def __init__(self) -> None:
         self.slide_ids: list[str] = []
+        self._lock = threading.Lock()
+        self._inflight = 0
+        self.max_inflight = 0
 
     def invoke(self, messages):
-        payload = _human_payload(messages)
-        slide = payload["current_slide"]
-        self.slide_ids.append(slide["slide_id"])
-        return {
-            "slide_id": slide["slide_id"],
-            "assertion_title": slide["assertion_title"],
-            "takeaway": slide["takeaway"],
-            "content_blocks": [
-                {
-                    "type": "paragraph",
-                    "text": slide["takeaway"],
-                }
-            ],
-            "emphasis": [slide["takeaway"]],
-            "suggested_icon_keys": [],
-            "source_refs": [],
-        }
+        with self._lock:
+            self._inflight += 1
+            self.max_inflight = max(self.max_inflight, self._inflight)
+        try:
+            # A short overlap window makes Send concurrency observable without
+            # making the integration test materially slower.
+            time.sleep(0.02)
+            payload = _human_payload(messages)
+            slide = payload["current_slide"]
+            self.slide_ids.append(slide["slide_id"])
+            return {
+                "slide_id": slide["slide_id"],
+                "assertion_title": slide["assertion_title"],
+                "takeaway": slide["takeaway"],
+                "content_blocks": [
+                    {
+                        "type": "paragraph",
+                        "text": slide["takeaway"],
+                    }
+                ],
+                "emphasis": [slide["takeaway"]],
+                "suggested_icon_keys": [],
+            }
+        finally:
+            with self._lock:
+                self._inflight -= 1
 
 
 class DesignerLLM:
@@ -118,6 +133,8 @@ class DesignerLLM:
         self.initial_calls: list[str] = []
         self.repair_calls: list[tuple[str, int]] = []
         self.repair_icon_shortlists: list[list[str]] = []
+        self.layout_preferences: dict[str, dict] = {}
+        self.previous_compositions: dict[str, list[dict]] = {}
 
     def invoke(self, messages):
         payload = _human_payload(messages)
@@ -132,6 +149,8 @@ class DesignerLLM:
         else:
             slide = payload["current_slide"]
             self.initial_calls.append(slide["slide_id"])
+            self.layout_preferences[slide["slide_id"]] = payload["layout_preference"]
+            self.previous_compositions[slide["slide_id"]] = payload["previous_compositions"]
             if slide["slide_id"] == "s03":
                 marker = "repair-once"
             elif slide["slide_id"] == "s05":
@@ -146,9 +165,16 @@ class DeterministicBrowserRenderer:
 
     def __init__(self) -> None:
         self.measure_markers: list[str] = []
+        self.rendered_pages: list[int] = []
         self.captured_pages: list[int] = []
 
-    def measure(self, document: str, *, font_families):
+    def measure_and_capture(
+        self,
+        document: str,
+        png_path: Path,
+        *,
+        font_families,
+    ):
         del font_families
         marker = next(
             (
@@ -178,19 +204,26 @@ class DeterministicBrowserRenderer:
                     "details": {"marker": marker},
                 },
             )
-        return SimpleNamespace(diagnostics=diagnostics)
-
-    def capture(self, document: str, png_path: Path, *, font_families):
-        del font_families
-        assert "repair-once" not in document
-        assert "always-invalid" not in document
-        page = int(Path(png_path).stem.rsplit("-", 1)[-1])
+        page = int(Path(png_path).name.split(".")[1].rsplit("-", 1)[-1])
+        self.rendered_pages.append(page)
+        captured_png = None
+        if diagnostics:
+            return SimpleNamespace(
+                measurement=SimpleNamespace(diagnostics=diagnostics),
+                captured_png=captured_png,
+            )
         self.captured_pages.append(page)
         color = (20 + page * 11, 40 + page * 7, 70 + page * 5)
         image = Image.new("RGB", (3200, 1800), color)
         image.save(png_path, format="PNG")
         digest = hashlib.sha256(Path(png_path).read_bytes()).hexdigest()
-        return SimpleNamespace(path=Path(png_path), sha256=digest)
+        return SimpleNamespace(
+            measurement=SimpleNamespace(diagnostics=diagnostics),
+            captured_png=SimpleNamespace(path=Path(png_path), sha256=digest),
+        )
+
+    def capture(self, *_args, **_kwargs):
+        raise AssertionError("capture must reuse the speculative PNG without loading HTML again")
 
     def metadata(self, *, font_families):
         return {
@@ -249,7 +282,7 @@ def _initial_state(output_root: Path, request_id: str) -> dict:
     }
 
 
-def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_path):
+def test_parallel_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_path):
     brief = BriefLLM()
     outline = OutlineLLM()
     content = ContentLLM()
@@ -287,16 +320,18 @@ def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_
     assert page_events_saw_global_contract and all(page_events_saw_global_contract)
     assert brief.calls == 1
     assert outline.calls == 1
-    assert content.slide_ids == [f"s{index:02d}" for index in range(1, 9)]
-    assert designer.initial_calls == [f"s{index:02d}" for index in range(1, 9)]
-    assert designer.repair_calls == [("s03", 1), ("s05", 1), ("s05", 2)]
+    assert content.max_inflight >= 2
+    expected_slide_ids = [f"s{index:02d}" for index in range(1, 9)]
+    assert sorted(content.slide_ids) == expected_slide_ids
+    assert sorted(designer.initial_calls) == expected_slide_ids
+    assert sorted(designer.repair_calls) == [("s03", 1), ("s05", 1), ("s05", 2)]
     assert len(designer.repair_icon_shortlists) == 3
     assert all(len(keys) <= 12 for keys in designer.repair_icon_shortlists)
 
+    assert [event.progress.current for event in previews] == list(range(1, 9))
+    previews = sorted(previews, key=lambda event: event.page.page_index)
     assert [event.page.page_index for event in previews] == list(range(1, 9))
-    assert [event.page.page_id for event in previews] == [
-        f"s{index:02d}" for index in range(1, 9)
-    ]
+    assert [event.page.page_id for event in previews] == expected_slide_ids
     assert len({event.event_id for event in previews}) == 8
     assert all(event.event_id and event.revision for event in previews)
     assert [event.resources[0].relative_path for event in previews] == [
@@ -316,6 +351,23 @@ def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_
     assert [item["slide_id"] for item in completed] == [
         f"s{index:02d}" for index in range(1, 9)
     ]
+    assert [
+        designer.layout_preferences[slide_id]["layout_variant"]
+        for slide_id in expected_slide_ids
+    ] == [
+        "offset_orbit",
+        "text_left_signal_right",
+        "numbered_axis",
+        "before_after",
+        "centered",
+        "horizontal_flow",
+        "horizontal_axis",
+        "answer_field",
+    ]
+    assert [
+        len(designer.previous_compositions[slide_id])
+        for slide_id in expected_slide_ids
+    ] == [0, 1, 2, 3, 4, 4, 4, 4]
     assert [event.revision for event in previews] == [
         item["artifact_hash"] for item in completed
     ]
@@ -324,9 +376,13 @@ def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_
     assert completed[4]["repair_attempts"] == 2
     assert completed[4]["fallback_used"] is True
     assert all(len(item["preview_hash"]) == 64 for item in completed)
-    assert browser.captured_pages == list(range(1, 9))
+    assert Counter(browser.rendered_pages) == Counter(
+        {1: 1, 2: 1, 3: 2, 4: 1, 5: 4, 6: 1, 7: 1, 8: 1}
+    )
+    assert Counter(browser.captured_pages) == Counter(range(1, 9))
 
     project = tmp_path / "html-graph-eight"
+    assert not list(project.rglob("*.speculative.png"))
     for index, item in enumerate(completed, start=1):
         preview = project / item["preview_path"]
         assert preview.is_file()
@@ -343,6 +399,10 @@ def test_flat_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_
     assert [item["slide_id"] for item in export_manifest["slides"]] == [
         f"s{index:02d}" for index in range(1, 9)
     ]
+    slide_artifacts = json.loads(
+        (project / "reports" / "slide-artifacts.json").read_text(encoding="utf-8")
+    )
+    assert [item["slide_id"] for item in slide_artifacts["slides"]] == expected_slide_ids
 
     presentation = Presentation(latest_state["artifact_path"])
     assert len(presentation.slides) == 8

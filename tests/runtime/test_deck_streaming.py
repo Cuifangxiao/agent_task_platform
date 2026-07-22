@@ -114,7 +114,7 @@ def test_service_failure_is_the_only_terminal_and_is_last(monkeypatch, tmp_path)
 
 def test_service_builds_fresh_graph_and_browser_session_for_each_request(monkeypatch, tmp_path):
     class TrackingBrowserSession:
-        def __init__(self):
+        def __init__(self, *_args):
             self.closed = False
 
         def close(self):
@@ -131,7 +131,7 @@ def test_service_builds_fresh_graph_and_browser_session_for_each_request(monkeyp
         "core.deck.service.build_ppt_llms",
         lambda inp: {"task_id": inp.task_id},
     )
-    monkeypatch.setattr("core.deck.service.SecureBrowserSession", TrackingBrowserSession)
+    monkeypatch.setattr("core.deck.service.SecureBrowserSessionPool", TrackingBrowserSession)
     service = DeckService(graph_factory=factory)
 
     first = list(
@@ -158,7 +158,7 @@ def test_service_builds_fresh_graph_and_browser_session_for_each_request(monkeyp
 
 def test_service_uses_ppt_graph_when_no_factory_is_injected(monkeypatch, tmp_path):
     class TrackingBrowserSession:
-        def __init__(self):
+        def __init__(self, *_args):
             self.closed = False
 
         def close(self):
@@ -172,7 +172,7 @@ def test_service_uses_ppt_graph_when_no_factory_is_injected(monkeypatch, tmp_pat
 
     monkeypatch.setenv("DECK_ARTIFACTS_DIR", str(tmp_path))
     monkeypatch.setattr("core.deck.service.build_ppt_llms", lambda _inp: {"brief": object()})
-    monkeypatch.setattr("core.deck.service.SecureBrowserSession", TrackingBrowserSession)
+    monkeypatch.setattr("core.deck.service.SecureBrowserSessionPool", TrackingBrowserSession)
     monkeypatch.setattr("core.deck.service.PptGraph", ppt_graph)
 
     result = list(

@@ -420,11 +420,17 @@ function phaseProgress(events: readonly PptAgentEvent[]) {
   let total = 0
   let percent = 0
   for (const event of events) {
-    const pageCurrent = Math.max(0, Number(event.page?.page_index) || 0)
     const pageTotal = Math.max(0, Number(event.page?.page_count) || 0)
     const progressCurrent = Math.max(0, Number(event.progress?.current) || 0)
     const progressTotal = Math.max(0, Number(event.progress?.total) || 0)
-    current = Math.max(current, pageCurrent, progressCurrent)
+    // In parallel generation page_index identifies a page; it is not the
+    // number of completed pages. Only preview-ready page events advance the
+    // generation counter; other phases retain their ordinary progress values.
+    const isPageProgress = pageTotal > 0 || event.progress?.unit === 'page'
+    current = Math.max(
+      current,
+      isPageProgress && event.type !== 'ARTIFACT_READY' ? 0 : progressCurrent,
+    )
     total = Math.max(total, pageTotal, progressTotal)
     if (typeof event.progress?.percent === 'number' && Number.isFinite(event.progress.percent)) {
       percent = Math.max(percent, event.progress.percent)

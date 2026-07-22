@@ -1,0 +1,77 @@
+name: gemini
+display_name: Google Gemini
+description: Google Gemini API through its OpenAI-compatible endpoint.
+manager: gemini
+sdk: langchain_openai
+default_base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+supports_custom_base_url: true
+structured_output_method: json_schema
+credential_test:
+  enabled: true
+  model: gemini-2.5-flash
+  prompt: Reply with OK.
+  max_tokens: 8
+models:
+  - id: gemini-3.5-flash
+    model_name: gemini-3.5-flash
+    display_name: Gemini 3.5 Flash
+    type: multimodal
+    parameters:
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        description: Controls how much reasoning the model performs before answering.
+        default: medium
+        options: [low, medium, high]
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 65536
+  - id: gemini-2.5-flash
+    model_name: gemini-2.5-flash
+    display_name: Gemini 2.5 Flash
+    type: multimodal
+    parameters:
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        description: Use none to disable thinking, or increase the effort for harder tasks.
+        default: medium
+        options: [none, low, medium, high]
+      - name: temperature
+        display_name: Temperature
+        type: number
+        default: 0.7
+        min: 0
+        max: 2
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 65536
+  - id: gemini-2.5-pro
+    model_name: gemini-2.5-pro
+    display_name: Gemini 2.5 Pro
+    type: multimodal
+    parameters:
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        description: Controls the reasoning budget; thinking cannot be disabled for this model.
+        default: high
+        options: [low, medium, high]
+      - name: temperature
+        display_name: Temperature
+        type: number
+        default: 0.7
+        min: 0
+        max: 2
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 65536

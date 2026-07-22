@@ -28,8 +28,8 @@ from core.deck.domain.errors import DeckError
 from core.deck.runtime.llm import ModelInvocationError
 from core.deck.runtime.model_config import build_ppt_llms, describe_model_assignment
 from core.deck.workspace.paths import DeckProjectPaths, artifact_dir
-from core.deck.html.browser import SecureBrowserSession
-from core.deck.pipeline.graph import PptGraph
+from core.deck.html.browser import SecureBrowserSessionPool, resolve_browser_concurrency
+from core.deck.pipeline.graph import PptGraph, resolve_slide_concurrency
 from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 from core.deck.workspace.sources import (
     parse_uploaded_files_with_provenance,
@@ -51,7 +51,7 @@ class DeckService:
         sequence = 0
         last_stage = PptStage.PREPARING
         started_at = time.perf_counter()
-        browser_session: SecureBrowserSession | None = None
+        browser_session: SecureBrowserSessionPool | None = None
 
         try:
             description = inp.description.strip()
@@ -71,7 +71,10 @@ class DeckService:
             )
 
             llms = build_ppt_llms(inp)
-            browser_session = SecureBrowserSession()
+            slide_concurrency = resolve_slide_concurrency()
+            browser_session = SecureBrowserSessionPool(
+                resolve_browser_concurrency(slide_concurrency=slide_concurrency)
+            )
             uploaded_file_names, uploaded_file_text, source_chunks = parse_uploaded_files_with_provenance(inp)
             persist_normalized_source_bundle(
                 project.root,

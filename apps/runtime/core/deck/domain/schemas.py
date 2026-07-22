@@ -14,9 +14,9 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-SCHEMA_VERSION = "deck-state.v2"
-PROMPT_VERSION = "html-deck.v3"
-RENDERER_VERSION = "chromium-html.v1"
+SCHEMA_VERSION = "deck-state.v4"
+PROMPT_VERSION = "html-deck.v5"
+RENDERER_VERSION = "chromium-html.v2"
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 900
 
@@ -26,24 +26,12 @@ ContentItemText = Annotated[str, Field(min_length=1, max_length=180)]
 EmphasisText = Annotated[str, Field(min_length=1, max_length=180)]
 ContentRequirement = Annotated[str, Field(min_length=1, max_length=240)]
 IconKey = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
-SourceReference = Annotated[str, Field(min_length=1, max_length=64)]
 
 
 class StrictModel(BaseModel):
     """Base model used at untrusted model-output boundaries."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-
-class SourceFact(StrictModel):
-    fact_id: str = Field(min_length=1, max_length=64)
-    statement: str = Field(min_length=1, max_length=500)
-    value: str = Field(default="", max_length=80)
-    unit: str = Field(default="", max_length=40)
-    source_file: str = Field(default="", max_length=255)
-    page: int = Field(default=0, ge=0)
-    section: str = Field(default="", max_length=255)
-    source_excerpt: str = Field(default="", max_length=800)
 
 
 class DeckBriefInterpretation(StrictModel):
@@ -71,10 +59,10 @@ class DeckBriefInterpretation(StrictModel):
 
 
 class DeckBrief(DeckBriefInterpretation):
-    """Validated brief plus runtime-owned source context for downstream nodes."""
+    """Validated brief plus runtime-owned source text for downstream nodes."""
 
-    # Defaults remain on the persisted runtime schema so older checkpoints can
-    # still be loaded. The model-output schema above requires every field.
+    # Runtime-carried fields retain defaults; the model-output schema above
+    # requires every model-owned field.
     language: str = Field(default="zh-CN", min_length=2, max_length=20)
     slide_count: int = Field(default=8, ge=1, le=30)
     aspect_ratio: Literal["16:9"] = "16:9"
@@ -84,7 +72,6 @@ class DeckBrief(DeckBriefInterpretation):
     style_preferences: list[PreferenceText] = Field(default_factory=list, max_length=8)
     source_mode: Literal["general_knowledge", "source_grounded"] = "general_knowledge"
     source_text: str = Field(default="", max_length=60_000)
-    facts: list[SourceFact] = Field(default_factory=list, max_length=200)
 
 
 class SlideRole(str, Enum):
@@ -269,7 +256,6 @@ class SlideContentSpec(StrictModel):
     content_blocks: list[ContentBlock] = Field(min_length=1, max_length=10)
     emphasis: list[EmphasisText] = Field(default_factory=list, max_length=6)
     suggested_icon_keys: list[IconKey] = Field(default_factory=list, max_length=8)
-    source_refs: list[SourceReference] = Field(default_factory=list, max_length=20)
 
 
 class HtmlSlideSpec(StrictModel):
@@ -367,7 +353,6 @@ __all__ = [
     "SlideContentSpec",
     "SlidePlan",
     "SlideRole",
-    "SourceFact",
     "SpacingSpec",
     "TypeToken",
     "TypographySpec",

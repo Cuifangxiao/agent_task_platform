@@ -1,0 +1,48 @@
+name: kimi
+display_name: Kimi
+description: Moonshot AI Kimi API through its OpenAI-compatible endpoint.
+manager: kimi
+sdk: langchain_openai
+default_base_url: https://api.moonshot.cn/v1
+supports_custom_base_url: true
+structured_output_method: json_schema
+credential_test:
+  enabled: true
+  model: kimi-k2.6
+  prompt: Reply with OK.
+  max_tokens: 64
+models:
+  - id: kimi-k3
+    model_name: kimi-k3
+    display_name: Kimi K3
+    type: multimodal
+    parameters:
+      - name: reasoning_effort
+        display_name: Reasoning effort
+        type: enum
+        description: K3 always thinks; choose how much reasoning it performs before answering.
+        default: max
+        options: [low, high, max]
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 1048576
+  - id: kimi-k2.6
+    model_name: kimi-k2.6
+    display_name: Kimi K2.6
+    type: multimodal
+    parameters:
+      - name: thinking
+        display_name: Thinking mode
+        type: enum
+        description: Enables or disables reasoning before the final answer.
+        default: enabled
+        options: [enabled, disabled]
+      - name: max_tokens
+        display_name: Max tokens
+        type: integer
+        default: 4096
+        min: 1
+        max: 32768

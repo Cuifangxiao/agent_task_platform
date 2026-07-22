@@ -10,7 +10,7 @@ export const MODEL_TYPE_OPTIONS: ReadonlyArray<{
   { value: 'image', label: '生图模型', description: '根据提示词生成或编辑图片' },
 ]
 
-export type ProviderBrand = 'openai' | 'qwen' | 'deepseek' | 'generic'
+export type ProviderBrand = 'openai' | 'qwen' | 'deepseek' | 'gemini' | 'kimi' | 'generic'
 
 export function normalizeModelType(value: unknown): ModelType {
   return value === 'multimodal' || value === 'image' ? value : 'text'
@@ -54,6 +54,8 @@ export function resolveProviderBrand(provider: string): ProviderBrand {
   if (value.includes('openai') || value === 'azure') return 'openai'
   if (value.includes('qwen') || value.includes('dashscope') || value.includes('tongyi')) return 'qwen'
   if (value.includes('deepseek')) return 'deepseek'
+  if (value.includes('gemini')) return 'gemini'
+  if (value.includes('kimi') || value.includes('moonshot')) return 'kimi'
   return 'generic'
 }
 
@@ -62,5 +64,7 @@ export function providerBrandLabel(provider: string) {
   if (brand === 'openai') return 'OpenAI'
   if (brand === 'qwen') return 'Qwen'
   if (brand === 'deepseek') return 'DeepSeek'
+  if (brand === 'gemini') return 'Google Gemini'
+  if (brand === 'kimi') return 'Kimi'
   return provider || '自定义厂商'
 }

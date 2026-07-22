@@ -6,6 +6,7 @@ from pydantic import ValidationError
 import core.deck.pipeline.planning as planning_nodes
 from core.deck.pipeline.design import _has_readable_contrast, _lock_approved_identity
 from core.deck.pipeline.planning import _deterministic_plan
+from core.deck.pipeline.generation import _normalize_content_for_recipe
 from core.deck.design_system.catalog import (
     get_html_theme,
     list_html_themes,
@@ -65,7 +66,6 @@ def _brief(
         style_preferences=[],
         source_mode="general_knowledge",
         source_text=source_text,
-        facts=[],
     )
 
 
@@ -153,7 +153,7 @@ def test_catalog_rejects_removed_or_unknown_theme_ids():
     assert design.typography.body.size_px >= 21
 
 
-def test_brief_model_boundary_excludes_runtime_owned_source_and_facts():
+def test_brief_model_boundary_excludes_runtime_owned_source_and_legacy_facts():
     model_payload = {
         "topic": "Transformer 入门",
         "audience": "刚接触深度学习的学生",
@@ -173,16 +173,20 @@ def test_brief_model_boundary_excludes_runtime_owned_source_and_facts():
 
     interpreted = DeckBriefInterpretation.model_validate(model_payload)
     brief = DeckBrief.model_validate(
-        {**interpreted.model_dump(mode="json"), "source_text": "原始请求", "facts": []}
+        {**interpreted.model_dump(mode="json"), "source_text": "原始请求"}
     )
     plan = _deterministic_plan(brief)
 
     assert brief.slide_count == 3
-    assert brief.facts == []
+    assert "facts" not in brief.model_dump(mode="json")
     assert len(plan.slides) == 3
     with pytest.raises(ValidationError, match="Extra inputs"):
         DeckBriefInterpretation.model_validate(
             {**model_payload, "source_text": "模型不应输出", "facts": []}
+        )
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        DeckBrief.model_validate(
+            {**brief.model_dump(mode="json"), "facts": []}
         )
     missing_language = dict(model_payload)
     missing_language.pop("language")
@@ -294,7 +298,7 @@ def test_normalize_request_uses_first_model_to_interpret_raw_chinese_request(mon
     assert normalized_brief.slide_count == 3
     assert normalized_brief.audience == "刚接触深度学习的学生"
     assert normalized_brief.source_text == description
-    assert normalized_brief.facts == []
+    assert "facts" not in normalized["brief"]
     assert brief_llm.calls == 1
 
     payload = json.loads(brief_llm.messages[0][-1][1])
@@ -305,6 +309,36 @@ def test_normalize_request_uses_first_model_to_interpret_raw_chinese_request(mon
     assert "deterministic_brief" not in payload
     assert "facts" not in payload
     assert emitted[-1].message == "Deck brief ready"
+
+
+def test_plan_contract_keeps_key_metric_without_a_fact_ledger():
+    brief = _brief(slide_count=3)
+    plan = _deterministic_plan(brief)
+    slides = list(plan.slides)
+    slides[1] = slides[1].model_copy(update={"layout_family": LayoutFamily.KEY_METRIC})
+
+    locked = planning_nodes._lock_plan_contract(plan.model_copy(update={"slides": slides}), brief)
+
+    assert locked.slides[1].layout_family is LayoutFamily.KEY_METRIC
+
+
+@pytest.mark.parametrize("metric_value", ["35%", "复购"])
+def test_metric_block_survives_recipe_normalization_without_a_fact_ledger(metric_value):
+    brief = _brief(source_text=f"The approved measure is {metric_value}.")
+    slide = _slide(2, SlideRole.EVIDENCE, LayoutFamily.KEY_METRIC)
+    content = SlideContentSpec(
+        slide_id=slide.slide_id,
+        assertion_title=slide.assertion_title,
+        takeaway=slide.takeaway,
+        content_blocks=[
+            ContentBlock(type="metric", value=metric_value, label="Approved measure")
+        ],
+    )
+
+    normalized = _normalize_content_for_recipe(content, brief, slide)
+
+    assert normalized.content_blocks[0].type.value == "metric"
+    assert normalized.content_blocks[0].value == metric_value
 
 
 def test_normalize_request_requires_a_brief_model(monkeypatch):

@@ -178,7 +178,6 @@ def _content_for(slide: SampleSlide, slide_id: str) -> SlideContentSpec:
         takeaway=slide.takeaway,
         content_blocks=blocks,
         suggested_icon_keys=list(slide.icons),
-        source_refs=[],
     )
 
 

@@ -11,6 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Queue
 from typing import Any
 
 from PIL import Image
@@ -86,8 +87,16 @@ class CapturedPNG:
     elapsed_ms: int
 
 
+@dataclass(frozen=True)
+class BrowserRender:
+    """DOM measurement and speculative PNG produced from one loaded page."""
+
+    measurement: BrowserMeasurement
+    captured_png: CapturedPNG | None
+
+
 class SecureBrowserSession:
-    """Request-scoped browser owner; every render gets a fresh context/page."""
+    """Request-scoped browser owner; every render attempt gets one fresh page."""
 
     def __init__(self) -> None:
         self._playwright: Any = None
@@ -95,6 +104,7 @@ class SecureBrowserSession:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="deck-html-browser")
         self._state_lock = threading.Lock()
         self._closed = False
+        self._font_status_cache: dict[str, bool] = {}
 
     def measure(
         self,
@@ -114,6 +124,22 @@ class SecureBrowserSession:
         font_families: tuple[str, ...],
     ) -> CapturedPNG:
         return self._dispatch(self._capture, document, png_path, profile, font_families)
+
+    def measure_and_capture(
+        self,
+        document: str,
+        png_path: Path,
+        *,
+        profile: RenderProfile,
+        font_families: tuple[str, ...],
+    ) -> BrowserRender:
+        return self._dispatch(
+            self._measure_and_capture,
+            document,
+            png_path,
+            profile,
+            font_families,
+        )
 
     def describe(
         self,
@@ -144,30 +170,12 @@ class SecureBrowserSession:
         context, page, blocked = self._open_page(profile)
         try:
             self._load_stable_document(page, document, profile)
-            fonts = self._font_status(page, font_families)
-            result = page.evaluate(DOM_MEASUREMENT_JS, profile.to_js())
-            diagnostics = list(result.get("diagnostics") or []) if isinstance(result, dict) else []
-            for family, available in fonts.items():
-                if not available:
-                    diagnostics.append(
-                        {
-                            "code": "FONT_UNAVAILABLE",
-                            "category": "environment",
-                            "severity": "error",
-                            "selector": "",
-                            "message": f"Approved font is unavailable in Chromium: {family}",
-                            "suggestion": "Install the configured font in the renderer image and restart the runtime.",
-                            "box": {},
-                            "details": {"font_family": family},
-                        }
-                    )
-            return BrowserMeasurement(
-                diagnostics=tuple(diagnostics),
-                blocked_requests=tuple(blocked),
-                fonts=fonts,
-                dom_nodes=int(result.get("domNodes") or 0) if isinstance(result, dict) else 0,
-                svg_paths=int(result.get("svgPaths") or 0) if isinstance(result, dict) else 0,
-                elapsed_ms=round((time.perf_counter() - started) * 1000),
+            return self._measure_page(
+                page,
+                blocked,
+                profile,
+                font_families,
+                started=started,
             )
         except BrowserContentError:
             raise
@@ -175,6 +183,70 @@ class SecureBrowserSession:
             raise _classify_browser_exception(exc) from exc
         finally:
             context.close()
+
+    def _measure_and_capture(
+        self,
+        document: str,
+        png_path: Path,
+        profile: RenderProfile,
+        font_families: tuple[str, ...],
+    ) -> BrowserRender:
+        started = time.perf_counter()
+        context, page, blocked = self._open_page(profile)
+        try:
+            self._load_stable_document(page, document, profile)
+            measurement = self._measure_page(
+                page,
+                blocked,
+                profile,
+                font_families,
+                started=started,
+            )
+            captured = None
+            if not _has_error_diagnostic(measurement.diagnostics):
+                captured = self._screenshot_page(page, png_path, profile, started=started)
+            return BrowserRender(measurement=measurement, captured_png=captured)
+        except BrowserContentError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            raise _classify_browser_exception(exc) from exc
+        finally:
+            context.close()
+
+    def _measure_page(
+        self,
+        page: Any,
+        blocked: list[str],
+        profile: RenderProfile,
+        font_families: tuple[str, ...],
+        *,
+        started: float,
+    ) -> BrowserMeasurement:
+        fonts = self._font_status(page, font_families)
+        result = page.evaluate(DOM_MEASUREMENT_JS, profile.to_js())
+        diagnostics = list(result.get("diagnostics") or []) if isinstance(result, dict) else []
+        for family, available in fonts.items():
+            if not available:
+                diagnostics.append(
+                    {
+                        "code": "FONT_UNAVAILABLE",
+                        "category": "environment",
+                        "severity": "error",
+                        "selector": "",
+                        "message": f"Approved font is unavailable in Chromium: {family}",
+                        "suggestion": "Install the configured font in the renderer image and restart the runtime.",
+                        "box": {},
+                        "details": {"font_family": family},
+                    }
+                )
+        return BrowserMeasurement(
+            diagnostics=tuple(diagnostics),
+            blocked_requests=tuple(blocked),
+            fonts=fonts,
+            dom_nodes=int(result.get("domNodes") or 0) if isinstance(result, dict) else 0,
+            svg_paths=int(result.get("svgPaths") or 0) if isinstance(result, dict) else 0,
+            elapsed_ms=round((time.perf_counter() - started) * 1000),
+        )
 
     def _capture(
         self,
@@ -185,8 +257,6 @@ class SecureBrowserSession:
     ) -> CapturedPNG:
         started = time.perf_counter()
         context, page, _blocked = self._open_page(profile)
-        png_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = png_path.with_name(f".{png_path.stem}.{os.getpid()}.tmp.png")
         try:
             self._load_stable_document(page, document, profile)
             fonts = self._font_status(page, font_families)
@@ -201,8 +271,26 @@ class SecureBrowserSession:
             ]
             if errors:
                 raise BrowserContentError(f"page changed before capture: {errors[0].get('code', 'DOM_INVALID')}")
-            locator = page.locator(".slide")
-            locator.screenshot(
+            return self._screenshot_page(page, png_path, profile, started=started)
+        except (BrowserContentError, BrowserEnvironmentError):
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            raise _classify_browser_exception(exc) from exc
+        finally:
+            context.close()
+
+    @staticmethod
+    def _screenshot_page(
+        page: Any,
+        png_path: Path,
+        profile: RenderProfile,
+        *,
+        started: float,
+    ) -> CapturedPNG:
+        png_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = png_path.with_name(f".{png_path.stem}.{os.getpid()}.tmp.png")
+        try:
+            page.locator(".slide").screenshot(
                 path=str(temporary),
                 animations="disabled",
                 caret="hide",
@@ -220,13 +308,8 @@ class SecureBrowserSession:
                 opaque=opaque,
                 elapsed_ms=round((time.perf_counter() - started) * 1000),
             )
-        except (BrowserContentError, BrowserEnvironmentError):
-            raise
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            raise _classify_browser_exception(exc) from exc
         finally:
             temporary.unlink(missing_ok=True)
-            context.close()
 
     def _open_page(self, profile: RenderProfile) -> tuple[Any, Any, list[str]]:
         browser = self._get_browser()
@@ -270,7 +353,7 @@ class SecureBrowserSession:
             "font_families": list(dict.fromkeys(family for family in font_families if family)),
             "font_contract_version": os.getenv("DECK_FONT_BUNDLE_VERSION", "system-fonts.v1"),
             "network_policy": "block-all",
-            "browser_context": "fresh-per-operation",
+            "browser_context": "fresh-per-render-attempt",
         }
 
     @staticmethod
@@ -286,8 +369,7 @@ class SecureBrowserSession:
             }"""
         )
 
-    @staticmethod
-    def _font_status(page: Any, font_families: tuple[str, ...]) -> dict[str, bool]:
+    def _font_status(self, page: Any, font_families: tuple[str, ...]) -> dict[str, bool]:
         # FontFaceSet.check() can return true for a missing system family when
         # Chromium silently uses fallback.  Compare canvas metrics against a
         # guaranteed-missing family with the same generic fallback instead.
@@ -305,11 +387,11 @@ class SecureBrowserSession:
           return Math.abs(requestedWidth - fallbackWidth) > 0.25;
         }
         """
-        return {
-            family: bool(page.evaluate(probe, family))
-            for family in dict.fromkeys(font_families)
-            if family
-        }
+        requested = tuple(dict.fromkeys(family for family in font_families if family))
+        for family in requested:
+            if family not in self._font_status_cache:
+                self._font_status_cache[family] = bool(page.evaluate(probe, family))
+        return {family: self._font_status_cache[family] for family in requested}
 
     def _get_browser(self) -> Any:
         if self._browser is not None:
@@ -354,10 +436,130 @@ class SecureBrowserSession:
                 logger.debug("failed to stop Playwright", exc_info=True)
 
 
+DEFAULT_BROWSER_CONCURRENCY = 3
+
+
+def resolve_browser_concurrency(
+    value: int | None = None,
+    *,
+    slide_concurrency: int = 30,
+) -> int:
+    """Resolve a resource-safe Chromium pool size for parallel slide work."""
+
+    raw: Any = value if value is not None else os.getenv(
+        "DECK_BROWSER_CONCURRENCY",
+        str(DEFAULT_BROWSER_CONCURRENCY),
+    )
+    try:
+        resolved = int(raw)
+    except (TypeError, ValueError):
+        resolved = DEFAULT_BROWSER_CONCURRENCY
+    return max(1, min(30, max(1, int(slide_concurrency)), resolved))
+
+
+class SecureBrowserSessionPool:
+    """Bounded pool of thread-affine Playwright sessions for slide fan-out."""
+
+    def __init__(
+        self,
+        parallelism: int = DEFAULT_BROWSER_CONCURRENCY,
+        *,
+        session_factory: Any = SecureBrowserSession,
+    ) -> None:
+        self.parallelism = max(1, min(30, int(parallelism)))
+        self._sessions = tuple(session_factory() for _ in range(self.parallelism))
+        self._available: Queue[SecureBrowserSession] = Queue(maxsize=self.parallelism)
+        for session in self._sessions:
+            self._available.put(session)
+        self._state_lock = threading.Lock()
+        self._closed = False
+
+    def measure(
+        self,
+        document: str,
+        *,
+        profile: RenderProfile,
+        font_families: tuple[str, ...],
+    ) -> BrowserMeasurement:
+        return self._dispatch(
+            "measure",
+            document,
+            profile=profile,
+            font_families=font_families,
+        )
+
+    def capture(
+        self,
+        document: str,
+        png_path: Path,
+        *,
+        profile: RenderProfile,
+        font_families: tuple[str, ...],
+    ) -> CapturedPNG:
+        return self._dispatch(
+            "capture",
+            document,
+            png_path,
+            profile=profile,
+            font_families=font_families,
+        )
+
+    def measure_and_capture(
+        self,
+        document: str,
+        png_path: Path,
+        *,
+        profile: RenderProfile,
+        font_families: tuple[str, ...],
+    ) -> BrowserRender:
+        return self._dispatch(
+            "measure_and_capture",
+            document,
+            png_path,
+            profile=profile,
+            font_families=font_families,
+        )
+
+    def describe(
+        self,
+        *,
+        profile: RenderProfile,
+        font_families: tuple[str, ...],
+    ) -> dict[str, Any]:
+        return self._dispatch(
+            "describe",
+            profile=profile,
+            font_families=font_families,
+        )
+
+    def close(self) -> None:
+        with self._state_lock:
+            if self._closed:
+                return
+            self._closed = True
+        with ThreadPoolExecutor(
+            max_workers=self.parallelism,
+            thread_name_prefix="deck-html-browser-close",
+        ) as executor:
+            futures = [executor.submit(session.close) for session in self._sessions]
+            for future in futures:
+                future.result()
+
+    def _dispatch(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        with self._state_lock:
+            if self._closed:
+                raise BrowserEnvironmentError("browser session pool is closed")
+        session = self._available.get()
+        try:
+            return getattr(session, method)(*args, **kwargs)
+        finally:
+            self._available.put(session)
+
+
 class HTMLBrowserRenderer:
     def __init__(
         self,
-        session: SecureBrowserSession | None = None,
+        session: SecureBrowserSession | SecureBrowserSessionPool | None = None,
         *,
         profile: RenderProfile | None = None,
     ) -> None:
@@ -370,6 +572,20 @@ class HTMLBrowserRenderer:
 
     def capture(self, document: str, png_path: Path, *, font_families: tuple[str, ...]) -> CapturedPNG:
         return self.session.capture(document, png_path, profile=self.profile, font_families=font_families)
+
+    def measure_and_capture(
+        self,
+        document: str,
+        png_path: Path,
+        *,
+        font_families: tuple[str, ...],
+    ) -> BrowserRender:
+        return self.session.measure_and_capture(
+            document,
+            png_path,
+            profile=self.profile,
+            font_families=font_families,
+        )
 
     def metadata(self, *, font_families: tuple[str, ...]) -> dict[str, Any]:
         return self.session.describe(profile=self.profile, font_families=font_families)
@@ -403,6 +619,13 @@ def _validate_png(path: Path, profile: RenderProfile) -> tuple[int, int, bool]:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         raise BrowserEnvironmentError(f"PNG validation failed: {exc}") from exc
+
+
+def _has_error_diagnostic(diagnostics: tuple[dict[str, Any], ...]) -> bool:
+    return any(
+        isinstance(item, dict) and str(item.get("severity") or "").casefold() == "error"
+        for item in diagnostics
+    )
 
 
 def _classify_browser_exception(exc: Exception) -> Exception:
@@ -673,12 +896,16 @@ DOM_MEASUREMENT_JS = r"""
 
 
 __all__ = [
+    "DEFAULT_BROWSER_CONCURRENCY",
     "BrowserContentError",
     "BrowserEnvironmentError",
     "BrowserMeasurement",
+    "BrowserRender",
     "CapturedPNG",
     "DOM_MEASUREMENT_JS",
     "HTMLBrowserRenderer",
     "RenderProfile",
     "SecureBrowserSession",
+    "SecureBrowserSessionPool",
+    "resolve_browser_concurrency",
 ]

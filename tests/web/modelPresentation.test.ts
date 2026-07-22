@@ -32,5 +32,7 @@ test('maps known provider aliases and preserves a generic fallback', () => {
   assert.equal(resolveProviderBrand('openai'), 'openai')
   assert.equal(resolveProviderBrand('DashScope'), 'qwen')
   assert.equal(resolveProviderBrand('deepseek-compatible'), 'deepseek')
+  assert.equal(resolveProviderBrand('gemini'), 'gemini')
+  assert.equal(resolveProviderBrand('Moonshot Kimi'), 'kimi')
   assert.equal(resolveProviderBrand('local-ollama'), 'generic')
 })

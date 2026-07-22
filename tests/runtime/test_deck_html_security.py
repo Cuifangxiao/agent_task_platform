@@ -10,7 +10,7 @@ from core.deck.html.assembler import HTMLAssembler
 from core.deck.html.icons import icon_registry
 from core.deck.html.sanitizer import sanitize_css, sanitize_html_fragment
 from core.deck.runtime.llm import StructuredOutputError
-from core.deck.domain.schemas import ContentBlock, DeckBrief, SlideContentSpec, SlidePlan, SourceFact
+from core.deck.domain.schemas import ContentBlock, DeckBrief, SlideContentSpec, SlidePlan
 
 
 def _codes(result) -> set[str]:
@@ -133,7 +133,6 @@ def test_html_content_contract_rejects_drift_and_invented_numbers():
             ContentBlock(type="metric", value="35%", label="次日留存率"),
             ContentBlock(type="paragraph", text=slide.takeaway),
         ],
-        source_refs=["fact#1"],
     )
 
     faithful = _content_contract_diagnostics(
@@ -175,7 +174,6 @@ def _factuality_slide() -> SlidePlan:
 def _factuality_brief(
     *,
     source_text: str = "Only supplied fact: the product exists.",
-    facts: list[SourceFact] | None = None,
 ) -> DeckBrief:
     return DeckBrief(
         topic="Workflow clarity",
@@ -187,7 +185,6 @@ def _factuality_brief(
         slide_count=2,
         communication_job="Present a concise workflow proposal.",
         source_text=source_text,
-        facts=facts or [],
     )
 
 
@@ -374,14 +371,9 @@ def test_content_guard_rejects_source_with_changed_polarity_or_dropped_caveat(
         )
 
 
-def test_content_guard_requires_referenced_fact_to_support_the_claim():
+def test_content_guard_requires_source_text_to_support_the_claim():
     slide = _factuality_slide()
     claim = "Acme customers adopted the workflow and praised the result."
-    matching_fact = SourceFact(fact_id="fact#1", statement=claim)
-    unrelated_fact = SourceFact(
-        fact_id="fact#2",
-        statement="A documented customer interview is available.",
-    )
     block = ContentBlock(
         type="paragraph",
         text=claim,
@@ -391,17 +383,15 @@ def test_content_guard_requires_referenced_fact_to_support_the_claim():
         assertion_title=slide.assertion_title,
         takeaway=slide.takeaway,
         content_blocks=[block],
-        source_refs=["fact#1"],
     )
-    unrelated = approved.model_copy(update={"source_refs": ["fact#2"]})
-    invalid = approved.model_copy(update={"source_refs": ["fact#missing"]})
-    brief = _factuality_brief(facts=[matching_fact, unrelated_fact])
 
-    _assert_content_source_safe(approved, brief, slide)
+    _assert_content_source_safe(approved, _factuality_brief(source_text=claim), slide)
     with pytest.raises(StructuredOutputError, match="unsupported qualitative factual claims"):
-        _assert_content_source_safe(unrelated, brief, slide)
-    with pytest.raises(StructuredOutputError, match="unsupported qualitative factual claims"):
-        _assert_content_source_safe(invalid, brief, slide)
+        _assert_content_source_safe(
+            approved,
+            _factuality_brief(source_text="A documented customer interview is available."),
+            slide,
+        )
 
 
 def test_content_guard_allows_source_free_headings_and_advisory_prose():
@@ -687,7 +677,6 @@ def test_html_content_contract_accepts_approved_quote():
         assertion_title=slide.assertion_title,
         takeaway=slide.takeaway,
         content_blocks=[ContentBlock(type="quote", text=quote)],
-        source_refs=["fact#1"],
     )
 
     diagnostics = _content_contract_diagnostics(

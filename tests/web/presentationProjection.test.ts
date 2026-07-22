@@ -152,7 +152,7 @@ test('raw stages are projected into a monotonic six-phase user journey', () => {
 
   const phases = projectTaskPhases(events, task)
   assert.deepEqual(phases.map((phase) => phase.status), ['done', 'done', 'done', 'active', 'pending', 'pending'])
-  assert.equal(phases[3]?.pageCurrent, 3)
+  assert.equal(phases[3]?.pageCurrent, 2)
   assert.equal(phases[3]?.pageTotal, 8)
   assert.ok(overallTaskProgress(task, events) > 38)
   assert.ok(overallTaskProgress(task, events) < 90)
@@ -284,9 +284,37 @@ test('page progress updates preserve the message key and creation time while adv
   assert.equal(afterProgress?.createdAt, '2026-07-20T11:01:00Z')
   assert.equal(afterProgress?.updatedAt, '2026-07-20T11:02:00Z')
   assert.equal(afterProgress?.updatedSequence, 11)
-  assert.equal(afterProgress?.progress?.current, 2)
+  assert.equal(afterProgress?.progress?.current, 1)
   assert.match(afterProgress?.content || '', /正在生成第 2\/6 页/)
   assert.equal(afterProgress?.resources?.[0]?.resource_id, 'preview-1')
+})
+
+test('parallel page identity does not inflate completion progress', () => {
+  const task: PptTask = {
+    task_id: 'parallel', status: 'running', stage: 'GENERATING_PAGES', message: '并发生成中',
+  }
+  const events: PptAgentEvent[] = [
+    {
+      task_id: 'parallel', sequence: 1, type: 'STEP_STARTED', stage: 'GENERATING_PAGES',
+      message: 'page 8 started', page: { page_index: 8, page_count: 10 },
+      progress: { current: 0, total: 10, percent: 0, unit: 'page' },
+    },
+    {
+      task_id: 'parallel', sequence: 2, type: 'ARTIFACT_READY', stage: 'GENERATING_PAGES',
+      message: 'page 5 ready', page: { page_index: 5, page_count: 10 },
+      progress: { current: 1, total: 10, percent: 10, unit: 'page' },
+      resources: [{ resource_id: 'preview-5', type: 'PAGE_PREVIEW', name: '5.png', url: '/5.png' }],
+    },
+  ]
+
+  const generate = projectTaskPhases(events, task).find((phase) => phase.id === 'generate')
+  const conversation = projectPresentationConversation(task, events)
+  const pageProgress = conversation.messages.find((message) => message.kind === 'page_progress')
+
+  assert.equal(generate?.pageCurrent, 1)
+  assert.equal(generate?.pageTotal, 10)
+  assert.equal(pageProgress?.progress?.current, 1)
+  assert.equal(pageProgress?.phaseStatus, 'active')
 })
 
 test('terminal success and failure become one stable terminal conversation message', () => {

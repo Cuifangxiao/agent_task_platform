@@ -7,7 +7,7 @@ Agent Task Platform 是一个面向 AI Agent 工作流的多应用项目。目�
 ## 核心能力
 
 - JWT access/refresh token，Redis 会话、refresh token 与 access token 黑名单。
-- Provider 目录、凭据连通性测试、按用户隔离的模型配置，以及文本、多模态、生图三类模型能力分类。
+- Provider 目录、凭据连通性测试、按用户隔离的模型配置，以及文本、多模态、生图三类模型能力分类；内置 OpenAI、DeepSeek、Qwen、Google Gemini 与 Kimi 目录。
 - Agent 定义与节点级模型绑定；节点可覆盖 temperature 和 max tokens。
 - 文本生成 SSE。
 - PPT 持久化 Run：Go 调用 Python gRPC 服务端流，规范化事件先写 MySQL，再通过一条 WebSocket 多路推送多个任务；支持游标重放、取消和本地产物下载。
@@ -92,15 +92,15 @@ flowchart LR
 ```text
 POST 创建任务
   → Go 解析五个模型节点，并在 MySQL 创建 Run/幂等键/同 thread worker guard
-  → Python 先生成完整 DeckPlan/DesignSpec，再逐页生成并清洗 HTML/CSS
-  → 受控 Chromium 执行 DOM QA、有限 repair/fallback，并逐页发送 PNG AgentEvent
+  → Python 先生成完整 DeckPlan/DesignSpec，再通过 Send 并发生成并清洗各页 HTML/CSS
+  → 受控 Chromium session pool 执行 DOM QA、有限 repair/fallback，并按完成顺序发送 PNG AgentEvent
   → Go 校验事件，在同一事务写 Event + Run 快照，提交后通过 WS 广播
   → Go 校验最终 PPTX 存在且 size/hash 匹配，再提交 TASK_COMPLETED
   → worker 退出后释放同 thread guard；终态历史继续保留在 MySQL
 ```
 
 - 使用独立的 `contracts/proto/ppt/ppt_agent.proto` 服务端流协议。
-- Runtime 使用 18 节点扁平 LangGraph；4 套完整主题、10 种版式 recipe 和本地 Lucide 图标共享同一 DesignSpec。
+- Runtime 使用 Send map-reduce LangGraph（全局根图 + 单页生成子图）；4 套完整主题、10 种版式 recipe 和本地 Lucide 图标共享同一 DesignSpec。
 - 每页预览是固定 `3200×1800` PNG；最终 PPTX 每页只有一张全出血图片，因此视觉同源但页内元素不可编辑。
 - PPT 实时链路只使用一条可复用 WebSocket；每个 run 以独立 sequence 游标订阅和重放。
 - `ppt_runs` 保存快照与 worker 生命周期，`ppt_run_events` 保存完整 canonical 事件；API 重启后历史仍可查询和重放。
@@ -176,6 +176,10 @@ apps/runtime/.env.example        -> apps/runtime/.env
 YAML 中包含 Runtime 名称/环境、日志、gRPC host/port/worker 数，以及 `provider_catalog.dir`。Runtime 应从 `apps/runtime` 目录启动，使默认相对路径正确。gRPC 默认只监听 `127.0.0.1`；容器或跨主机部署需要显式改为 `0.0.0.0` 或指定私网地址，并在网络层限制访问。
 
 Provider API Key 由用户模型配置保存到 MySQL，并在调用时经内部 gRPC 传给 Runtime。`.env` 用于 Runtime 级环境变量；`DECK_ARTIFACTS_DIR` 可覆盖产物目录。
+
+Gemini 使用 Google 官方 OpenAI 兼容端点 `https://generativelanguage.googleapis.com/v1beta/openai/`。启动服务后可在“模型管理”中选择 `Google Gemini`，填写从 Google AI Studio 获取的 API Key，并选择目录中的 Gemini 模型；无需为 Gemini 额外安装 Python SDK。
+
+Kimi 使用 Moonshot AI 国内开放平台的 OpenAI 兼容端点 `https://api.moonshot.cn/v1`。在“模型管理”中选择 `Kimi` 并填写 Kimi 开放平台 API Key，即可使用 Kimi K3 或 Kimi K2.6；同样无需额外安装 Python SDK。
 
 本地默认配置下无需设置 `DECK_ARTIFACTS_DIR`：Runtime 从 `apps/runtime` 启动后写入 `apps/runtime/artifacts/decks`，与 API 的默认 `python_agent.artifacts_dir` 一致。若两个进程位于不同容器或主机，必须为它们挂载同一共享存储，并把两个路径分别指向该挂载点。
 

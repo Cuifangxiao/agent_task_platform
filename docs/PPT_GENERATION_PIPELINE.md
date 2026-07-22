@@ -12,7 +12,7 @@ Web
 Go API：鉴权、解析 5 个模型绑定、持久化 run/event、WebSocket 广播
               │ GeneratePpt(request) -> stream AgentEvent
               ▼
-Python Runtime：18 节点扁平 LangGraph -> HTML -> DOM QA -> PNG -> image-only PPTX
+Python Runtime：Send map-reduce LangGraph -> HTML -> DOM QA -> PNG -> image-only PPTX
               │
               ▼
 Go API：ppt_runs + ppt_run_events (MySQL)，TaskHub 仅做热缓存/实时 fan-out
@@ -45,49 +45,30 @@ MySQL 是 run 快照和完整事件日志的真源：
 
 Go 在创建任务前解析 `brief`、`outline`、`style`、`writer`、`designer` 五个模型节点。绑定缺失、模型停用或类型错误会在 worker 启动前拒绝请求。
 
-## 2. 扁平 18 节点 LangGraph
+## 2. Send map-reduce LangGraph
 
-`core/deck/pipeline/graph.py` 将 planning/design/generation/delivery 的关键步骤和条件分支全部放在一张根图中，节点定义顺序为：
+`core/deck/pipeline/graph.py` 将全局 planning/design 与单页生成分成两层。根图包含 8 个节点：`normalize_request -> plan_deck -> select_template -> create_design_spec -> generate_slide -> aggregate_slides -> assemble_image_pptx -> finalize_deck`。`create_design_spec` 完成后通过 LangGraph `Send` 为每个 `SlidePlan` 派发一份隔离 state；`generate_slide` 是含 11 个显式节点的单页子图：
 
-1. `normalize_request`
-2. `plan_deck`
-3. `select_template`
-4. `create_design_spec`
-5. `prepare_slide`
-6. `generate_slide_content`
-7. `generate_slide_html`
-8. `sanitize_and_assemble_html`
-9. `render_html_and_measure_dom`
-10. `validate_dom`
-11. `repair_slide_html`
-12. `build_fallback_html`
-13. `capture_png`
-14. `persist_slide_artifacts`
-15. `emit_slide_preview`
-16. `advance_slide`
-17. `assemble_image_pptx`
-18. `finalize_deck`
+`prepare_slide -> generate_slide_content -> generate_slide_html -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom -> [repair/fallback] -> capture_png -> persist_slide_artifacts -> emit_slide_preview`。
 
-条件路由如下：
+完整路由如下：
 
 ```text
 START
   -> normalize_request -> plan_deck
   -> select_template -> create_design_spec
-  -> prepare_slide -> generate_slide_content -> generate_slide_html
-  -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
-                                                          ├─ valid    -> capture_png
-                                                          ├─ repair   -> repair_slide_html
-                                                          │                 └─> sanitize_and_assemble_html
-                                                          └─ fallback -> build_fallback_html
-                                                                            └─> sanitize_and_assemble_html
-  capture_png -> persist_slide_artifacts -> emit_slide_preview -> advance_slide
-                                                                  ├─ more -> prepare_slide
-                                                                  └─ done -> assemble_image_pptx
-                                                                                -> finalize_deck -> END
+  -> Send(generate_slide, slide_1 .. slide_n)
+       └─ prepare_slide -> writer -> designer -> sanitize -> render/measure
+                                                    ├─ valid -> capture_png
+                                                    ├─ repair -> designer repair -> sanitize
+                                                    └─ fallback -> sanitize
+          -> persist_slide_artifacts -> emit_slide_preview
+  -> aggregate_slides -> assemble_image_pptx -> finalize_deck -> END
 ```
 
-页面严格串行生成，使后一页能参考邻页和最近的构图历史，同时确保每页预览事件按顺序发布。每个 run 创建独立的 `PptGraph`、LLM 依赖和 Chromium session；浏览器对象、LLM client、文件句柄和图片二进制数据都不进入 LangGraph state。
+`plan_deck` 按每个 recipe 的 variants 预分配 `layout_preference`，并把最近 4 页的规划期构图摘要传给 designer，因此各页不再依赖其他页面的实际 `layout_history`。并发分支只向 reducer-backed 的 `completed_slides`、`layout_history` 和 `validation_issues` 写入结果；`aggregate_slides` 在 fan-in 后校验页表完整性并一次性写 manifest。预览按完成顺序实时发布，消费者继续按 `page_index`/`page_id` 定位页面。
+
+默认最多并发 6 个页面，可通过 `DECK_SLIDE_CONCURRENCY=1..30` 调整；Chromium 默认使用 3 个 thread-affine session，可通过 `DECK_BROWSER_CONCURRENCY` 调整，但不会超过页面并发数。每个 run 仍创建独立的 `PptGraph`、LLM 依赖和浏览器 session pool；浏览器对象、LLM client、文件句柄和图片二进制数据都不进入 LangGraph state。
 
 ## 3. Schema 与 state
 
@@ -95,10 +76,10 @@ LLM 边界使用 `core/deck/domain/schemas.py` 中的严格 Pydantic schema，�
 
 | Schema | 职责 |
 |---|---|
-| `DeckBriefInterpretation` / `DeckBrief` | 首个 Brief Agent 直接解释用户原始输入，产出主题、受众、沟通目标、语言、页数、内容要求与 source mode；运行时仅附带原始来源上下文，首步不提取 facts |
+| `DeckBriefInterpretation` / `DeckBrief` | 首个 Brief Agent 直接解释用户原始输入，产出主题、受众、沟通目标、语言、页数、内容要求与 source mode；运行时附带原始来源文本供下游直接校验 |
 | `DeckPlan` / `SlidePlan` | 整套叙事弧、连续的 `s01...` 页面名册、页面角色、结论式标题、布局族和节奏 |
 | `DesignSpec` | 全局主题 ID、色板、中英文字体、字号、间距、形状、图标风格和背景 motif |
-| `SlideContentSpec` | 单页结构化内容块、强调项、候选图标和 `source_refs` |
+| `SlideContentSpec` | 单页结构化内容块、强调项和候选图标；精确主张直接接受 source text 守卫 |
 | `HtmlSlideSpec` | 单页 layout family/variant、构图摘要、HTML body fragment、scoped CSS 和图标 key |
 | `RendererDiagnostic` | `security` / `content` / `environment` 分类，严重度、selector、几何信息与修复建议 |
 | `SlideArtifactMetadata` | 每页 HTML/PNG 路径、内容哈希、渲染环境、模型元数据、repair/fallback 结果 |
@@ -107,21 +88,21 @@ LLM 边界使用 `core/deck/domain/schemas.py` 中的严格 Pydantic schema，�
 
 | Prompt | 核心决策 |
 |---|---|
-| `deck_brief.md` | 直接接收原始用户指令，区分任务命令与真实主题，理解自然语言页数、受众、内容和风格要求，产出可检验的 communication job；不生成 fact ledger |
+| `deck_brief.md` | 直接接收原始用户指令，区分任务命令与真实主题，理解自然语言页数、受众、内容和风格要求，产出可检验的 communication job |
 | `deck_planner.md` | 选择叙事原型，按单页唯一任务分配证据、layout family 与页面节奏 |
 | `design_director.md` | 锁定 catalog token，只细化适配本次叙事的背景、motif 与 density policy |
 | `slide_content.md` | 按 recipe 选择 block 形态并逐项约束来源、限定条件、邻页去重与图标语义 |
 | `html_slide_designer.md` | 从焦点和阅读路径出发构图，完整执行 content、DOM、CSS、SVG、安全和几何合同 |
 | `html_repair.md` | 按诊断优先级和最小改动阶梯修复，不改事实、标题、主题或 layout family |
 
-当前机器可读版本标识为 `deck-state.v2`、`html-deck.v3` 和 `chromium-html.v1`。六个正式节点提示词统一采用岗位合同：输入权威顺序、决策流程、角色级质量门、失败策略和严格输出边界均由 prompt 明确定义。prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/pipeline/state.py` 将 state 分为七个逻辑区域：
+当前机器可读版本标识为 `deck-state.v4`、`html-deck.v5` 和 `chromium-html.v2`。六个正式节点提示词统一采用岗位合同：输入权威顺序、决策流程、角色级质量门、失败策略和严格输出边界均由 prompt 明确定义。prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/pipeline/state.py` 将 state 分为七个逻辑区域：
 
 - `DeckRunState`：版本、run/request ID 和图内状态；失败终态及错误详情由图外的 service 事件统一发布；
 - `DeckInputState`：用户描述、解析后文本、source chunks、页数、语言和模板偏好；
-- `DeckPlanningState`：规范 `brief` 与 `deck_plan`；
+- `DeckPlanningState`：规范 `brief`、`deck_plan` 与预分配的 `layout_preferences`；
 - `DeckDesignState`：选中主题与规范 `design_spec`；page blueprints 和 execution lock 只落盘，不进入 state；
 - `DeckCurrentSlideState`：当前页内容、HTML、清洗结果、诊断、repair 次数和 PNG 元数据；
-- `DeckGenerationState`：以 `slide_id` 为键的 `completed_slides` 幂等映射、构图历史和质量问题；
+- `DeckGenerationState`：通过 reducer 归并的 `completed_slides` 幂等映射、构图历史和质量问题；
 - `DeckOutputState`：最终 PPTX 的 `artifact_path`。
 
 state 中存的 schema 对象都是 `model_dump(mode="json")` 后的可序列化字典。`current_slide_index` 是零基偏移，`SlidePlan.index` 和对外页码是一基。
@@ -153,7 +134,7 @@ LLM 不输出完整文档，只输出一个 `HtmlSlideSpec`：页面 body fragme
 4. 强制 HTML/CSS 长度、DOM node、SVG path、CSS rule/declaration 和 shadow 预算；
 5. 注入不可由模型修改的 `base.css`、`DesignSpec` token 与 CSP 文档壳。
 
-Chromium 渲染配置固定为 `1600×900` CSS px，`deviceScaleFactor=2`，最终 PNG 为 `3200×1800`。每次 measure/capture 都创建新的 browser context 和 page，禁止下载与 service worker，拦截所有网络请求，等待 `document.fonts.ready` 和两帧 `requestAnimationFrame`，并关闭动画、过渡和光标。截图后还会验证尺寸与不透明性。
+Chromium 渲染配置固定为 `1600×900` CSS px，`deviceScaleFactor=2`，最终 PNG 为 `3200×1800`。request-scoped session pool 中每个 Playwright sync session 固定在自己的单线程 executor 上，多个 session 可并行渲染；每次渲染尝试仍创建独立 browser context 和 page。运行时禁止下载与 service worker，拦截所有网络请求，等待 `document.fonts.ready` 和两帧 `requestAnimationFrame`，并关闭动画、过渡和光标。DOM 测量后直接在同一 page 生成投机 PNG；验证失败立即删除，验证成功后 `capture_png` 只校验哈希并原子移动到正式路径，不会再次加载 HTML。截图还会验证尺寸与不透明性，字体 canvas 探测结果按单个 session 和字体族缓存。
 
 DOM QA 至少检查：
 
@@ -164,7 +145,7 @@ DOM QA 至少检查：
 - 封面标题 `66px`、内页标题 `46px`、正文 `21px`、注释 `16px` 的最小字号；
 - title line budget、DOM/SVG/shadow 预算、未解析图标和批准字体是否可用。
 
-几何检查之外，Runtime 还对模型 HTML 做语义守卫：必须保留批准的 assertion title 和至少一个正文内容块；`key_metric` 必须显示原始 metric value；HTML 中出现的数字只能来自 `SlideContentSpec`（页码和步骤序号除外）。人物、引语、客户案例和已经实现的结果属于高风险事实形态：DeckPlan 和 SlideContentSpec 只能逐字复用输入来源，`source_ref` 也必须指向真正包含该陈述的 fact；HTML 设计模型不能在排版阶段新增这类表述。建议、目标、可能性等非事实性框架文案仍可正常生成。这可以阻止“版式看起来正常，但模型偷偷换了标题、数字或事实”的页面进入截图。
+几何检查之外，Runtime 还对模型 HTML 做语义守卫：必须保留批准的 assertion title 和至少一个正文内容块；`key_metric` 必须显示原始 metric value；HTML 中出现的数字只能来自 `SlideContentSpec`（页码和步骤序号除外）。人物、引语、客户案例和已经实现的结果属于高风险事实形态：DeckPlan 和 SlideContentSpec 直接对 runtime 携带的 source text 做来源校验，HTML 设计模型也不能在排版阶段新增这类表述。建议、目标、可能性等非事实性框架文案仍可正常生成。这可以阻止“版式看起来正常，但模型偷偷换了标题、数字或事实”的页面进入截图。
 
 `environment` 类错误（Chromium 缺失、字体不可用、超时、文件系统失败）直接终止任务；`security` 或 `content` 类问题最多触发两轮定向 HTML repair。修复仍失败时，按当前的 10 种 recipe 之一生成确定性 fallback HTML，并再次经过同一清洗和 DOM QA。fallback 也不通过时才将任务置为失败。
 
@@ -305,7 +286,7 @@ docker run --rm -v "$PWD/apps/runtime/config.yaml:/app/config.yaml:ro" deck-runt
 - 只支持 `16:9`，画布固定为 `1600×900` CSS px。
 - 附件会解析为文本和 provenance；上传图片不会进入生成节点，当前没有多模态视觉分析、图片生成或用户图片编排。
 - 没有 LangGraph checkpointer、人工审批、pause/resume 或从中间页续跑；MySQL 事件续传只恢复前端消费，不恢复 Python 图执行。
-- 页面串行生成，尚无多 worker 分页并发。
+- 并发上限需要结合模型供应商限流和部署内存调优；默认页面 6、Chromium 3。
 - PPTX 是 image-only 交付，不支持在 PowerPoint 中编辑文字、图标、图表或版式元素。
 - HTML 不得依赖网络、远程字体、远程图片或 JavaScript；所有资产必须来自受控本地设计系统。
 - MySQL 持久化任务与事件，但最终二进制产物仍依赖共享文件系统，尚无对象存储后端。
@@ -314,7 +295,7 @@ docker run --rm -v "$PWD/apps/runtime/config.yaml:/app/config.yaml:ro" deck-runt
 
 | 位置 | 职责 |
 |---|---|
-| `apps/runtime/core/deck/pipeline/graph.py` | 18 节点根图与两个条件路由 |
+| `apps/runtime/core/deck/pipeline/graph.py` | Send fan-out 根图、单页子图、结果 fan-in 与条件路由 |
 | `apps/runtime/core/deck/domain/` | 传输契约、版本化 Pydantic schema、错误与事实规则 |
 | `apps/runtime/core/deck/pipeline/` | 根图、四阶段节点、state、events 与 instrumentation |
 | `apps/runtime/core/deck/runtime/` | LLM 调用、模型注册、prompt 加载与请求级指标 |

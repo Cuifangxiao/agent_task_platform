@@ -1,34 +1,50 @@
-"""Flat LangGraph assembly for the current HTML-first deck pipeline.
+"""Map-reduce LangGraph assembly for the HTML-first deck pipeline.
 
-The graph deliberately keeps every meaningful authoring and rendering step at
-the root level.  This makes repair/fallback routing, per-slide persistence
-boundaries, and event ordering observable instead of hiding them inside four
-nested graphs.
+Planning and design remain global.  Once the immutable DesignSpec exists, the
+root graph uses ``Send`` to run one explicit authoring subgraph per slide and
+merges reducer-backed results before delivery.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 
 from core.deck.export.image_pptx import ImagePptxExporter
 from core.deck.html import HTMLAssembler
-from core.deck.html.browser import HTMLBrowserRenderer, SecureBrowserSession
+from core.deck.html.browser import (
+    HTMLBrowserRenderer,
+    SecureBrowserSession,
+    SecureBrowserSessionPool,
+    resolve_browser_concurrency,
+)
 from core.deck.pipeline.instrumentation import instrument_node
 from core.deck.pipeline.delivery import DeliveryNodes
 from core.deck.pipeline.design import DesignNodes
 from core.deck.pipeline.generation import GenerationNodes
 from core.deck.pipeline.planning import PlanningNodes
-from core.deck.pipeline.state import DeckGraphState
+from core.deck.pipeline.state import DeckGraphState, SlideGenerationOutput
+from core.deck.domain.schemas import DeckPlan
 
 
-NODE_SEQUENCE = (
+DEFAULT_SLIDE_CONCURRENCY = 6
+
+ROOT_NODE_SEQUENCE = (
     "normalize_request",
     "plan_deck",
     "select_template",
     "create_design_spec",
+    "generate_slide",
+    "aggregate_slides",
+    "assemble_image_pptx",
+    "finalize_deck",
+)
+
+SLIDE_NODE_SEQUENCE = (
     "prepare_slide",
     "generate_slide_content",
     "generate_slide_html",
@@ -40,26 +56,27 @@ NODE_SEQUENCE = (
     "capture_png",
     "persist_slide_artifacts",
     "emit_slide_preview",
-    "advance_slide",
-    "assemble_image_pptx",
-    "finalize_deck",
 )
+
+# Backwards-compatible public name now describes the root graph.  The explicit
+# per-slide sequence is available separately as ``SLIDE_NODE_SEQUENCE``.
+NODE_SEQUENCE = ROOT_NODE_SEQUENCE
 
 
 class PptGraph:
-    """Request-scoped, sequential HTML authoring graph.
+    """Request-scoped, parallel HTML authoring graph.
 
     Browser and LLM clients are dependency objects owned by the request; only
     JSON-serializable dictionaries and artifact paths enter ``DeckGraphState``.
     The optional node-provider arguments keep the graph easy to exercise with
-    deterministic fakes without reintroducing nested phase graphs.
+    deterministic fakes while the single-slide subgraph remains explicit.
     """
 
     def __init__(
         self,
         llms: Any,
         output_dir: Path,
-        browser_session: SecureBrowserSession | None = None,
+        browser_session: SecureBrowserSession | SecureBrowserSessionPool | None = None,
         *,
         assembler: HTMLAssembler | None = None,
         browser_renderer: HTMLBrowserRenderer | None = None,
@@ -69,10 +86,14 @@ class PptGraph:
         generation_nodes: GenerationNodes | None = None,
         delivery_nodes: DeliveryNodes | None = None,
         max_repairs: int = 2,
+        slide_concurrency: int | None = None,
     ) -> None:
         self.output_dir = Path(output_dir)
+        self.slide_concurrency = resolve_slide_concurrency(slide_concurrency)
         self.llm_registry = llms if isinstance(llms, dict) else {}
-        self.browser_session = browser_session or SecureBrowserSession()
+        self.browser_session = browser_session or SecureBrowserSessionPool(
+            resolve_browser_concurrency(slide_concurrency=self.slide_concurrency)
+        )
         self._owns_browser_session = browser_session is None
         self.assembler = assembler or HTMLAssembler()
         self.browser_renderer = browser_renderer or HTMLBrowserRenderer(self.browser_session)
@@ -91,15 +112,14 @@ class PptGraph:
             self.output_dir,
             exporter=self.exporter,
         )
+        self.slide_graph = self.compile_slide_graph()
         self.graph = self.compile_graph()
 
-    def compile_graph(self):
-        builder = StateGraph(DeckGraphState)
+    def compile_slide_graph(self):
+        """Compile the isolated single-slide authoring/repair pipeline."""
+
+        builder = StateGraph(DeckGraphState, output_schema=SlideGenerationOutput)
         node_handlers = {
-            "normalize_request": (self.planning.normalize_request, "brief"),
-            "plan_deck": (self.planning.plan_deck, "outline"),
-            "select_template": (self.design.select_template, "style"),
-            "create_design_spec": (self.design.create_design_spec, "style"),
             "prepare_slide": (self.generation.prepare_slide, ""),
             "generate_slide_content": (self.generation.generate_slide_content, "writer"),
             "generate_slide_html": (self.generation.generate_slide_html, "designer"),
@@ -111,22 +131,15 @@ class PptGraph:
             "capture_png": (self.generation.capture_png, ""),
             "persist_slide_artifacts": (self.generation.persist_slide_artifacts, ""),
             "emit_slide_preview": (self.generation.emit_slide_preview, ""),
-            "advance_slide": (self.generation.advance_slide, ""),
-            "assemble_image_pptx": (self.delivery.assemble_image_pptx, ""),
-            "finalize_deck": (self.delivery.finalize_deck, ""),
         }
-        for name in NODE_SEQUENCE:
+        for name in SLIDE_NODE_SEQUENCE:
             handler, model_key = node_handlers[name]
             builder.add_node(
                 name,
                 instrument_node(name, handler, self.llm_registry, model_key=model_key),
             )
 
-        builder.add_edge(START, "normalize_request")
-        builder.add_edge("normalize_request", "plan_deck")
-        builder.add_edge("plan_deck", "select_template")
-        builder.add_edge("select_template", "create_design_spec")
-        builder.add_edge("create_design_spec", "prepare_slide")
+        builder.add_edge(START, "prepare_slide")
         builder.add_edge("prepare_slide", "generate_slide_content")
         builder.add_edge("generate_slide_content", "generate_slide_html")
         builder.add_edge("generate_slide_html", "sanitize_and_assemble_html")
@@ -145,21 +158,84 @@ class PptGraph:
         builder.add_edge("build_fallback_html", "sanitize_and_assemble_html")
         builder.add_edge("capture_png", "persist_slide_artifacts")
         builder.add_edge("persist_slide_artifacts", "emit_slide_preview")
-        builder.add_edge("emit_slide_preview", "advance_slide")
+        builder.add_edge("emit_slide_preview", END)
+        return builder.compile()
+
+    def compile_graph(self):
+        builder = StateGraph(DeckGraphState)
+        node_handlers = {
+            "normalize_request": (self.planning.normalize_request, "brief"),
+            "plan_deck": (self.planning.plan_deck, "outline"),
+            "select_template": (self.design.select_template, "style"),
+            "create_design_spec": (self.design.create_design_spec, "style"),
+            "aggregate_slides": (self.generation.aggregate_slides, ""),
+            "assemble_image_pptx": (self.delivery.assemble_image_pptx, ""),
+            "finalize_deck": (self.delivery.finalize_deck, ""),
+        }
+        for name in ROOT_NODE_SEQUENCE:
+            if name == "generate_slide":
+                builder.add_node(name, self.slide_graph)
+                continue
+            handler, model_key = node_handlers[name]
+            builder.add_node(
+                name,
+                instrument_node(name, handler, self.llm_registry, model_key=model_key),
+            )
+
+        builder.add_edge(START, "normalize_request")
+        builder.add_edge("normalize_request", "plan_deck")
+        builder.add_edge("plan_deck", "select_template")
+        builder.add_edge("select_template", "create_design_spec")
         builder.add_conditional_edges(
-            "advance_slide",
-            _route_after_advance,
-            {"more": "prepare_slide", "done": "assemble_image_pptx"},
+            "create_design_spec",
+            _fan_out_slides,
+            ["generate_slide"],
         )
+        builder.add_edge("generate_slide", "aggregate_slides")
+        builder.add_edge("aggregate_slides", "assemble_image_pptx")
         builder.add_edge("assemble_image_pptx", "finalize_deck")
         builder.add_edge("finalize_deck", END)
         return builder.compile()
 
     def invoke(self, input_state: Any, config: dict[str, Any] | None = None, **kwargs: Any):
-        return self.graph.invoke(input_state, config=_graph_config(config), **kwargs)
+        return self.graph.invoke(
+            input_state,
+            config=_graph_config(config, self.slide_concurrency),
+            **kwargs,
+        )
 
     def stream(self, input_state: Any, config: dict[str, Any] | None = None, **kwargs: Any):
-        return self.graph.stream(input_state, config=_graph_config(config), **kwargs)
+        stream_mode = kwargs.get("stream_mode", "values")
+        modes = set(stream_mode) if isinstance(stream_mode, (list, tuple)) else {stream_mode}
+        include_subgraphs = "custom" in modes
+        if not include_subgraphs:
+            yield from self.graph.stream(
+                input_state,
+                config=_graph_config(config, self.slide_concurrency),
+                **kwargs,
+            )
+            return
+
+        # Native subgraph streaming adds a namespace tuple.  Forward custom
+        # page events from every slide branch but keep values snapshots rooted
+        # at the deck graph so callers never mistake branch-local state for the
+        # final result.
+        kwargs["subgraphs"] = True
+        for chunk in self.graph.stream(
+            input_state,
+            config=_graph_config(config, self.slide_concurrency),
+            **kwargs,
+        ):
+            if isinstance(stream_mode, (list, tuple)):
+                namespace, mode, data = chunk
+                if mode == "values" and namespace:
+                    continue
+                yield mode, data
+                continue
+            namespace, data = chunk
+            if stream_mode == "values" and namespace:
+                continue
+            yield data
 
     def close(self) -> None:
         """Close resources only when this graph created the browser session."""
@@ -175,22 +251,67 @@ def _route_after_validation(state: DeckGraphState) -> Literal["valid", "repair",
     return decision  # type: ignore[return-value]
 
 
-def _route_after_advance(state: DeckGraphState) -> Literal["more", "done"]:
-    plan = state.get("deck_plan") or {}
-    slides = plan.get("slides") if isinstance(plan, dict) else None
-    total = len(slides) if isinstance(slides, list) else 0
-    if total <= 0:
-        raise ValueError("DeckPlan has no slides")
-    return "done" if int(state.get("current_slide_index") or 0) >= total else "more"
+def _fan_out_slides(state: DeckGraphState) -> list[Send]:
+    """Create one independent slide state after the immutable design is ready."""
+
+    plan = DeckPlan.model_validate(state.get("deck_plan") or {})
+    preferences = state.get("layout_preferences") or {}
+    if not isinstance(preferences, dict):
+        preferences = {}
+    ordered_preferences = [
+        dict(preferences.get(slide.slide_id) or {})
+        for slide in plan.slides
+    ]
+    shared = dict(state)
+    sends: list[Send] = []
+    for offset, slide in enumerate(plan.slides):
+        branch_state = {
+            **shared,
+            "current_slide_index": offset,
+            "current_layout_preference": ordered_preferences[offset],
+            "previous_compositions": ordered_preferences[max(0, offset - 4) : offset],
+            # Fan-out branches must return only their own reducer contribution.
+            "completed_slides": {},
+            "layout_history": [],
+            "validation_issues": [],
+            "status": "generating",
+        }
+        sends.append(Send("generate_slide", branch_state))
+    return sends
 
 
-def _graph_config(config: dict[str, Any] | None) -> dict[str, Any]:
-    """Allow the bounded 30-page loop without weakening caller config."""
+def resolve_slide_concurrency(value: int | None = None) -> int:
+    """Resolve a bounded Send concurrency, configurable per deployment."""
+
+    raw: Any = value if value is not None else os.getenv(
+        "DECK_SLIDE_CONCURRENCY",
+        str(DEFAULT_SLIDE_CONCURRENCY),
+    )
+    try:
+        resolved = int(raw)
+    except (TypeError, ValueError):
+        resolved = DEFAULT_SLIDE_CONCURRENCY
+    return max(1, min(30, resolved))
+
+
+def _graph_config(
+    config: dict[str, Any] | None,
+    slide_concurrency: int = DEFAULT_SLIDE_CONCURRENCY,
+) -> dict[str, Any]:
+    """Apply bounded fan-out defaults without weakening caller config."""
 
     resolved = dict(config or {})
-    # 30 pages × (10 normal nodes + up to 2 repair laps) stays below 1,000.
+    resolved.setdefault("max_concurrency", resolve_slide_concurrency(slide_concurrency))
+    # Repair loops are per branch; retain headroom for the maximum repair path.
     resolved.setdefault("recursion_limit", 1_000)
     return resolved
 
 
-__all__ = ["NODE_SEQUENCE", "PptGraph"]
+__all__ = [
+    "DEFAULT_SLIDE_CONCURRENCY",
+    "NODE_SEQUENCE",
+    "PptGraph",
+    "ROOT_NODE_SEQUENCE",
+    "SLIDE_NODE_SEQUENCE",
+    "resolve_slide_concurrency",
+]

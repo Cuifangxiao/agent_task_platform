@@ -96,6 +96,11 @@ const temperatureHelp = computed(() => {
 const selectedModelLabel = computed(
   () => selectedModel.value?.display_name || selectedModel.value?.model_name || '当前模型',
 )
+const apiKeyPlaceholder = computed(() => {
+  if (selectedProvider.value?.manager === 'gemini') return 'Google AI Studio API Key'
+  if (selectedProvider.value?.manager === 'kimi') return 'Kimi 开放平台 API Key'
+  return 'sk-...'
+})
 const activeModels = computed(() => props.models.filter((item) => item.status === 'active'))
 const defaultModel = computed(() => props.models.find((item) => item.is_default) ?? null)
 const visibleModels = computed(() => {
@@ -550,7 +555,12 @@ function modelTypeIcon(modelType: ModelType) {
 
             <label>
               API Key
-              <input v-model="draft.api_key" type="password" :required="!draft.id" placeholder="sk-..." />
+              <input
+                v-model="draft.api_key"
+                type="password"
+                :required="!draft.id"
+                :placeholder="apiKeyPlaceholder"
+              />
             </label>
 
             <div class="form-grid generation-parameter-grid">

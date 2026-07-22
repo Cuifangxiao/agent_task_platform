@@ -9,7 +9,7 @@ Turn the DeckBrief into a coherent sequence in which every page performs one nec
 <input_contract>
 The user message is one JSON object containing:
 
-- `brief`: the authoritative communication brief and source fact ledger;
+- `brief`: the authoritative communication brief and runtime-carried source text;
 - `layout_recipe_manifest`: the only allowed layout families, their purposes, capacities, structures, variants, and visual anchors;
 - `hard_constraints`: exact page-count, boundary-role, stable-ID, and factuality rules.
 
@@ -57,11 +57,11 @@ These examples demonstrate form only. Never reuse their claims unless the source
 </assertion_title_examples>
 
 <evidence_policy>
-- Use only facts and claims supported by the brief and fact ledger.
+- Use only claims supported by the brief's source text, or frame them explicitly as reasoning, proposals, or hypotheses.
 - Never invent a metric to make a page more persuasive.
 - Never create a customer story, quotation, benchmark, date, named person, causal result, or market conclusion absent from the source.
 - If a claim is a recommendation or reasoning step rather than a source fact, frame it as a proposal, implication, criterion, or hypothesis.
-- Use `key_metric` only when one source-backed metric can honestly serve as the page's visual anchor.
+- Use `key_metric` only when one source-backed measure can honestly serve as the page's visual anchor; the measure may be numeric or a concise qualitative status explicitly present in the source.
 - Do not repeat the same evidence merely to fill pages. Change the page job or consolidate the sequence.
 </evidence_policy>
 
@@ -76,7 +76,7 @@ Select `layout_family` from the supplied recipe manifest by semantic content sha
 - `comparison`: two states, options, or perspectives using the same comparison criteria.
 - `process`: a finite action sequence in which each step has an output.
 - `timeline`: change over time with meaningful milestones and consequences.
-- `key_metric`: one source-backed number or measure dominates.
+- `key_metric`: one source-backed numeric or qualitative measure dominates.
 - `closing_resolution`: a resolved answer, decision, or action.
 
 Choose layout from meaning first. Never select a family merely to create visual variety.

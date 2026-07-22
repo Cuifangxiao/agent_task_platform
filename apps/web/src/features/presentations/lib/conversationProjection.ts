@@ -350,12 +350,18 @@ function maximumProgressValue(
   snapshot: PptProgress | undefined,
   field: 'current' | 'total',
 ) {
+  if (field === 'current') {
+    const completed = events
+      .filter((event) => event.type === 'ARTIFACT_READY')
+      .map((event) => Number(event.progress?.current) || 0)
+    return Math.max(0, completed.length ? 0 : Number(snapshot?.current) || 0, ...completed)
+  }
   return Math.max(
     0,
-    Number(snapshot?.[field]) || 0,
+    Number(snapshot?.total) || 0,
     ...events.map((event) => Math.max(
-      Number(event.progress?.[field]) || 0,
-      field === 'current' ? Number(event.page?.page_index) || 0 : Number(event.page?.page_count) || 0,
+      Number(event.progress?.total) || 0,
+      Number(event.page?.page_count) || 0,
     )),
   )
 }

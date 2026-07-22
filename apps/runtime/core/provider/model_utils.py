@@ -29,6 +29,8 @@ PROVIDER_CHAT_MODELS: dict[str, type[ChatOpenAI]] = {
     "openai": ChatOpenAI,
     "deepseek": ChatOpenAI,
     "qwen": ChatOpenAI,
+    "gemini": ChatOpenAI,
+    "kimi": ChatOpenAI,
 }
 
 
@@ -273,10 +275,12 @@ class ProviderConfigManager:
             if param_name in defaults:
                 kwargs[param_name] = defaults[param_name]
 
-        if provider.manager == "openai" and defaults.get("reasoning_effort"):
+        if provider.manager in {"openai", "gemini"} and defaults.get(
+            "reasoning_effort"
+        ):
             kwargs["reasoning_effort"] = defaults["reasoning_effort"]
 
-        if provider.manager == "deepseek":
+        if provider.manager in {"deepseek", "kimi"}:
             if defaults.get("reasoning_effort"):
                 kwargs["reasoning_effort"] = defaults["reasoning_effort"]
             if defaults.get("thinking"):
@@ -309,10 +313,15 @@ class ProviderConfigManager:
             if param_name in options:
                 kwargs[param_name] = options[param_name]
 
-        if provider.manager in {"openai", "deepseek"} and options.get("reasoning_effort"):
+        if provider.manager in {
+            "openai",
+            "deepseek",
+            "gemini",
+            "kimi",
+        } and options.get("reasoning_effort"):
             kwargs["reasoning_effort"] = options["reasoning_effort"]
 
-        if provider.manager == "deepseek" and options.get("thinking"):
+        if provider.manager in {"deepseek", "kimi"} and options.get("thinking"):
             kwargs["extra_body"] = {
                 **dict(kwargs.get("extra_body") or {}),
                 "thinking": {"type": options["thinking"]},

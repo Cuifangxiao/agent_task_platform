@@ -48,6 +48,49 @@ def test_deepseek_catalog_defaults_to_thinking_enabled():
     assert provider.structured_output_method_for(flash) == "json_mode"
 
 
+def test_gemini_catalog_exposes_multimodal_models_and_reasoning_options():
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/gemini.yaml")
+    )
+
+    flash = provider.find_model("gemini-3.5-flash")
+    pro = provider.find_model("gemini-2.5-pro")
+
+    assert provider.name == "gemini"
+    assert provider.default_base_url == (
+        "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    assert provider.credential_test.model == "gemini-2.5-flash"
+    assert flash is not None
+    assert flash.type == "multimodal"
+    assert flash.reasoning_supported is True
+    assert flash.default_parameters["reasoning_effort"] == "medium"
+    assert pro is not None
+    assert pro.type == "multimodal"
+    assert provider.structured_output_method_for(pro) == "json_schema"
+
+
+def test_kimi_catalog_exposes_k3_and_k2_6_with_model_specific_thinking():
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/kimi.yaml")
+    )
+
+    k3 = provider.find_model("kimi-k3")
+    k2_6 = provider.find_model("kimi-k2.6")
+
+    assert provider.name == "kimi"
+    assert provider.default_base_url == "https://api.moonshot.cn/v1"
+    assert provider.credential_test.model == "kimi-k2.6"
+    assert k3 is not None
+    assert k3.type == "multimodal"
+    assert k3.reasoning_supported is True
+    assert k3.default_parameters["reasoning_effort"] == "max"
+    assert k2_6 is not None
+    assert k2_6.type == "multimodal"
+    assert k2_6.default_parameters["thinking"] == "enabled"
+    assert provider.structured_output_method_for(k3) == "json_schema"
+
+
 def test_model_can_override_provider_structured_output_method(tmp_path):
     catalog = tmp_path / "provider.yaml"
     catalog.write_text(
@@ -254,3 +297,68 @@ def test_qwen_disabled_thinking_omits_budget(monkeypatch):
     )
 
     assert client.kwargs["extra_body"] == {"enable_thinking": False}
+
+
+def test_gemini_uses_compatible_endpoint_and_reasoning_effort(monkeypatch):
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/gemini.yaml")
+    )
+    manager = ProviderConfigManager()
+    manager._providers = {provider.name: provider}
+    manager._loaded = True
+    monkeypatch.setitem(model_utils.PROVIDER_CHAT_MODELS, "gemini", RecordingChatModel)
+
+    client = manager.build_chat_client(
+        provider_name="gemini",
+        model_name="gemini-3.5-flash",
+        api_key="gemini-test-key",
+        base_url="",
+        temperature=0.6,
+        max_tokens=2048,
+        provider_options={"reasoning_effort": "high"},
+    )
+
+    assert client.kwargs["base_url"] == (
+        "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    assert client.kwargs["reasoning_effort"] == "high"
+    assert client.kwargs["max_tokens"] == 2048
+    assert "temperature" not in client.kwargs
+    assert client.kwargs["metadata"]["provider"] == "gemini"
+
+
+def test_kimi_uses_compatible_endpoint_and_model_specific_thinking(monkeypatch):
+    provider = ProviderConfigManager._load_provider_definition(
+        Path("providers/catalog/kimi.yaml")
+    )
+    manager = ProviderConfigManager()
+    manager._providers = {provider.name: provider}
+    manager._loaded = True
+    monkeypatch.setitem(model_utils.PROVIDER_CHAT_MODELS, "kimi", RecordingChatModel)
+
+    k3_client = manager.build_chat_client(
+        provider_name="kimi",
+        model_name="kimi-k3",
+        api_key="moonshot-test-key",
+        base_url="",
+        temperature=0.2,
+        max_tokens=4096,
+        provider_options={"reasoning_effort": "high"},
+    )
+    k2_client = manager.build_chat_client(
+        provider_name="kimi",
+        model_name="kimi-k2.6",
+        api_key="moonshot-test-key",
+        base_url="",
+        temperature=0.2,
+        max_tokens=4096,
+        provider_options={"thinking": "disabled"},
+    )
+
+    assert k3_client.kwargs["base_url"] == "https://api.moonshot.cn/v1"
+    assert k3_client.kwargs["reasoning_effort"] == "high"
+    assert "temperature" not in k3_client.kwargs
+    assert k2_client.kwargs["extra_body"] == {
+        "thinking": {"type": "disabled"}
+    }
+    assert "temperature" not in k2_client.kwargs

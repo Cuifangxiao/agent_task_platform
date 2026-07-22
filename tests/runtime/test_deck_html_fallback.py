@@ -33,7 +33,6 @@ def _content() -> SlideContentSpec:
             ContentBlock(type=ContentBlockType.ICON_LABEL, label="安全", text="无远程资源"),
         ],
         suggested_icon_keys=["rocket", "target", "circle-check"],
-        source_refs=[],
     )
 
 

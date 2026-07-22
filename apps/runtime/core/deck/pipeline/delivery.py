@@ -30,7 +30,7 @@ QUALITY_REPORT_SCHEMA = "deck-quality-report.v2"
 
 
 class DeliveryNodes:
-    """Dependencies and callable nodes used by the flat root graph."""
+    """Dependencies and callable nodes used after parallel slide fan-in."""
 
     def __init__(
         self,

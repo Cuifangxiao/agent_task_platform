@@ -1,4 +1,7 @@
 from pathlib import Path
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from PIL import Image
@@ -8,8 +11,12 @@ from core.deck.html.assembler import HTMLAssembler
 from core.deck.html.fallback import build_fallback_html_spec
 from core.deck.html.browser import (
     BrowserEnvironmentError,
+    BrowserMeasurement,
     HTMLBrowserRenderer,
     RenderProfile,
+    SecureBrowserSession,
+    SecureBrowserSessionPool,
+    resolve_browser_concurrency,
 )
 from core.deck.domain.schemas import (
     ContentBlock,
@@ -53,7 +60,6 @@ def _content() -> SlideContentSpec:
             ContentBlock(type=ContentBlockType.ICON_LABEL, label="Safe", text="No remote assets"),
         ],
         suggested_icon_keys=["rocket", "target", "circle-check"],
-        source_refs=[],
     )
 
 
@@ -101,9 +107,15 @@ def test_chromium_capture_is_opaque_exact_size_and_deterministic(chromium_render
     first_path = tmp_path / "first.png"
     second_path = tmp_path / "second.png"
 
-    first = chromium_renderer.capture(document, first_path, font_families=())
-    second = chromium_renderer.capture(document, second_path, font_families=())
+    first_render = chromium_renderer.measure_and_capture(document, first_path, font_families=())
+    second_render = chromium_renderer.measure_and_capture(document, second_path, font_families=())
+    first = first_render.captured_png
+    second = second_render.captured_png
 
+    assert not first_render.measurement.diagnostics
+    assert not second_render.measurement.diagnostics
+    assert first is not None
+    assert second is not None
     assert (first.width, first.height) == (3200, 1800)
     assert (second.width, second.height) == (3200, 1800)
     assert first.opaque is second.opaque is True
@@ -112,6 +124,145 @@ def test_chromium_capture_is_opaque_exact_size_and_deterministic(chromium_render
     with Image.open(first_path) as image:
         assert image.size == (3200, 1800)
         assert "A" not in image.getbands()
+
+
+def test_measure_and_capture_skips_screenshot_for_invalid_dom(monkeypatch, tmp_path):
+    class FakeContext:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    context = FakeContext()
+    measurement = BrowserMeasurement(
+        diagnostics=(
+            {
+                "code": "CONTENT_HIDDEN",
+                "category": "content",
+                "severity": "error",
+            },
+        ),
+        blocked_requests=(),
+        fonts={},
+        dom_nodes=1,
+        svg_paths=0,
+        elapsed_ms=1,
+    )
+    session = SecureBrowserSession()
+    monkeypatch.setattr(session, "_open_page", lambda _profile: (context, object(), []))
+    monkeypatch.setattr(session, "_load_stable_document", lambda *_args: None)
+    monkeypatch.setattr(session, "_measure_page", lambda *_args, **_kwargs: measurement)
+    monkeypatch.setattr(
+        session,
+        "_screenshot_page",
+        lambda *_args, **_kwargs: pytest.fail("invalid DOM must not be screenshotted"),
+    )
+    try:
+        rendered = session.measure_and_capture(
+            "<section class='slide'></section>",
+            tmp_path / "invalid.png",
+            profile=RenderProfile(),
+            font_families=(),
+        )
+    finally:
+        session.close()
+
+    assert rendered.measurement is measurement
+    assert rendered.captured_png is None
+    assert context.closed is True
+    assert not (tmp_path / "invalid.png").exists()
+
+
+def test_hidden_slide_returns_diagnostics_without_timing_out_capture(chromium_renderer, tmp_path):
+    document = _assembled(LayoutFamily.STATEMENT_FOCUS).document.replace(
+        "</head>",
+        "<style>.slide{display:none!important}</style></head>",
+    )
+    png_path = tmp_path / "hidden.png"
+
+    rendered = chromium_renderer.measure_and_capture(document, png_path, font_families=())
+
+    assert any(item.get("severity") == "error" for item in rendered.measurement.diagnostics)
+    assert rendered.captured_png is None
+    assert not png_path.exists()
+
+
+def test_font_canvas_probe_is_cached_for_the_browser_session():
+    class FakePage:
+        def __init__(self):
+            self.families: list[str] = []
+
+        def evaluate(self, _probe, family):
+            self.families.append(family)
+            return family != "Missing Font"
+
+    session = SecureBrowserSession()
+    first_page = FakePage()
+    second_page = FakePage()
+    try:
+        assert session._font_status(first_page, ("Deck Sans", "Missing Font")) == {
+            "Deck Sans": True,
+            "Missing Font": False,
+        }
+        assert session._font_status(second_page, ("Deck Sans", "Missing Font")) == {
+            "Deck Sans": True,
+            "Missing Font": False,
+        }
+        assert session._font_status(second_page, ("Deck Serif",)) == {"Deck Serif": True}
+    finally:
+        session.close()
+
+    assert first_page.families == ["Deck Sans", "Missing Font"]
+    assert second_page.families == ["Deck Serif"]
+
+
+def test_browser_session_pool_runs_bounded_operations_in_parallel(monkeypatch):
+    active = 0
+    maximum = 0
+    lock = threading.Lock()
+    sessions = []
+
+    class FakeSession:
+        def __init__(self):
+            self.closed = False
+            sessions.append(self)
+
+        def describe(self, **_kwargs):
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                time.sleep(0.03)
+                return {"renderer": "fake"}
+            finally:
+                with lock:
+                    active -= 1
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setenv("DECK_BROWSER_CONCURRENCY", "9")
+    assert resolve_browser_concurrency(slide_concurrency=4) == 4
+    pool = SecureBrowserSessionPool(3, session_factory=FakeSession)
+    try:
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            results = list(
+                executor.map(
+                    lambda _index: pool.describe(
+                        profile=RenderProfile(),
+                        font_families=(),
+                    ),
+                    range(6),
+                )
+            )
+        assert results == [{"renderer": "fake"}] * 6
+        assert maximum == 3
+    finally:
+        pool.close()
+
+    assert len(sessions) == 3
+    assert all(session.closed for session in sessions)
 
 
 def _qa_document(body_html: str, page_css: str):

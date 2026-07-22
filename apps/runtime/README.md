@@ -70,6 +70,8 @@ cp .env.example .env                 # 按需填密钥
 
 或在仓库根目录执行 `make run-runtime`。
 
+内置 Provider 目录包含 OpenAI、DeepSeek、Qwen、Google Gemini 和 Kimi。Gemini 与 Kimi 均通过各自官方的 OpenAI 兼容端点调用，用户在 Web 的模型管理页填写对应平台 API Key 即可，无需在 Runtime `.env` 中配置密钥。
+
 ## 测试
 
 ```bash
@@ -80,21 +82,27 @@ cp .env.example .env                 # 按需填密钥
 
 PPT 使用独立的 gRPC 服务端流。Go 发送一次 `GeneratePpt` 请求，Runtime 为每个
 run 创建独立的 `core/deck/pipeline/graph.py::PptGraph`，通过 custom stream 持续返回 `AgentEvent`。
-当前 HTML-first 根图直接暴露 18 个节点：
+当前 HTML-first 流水线在 DesignSpec 锁定后使用 LangGraph `Send` 做页面级 map-reduce：
 
 ```text
 normalize_request -> plan_deck -> select_template -> create_design_spec
--> prepare_slide -> generate_slide_content -> generate_slide_html
--> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
-   -> [repair_slide_html -> sanitize...] | [build_fallback_html -> sanitize...] | capture_png
--> persist_slide_artifacts -> emit_slide_preview -> advance_slide
-   -> [more: prepare_slide] | [done: assemble_image_pptx -> finalize_deck]
+-> Send(generate_slide, slide_1 .. slide_n)
+   -> prepare_slide -> generate_slide_content -> generate_slide_html
+   -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
+      -> [repair_slide_html -> sanitize...] | [build_fallback_html -> sanitize...] | capture_png
+   -> persist_slide_artifacts -> emit_slide_preview
+-> aggregate_slides -> assemble_image_pptx -> finalize_deck
 ```
 
 LLM 边界使用 `DeckBrief`、`DeckPlan`、`DesignSpec`、`SlideContentSpec` 和
 `HtmlSlideSpec` 等严格 Pydantic schema；LangGraph state 只保存可序列化字典、诊断和相对产物信息。
-`completed_slides` 是以 `slide_id` 为键的幂等结果映射。每个请求从头执行，当前没有
+planner 会预分配 recipe variant，避免 designer 依赖前一分支的实际构图结果；`completed_slides`、
+`layout_history` 和 `validation_issues` 通过 reducer 在 fan-in 时确定性归并。每个请求从头执行，当前没有
 LangGraph checkpointer、人工 review 或 pause/resume。
+
+默认页面并发数为 6、Chromium session pool 并发数为 3；可分别通过
+`DECK_SLIDE_CONCURRENCY` 和 `DECK_BROWSER_CONCURRENCY` 调整。预览按完成顺序发送，调用方按
+`page_index`/`page_id` 定位页面。
 
 设计系统位于 `core/deck/design_system/`，提供 4 套完整主题（`paper_editorial`、
 `executive_signal`、`midnight_product`、`alpine_research`）、10 个 layout recipe 和 24 个本地 Lucide 图标。

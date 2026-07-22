@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Box } from '@lucide/vue'
+import { Box, Moon, Sparkles } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 
 import deepseekIconUrl from '@/assets/providers/deepseek.svg?url'
@@ -45,6 +45,16 @@ watch(brand, () => {
       aria-hidden="true"
       @error="imageLoadFailed = true"
     />
+    <Sparkles
+      v-else-if="brand === 'gemini'"
+      :size="Math.max(15, Math.round(size * 0.6))"
+      aria-hidden="true"
+    />
+    <Moon
+      v-else-if="brand === 'kimi'"
+      :size="Math.max(15, Math.round(size * 0.6))"
+      aria-hidden="true"
+    />
     <Box v-else :size="Math.max(14, Math.round(size * 0.58))" aria-hidden="true" />
   </span>
 </template>
@@ -65,6 +75,16 @@ watch(brand, () => {
   width: 70%;
   height: 70%;
   object-fit: contain;
+}
+
+.provider-icon--gemini {
+  color: #5b5bd6;
+  background: linear-gradient(145deg, #f7f2ff, #eef6ff);
+}
+
+.provider-icon--kimi {
+  color: #1769e0;
+  background: linear-gradient(145deg, #edf5ff, #f5f8ff);
 }
 
 </style>

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,20 @@ from core.deck.pipeline.state import DeckGraphState
 MAX_SEMANTIC_REPAIRS = 2
 
 
+class SlideProgressTracker:
+    """Thread-safe per-request completion counts for out-of-order previews."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._completed_by_request: dict[str, set[str]] = {}
+
+    def mark_completed(self, request_id: str, slide_id: str) -> int:
+        with self._lock:
+            completed = self._completed_by_request.setdefault(str(request_id), set())
+            completed.add(str(slide_id))
+            return len(completed)
+
+
 class GenerationNodes:
     def __init__(
         self,
@@ -76,6 +91,7 @@ class GenerationNodes:
         self.assembler = assembler or HTMLAssembler()
         self.browser_renderer = browser_renderer or HTMLBrowserRenderer()
         self.max_repairs = max(0, int(max_repairs))
+        self.progress_tracker = SlideProgressTracker()
 
     def prepare_slide(self, state: DeckGraphState) -> dict[str, Any]:
         return prepare_slide(state)
@@ -90,10 +106,10 @@ class GenerationNodes:
         return sanitize_and_assemble_html(state, self.assembler)
 
     def render_html_and_measure_dom(self, state: DeckGraphState) -> dict[str, Any]:
-        return render_html_and_measure_dom(state, self.browser_renderer)
+        return render_html_and_measure_dom(state, self.output_dir, self.browser_renderer)
 
     def validate_dom(self, state: DeckGraphState) -> dict[str, Any]:
-        return validate_dom(state, max_repairs=self.max_repairs)
+        return validate_dom(state, self.output_dir, max_repairs=self.max_repairs)
 
     def repair_slide_html(self, state: DeckGraphState) -> dict[str, Any]:
         return repair_slide_html(
@@ -113,11 +129,17 @@ class GenerationNodes:
         return persist_slide_artifacts(state, self.output_dir, self.assembler, self.llm_registry)
 
     def emit_slide_preview(self, state: DeckGraphState) -> dict[str, Any]:
-        return emit_slide_preview(state)
+        slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
+        return emit_slide_preview(
+            state,
+            completed_count=self.progress_tracker.mark_completed(
+                str(state["request_id"]),
+                slide.slide_id,
+            ),
+        )
 
-    def advance_slide(self, state: DeckGraphState) -> dict[str, Any]:
-        return advance_slide(state)
-
+    def aggregate_slides(self, state: DeckGraphState) -> dict[str, Any]:
+        return aggregate_slides(state, self.output_dir)
 
 def prepare_slide(state: DeckGraphState) -> dict[str, Any]:
     plan = DeckPlan.model_validate(state.get("deck_plan") or {})
@@ -146,6 +168,8 @@ def prepare_slide(state: DeckGraphState) -> dict[str, Any]:
         "current_repair_attempts": 0,
         "current_fallback_used": False,
         "current_render_decision": "repair",
+        "current_speculative_preview_path": "",
+        "current_speculative_preview_hash": "",
         "current_preview_path": "",
         "current_preview_hash": "",
         "current_renderer_metadata": {},
@@ -158,7 +182,6 @@ def generate_slide_content(state: DeckGraphState, llm_registry: dict[str, Any]) 
     plan = DeckPlan.model_validate(state.get("deck_plan") or {})
     slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
     recipe = get_recipe(slide.layout_family)
-    valid_fact_ids = {fact.fact_id for fact in brief.facts}
     icons = icon_registry().search(
         " ".join([slide.assertion_title, slide.takeaway, slide.content_intent]), limit=12
     )
@@ -195,7 +218,6 @@ def generate_slide_content(state: DeckGraphState, llm_registry: dict[str, Any]) 
                 "assertion_title": slide.assertion_title,
                 "takeaway": slide.takeaway,
                 "suggested_icon_keys": [key for key in content.suggested_icon_keys if key in icons][:8],
-                "source_refs": [ref for ref in content.source_refs if ref in valid_fact_ids][:20],
             }
         )
         content = _normalize_content_for_recipe(content, brief, slide)
@@ -237,7 +259,7 @@ def generate_slide_html(
             system=load_node_prompt("html_slide_designer"),
             user=json.dumps(
                 {
-                    "brief": brief.model_dump(mode="json", exclude={"source_text", "facts"}),
+                    "brief": brief.model_dump(mode="json", exclude={"source_text"}),
                     "deck_plan": plan.model_dump(mode="json"),
                     "design_spec": design.model_dump(mode="json"),
                     "current_slide": slide.model_dump(mode="json"),
@@ -245,7 +267,8 @@ def generate_slide_html(
                     "neighbor_slides": _neighbor_plans(plan, slide.index),
                     "recipe": recipe.prompt_manifest(),
                     "available_icon_keys": allowed_icons,
-                    "previous_compositions": list(state.get("layout_history") or [])[-4:],
+                    "layout_preference": dict(state.get("current_layout_preference") or {}),
+                    "previous_compositions": list(state.get("previous_compositions") or [])[-4:],
                     "html_contract": {
                         "canvas": "1600x900",
                         "root": "exactly one section.slide",
@@ -340,6 +363,7 @@ def sanitize_and_assemble_html(state: DeckGraphState, assembler: HTMLAssembler) 
 
 def render_html_and_measure_dom(
     state: DeckGraphState,
+    output_dir: Path,
     browser_renderer: HTMLBrowserRenderer,
 ) -> dict[str, Any]:
     design = DesignSpec.model_validate(state.get("design_spec") or {})
@@ -350,16 +374,39 @@ def render_html_and_measure_dom(
             f"Checking page {slide.index} in isolated Chromium",
         )
     )
-    measurement = browser_renderer.measure(
-        str(state.get("current_assembled_html") or ""),
-        font_families=(design.typography.chinese_font, design.typography.latin_font),
-    )
-    diagnostics = list(state.get("current_diagnostics") or [])
+    project = DeckProjectPaths.for_request(output_dir, str(state["request_id"])).ensure()
+    speculative_path = _speculative_preview_png(project, slide.index)
+    existing_diagnostics = [
+        item for item in state.get("current_diagnostics") or [] if isinstance(item, dict)
+    ]
+    document = str(state.get("current_assembled_html") or "")
+    font_families = (design.typography.chinese_font, design.typography.latin_font)
+    captured = None
+    if _has_error_diagnostic(existing_diagnostics):
+        measurement = browser_renderer.measure(document, font_families=font_families)
+    else:
+        rendered = browser_renderer.measure_and_capture(
+            document,
+            speculative_path,
+            font_families=font_families,
+        )
+        measurement = rendered.measurement
+        captured = rendered.captured_png
+    diagnostics = list(existing_diagnostics)
     diagnostics.extend(_normalize_browser_diagnostic(item) for item in measurement.diagnostics)
-    return {"current_diagnostics": _deduplicate_diagnostics(diagnostics)}
+    return {
+        "current_diagnostics": _deduplicate_diagnostics(diagnostics),
+        "current_speculative_preview_path": project.relative(captured.path) if captured else "",
+        "current_speculative_preview_hash": captured.sha256 if captured else "",
+    }
 
 
-def validate_dom(state: DeckGraphState, *, max_repairs: int) -> dict[str, Any]:
+def validate_dom(
+    state: DeckGraphState,
+    output_dir: Path,
+    *,
+    max_repairs: int,
+) -> dict[str, Any]:
     diagnostics = [item for item in state.get("current_diagnostics") or [] if isinstance(item, dict)]
     environment_errors = [
         item
@@ -367,16 +414,22 @@ def validate_dom(state: DeckGraphState, *, max_repairs: int) -> dict[str, Any]:
         if item.get("severity") == "error" and item.get("category") == "environment"
     ]
     if environment_errors:
+        _discard_speculative_preview(state, output_dir)
         raise BrowserEnvironmentError(str(environment_errors[0].get("message") or "renderer environment failed"))
     errors = [item for item in diagnostics if item.get("severity") == "error"]
     if not errors:
         return {"current_render_decision": "valid"}
+    _discard_speculative_preview(state, output_dir)
     if bool(state.get("current_fallback_used")):
         raise BrowserContentError(
             f"Program fallback failed deterministic DOM QA: {errors[0].get('code', 'DOM_INVALID')}"
         )
     attempts = max(0, int(state.get("current_repair_attempts") or 0))
-    return {"current_render_decision": "repair" if attempts < max_repairs else "fallback"}
+    return {
+        "current_render_decision": "repair" if attempts < max_repairs else "fallback",
+        "current_speculative_preview_path": "",
+        "current_speculative_preview_hash": "",
+    }
 
 
 def repair_slide_html(
@@ -452,14 +505,21 @@ def capture_png(
     design = DesignSpec.model_validate(state.get("design_spec") or {})
     slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
     project = DeckProjectPaths.for_request(output_dir, str(state["request_id"])).ensure()
-    captured = browser_renderer.capture(
-        str(state.get("current_assembled_html") or ""),
-        project.preview_png(slide.index),
-        font_families=(design.typography.chinese_font, design.typography.latin_font),
-    )
+    relative_speculative = str(state.get("current_speculative_preview_path") or "").strip()
+    speculative = _resolve_project_artifact(project, relative_speculative)
+    if not speculative.is_file():
+        raise BrowserEnvironmentError("speculative PNG is missing after DOM validation")
+    actual_hash = hashlib.sha256(speculative.read_bytes()).hexdigest()
+    expected_hash = str(state.get("current_speculative_preview_hash") or "")
+    if not expected_hash or actual_hash != expected_hash:
+        raise BrowserEnvironmentError("speculative PNG changed after DOM validation")
+    preview_path = project.preview_png(slide.index)
+    os.replace(speculative, preview_path)
     return {
-        "current_preview_path": project.relative(captured.path),
-        "current_preview_hash": captured.sha256,
+        "current_speculative_preview_path": "",
+        "current_speculative_preview_hash": "",
+        "current_preview_path": project.relative(preview_path),
+        "current_preview_hash": actual_hash,
         "current_renderer_metadata": browser_renderer.metadata(
             font_families=(design.typography.chinese_font, design.typography.latin_font)
         ),
@@ -537,25 +597,17 @@ def persist_slide_artifacts(
     )
     completed = dict(state.get("completed_slides") or {})
     completed[slide.slide_id] = metadata.model_dump(mode="json")
-    ordered = sorted(completed.values(), key=lambda item: int(item.get("index") or 0))
     history = list(state.get("layout_history") or [])
     history = [item for item in history if item.get("slide_id") != slide.slide_id]
     history.append(
         {
             "slide_id": slide.slide_id,
+            "index": slide.index,
             "layout_family": html_spec.layout_family.value,
             "layout_variant": html_spec.layout_variant,
             "composition_summary": html_spec.composition_summary,
             "estimated_density": html_spec.estimated_density,
         }
-    )
-    _atomic_write_json(
-        project.slide_artifact_manifest,
-        {
-            "schema": "slide-artifacts.v1",
-            "request_id": request_id,
-            "slides": ordered,
-        },
     )
     existing_issues = [
         item
@@ -574,7 +626,46 @@ def persist_slide_artifacts(
     }
 
 
-def emit_slide_preview(state: DeckGraphState) -> dict[str, Any]:
+def aggregate_slides(state: DeckGraphState, output_dir: Path) -> dict[str, Any]:
+    """Validate and persist the reducer-merged results after Send fan-in."""
+
+    plan = DeckPlan.model_validate(state.get("deck_plan") or {})
+    completed = dict(state.get("completed_slides") or {})
+    planned_ids = [slide.slide_id for slide in plan.slides]
+    missing = [slide_id for slide_id in planned_ids if slide_id not in completed]
+    unexpected = sorted(set(completed) - set(planned_ids))
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected={','.join(unexpected)}")
+        raise ValueError("parallel slide fan-in is incomplete: " + " ".join(details))
+
+    ordered = sorted(completed.values(), key=lambda item: int(item.get("index") or 0))
+    request_id = str(state.get("request_id") or "").strip()
+    if not request_id:
+        raise ValueError("request_id is required before slide aggregation")
+    project = DeckProjectPaths.for_request(output_dir, request_id).ensure()
+    _atomic_write_json(
+        project.slide_artifact_manifest,
+        {
+            "schema": "slide-artifacts.v1",
+            "request_id": request_id,
+            "slides": ordered,
+        },
+    )
+    return {
+        "current_slide_index": len(plan.slides),
+        "status": "exporting",
+    }
+
+
+def emit_slide_preview(
+    state: DeckGraphState,
+    *,
+    completed_count: int | None = None,
+) -> dict[str, Any]:
     slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
     plan = DeckPlan.model_validate(state.get("deck_plan") or {})
     metadata = dict((state.get("completed_slides") or {}).get(slide.slide_id) or {})
@@ -585,6 +676,7 @@ def emit_slide_preview(state: DeckGraphState) -> dict[str, Any]:
                 "slide_id": slide.slide_id,
                 "index": slide.index,
                 "total": len(plan.slides),
+                "completed": completed_count,
                 "title": slide.assertion_title,
                 "png": metadata.get("preview_path", ""),
                 "artifact_hash": metadata.get("artifact_hash", ""),
@@ -593,15 +685,6 @@ def emit_slide_preview(state: DeckGraphState) -> dict[str, Any]:
         )
     )
     return {}
-
-
-def advance_slide(state: DeckGraphState) -> dict[str, Any]:
-    plan = DeckPlan.model_validate(state.get("deck_plan") or {})
-    next_offset = max(0, int(state.get("current_slide_index") or 0)) + 1
-    return {
-        "current_slide_index": next_offset,
-        "status": "exporting" if next_offset >= len(plan.slides) else "generating",
-    }
 
 
 def _lock_html_spec(spec: HtmlSlideSpec, slide: SlidePlan, allowed_icons: list[str]) -> HtmlSlideSpec:
@@ -616,21 +699,19 @@ def _lock_html_spec(spec: HtmlSlideSpec, slide: SlidePlan, allowed_icons: list[s
 
 
 def _deterministic_content_spec(brief: DeckBrief, slide: SlidePlan) -> SlideContentSpec:
-    relevant = _rank_facts(brief, slide)[:5]
-    refs = [fact.fact_id for fact in relevant]
     blocks: list[ContentBlock] = []
     if slide.layout_family is LayoutFamily.KEY_METRIC:
-        fact = next((item for item in relevant if item.value), None)
-        if fact:
+        metric_tokens = extract_number_tokens(f"{slide.assertion_title} {slide.takeaway}")
+        if metric_tokens:
             blocks.append(
                 ContentBlock(
                     type=ContentBlockType.METRIC,
-                    value=truncate(f"{fact.value}{fact.unit}", 80),
-                    label=truncate(fact.statement, 120),
+                    value=truncate(metric_tokens[0], 80),
+                    label=truncate(slide.assertion_title, 120),
                 )
             )
     elif slide.layout_family is LayoutFamily.COMPARISON:
-        values = _bounded_fact_statements(relevant, slide, limit=6) or [
+        values = [
             truncate(brief.goal, 180),
             truncate(brief.audience_outcome, 180),
         ]
@@ -651,26 +732,19 @@ def _deterministic_content_spec(brief: DeckBrief, slide: SlidePlan) -> SlideCont
             if slide.layout_family is LayoutFamily.PROCESS
             else ContentBlockType.TIMELINE_ITEM
         )
-        values = _bounded_fact_statements(relevant, slide, limit=5) or [truncate(slide.takeaway, 180)]
+        values = [truncate(slide.takeaway, 180)]
         blocks.extend(
             ContentBlock(type=block_type, label=f"{index:02d}", text=value, ordinal=index)
             for index, value in enumerate(values[:5], start=1)
         )
     elif slide.layout_family is LayoutFamily.THREE_POINTS:
-        values = _bounded_fact_statements(relevant[:3], slide, limit=3) or [truncate(slide.takeaway, 180)]
+        values = [truncate(slide.takeaway, 180)]
         blocks.extend(
             ContentBlock(type=ContentBlockType.ICON_LABEL, label=f"{index:02d}", text=value)
             for index, value in enumerate(values, start=1)
         )
     else:
         blocks.append(ContentBlock(type=ContentBlockType.PARAGRAPH, text=slide.takeaway))
-        fact_values = [
-            value
-            for value in _bounded_fact_statements(relevant, slide, limit=4)
-            if value != slide.takeaway
-        ]
-        if fact_values:
-            blocks.append(ContentBlock(type=ContentBlockType.BULLET_LIST, items=fact_values))
     if not blocks:
         blocks.append(ContentBlock(type=ContentBlockType.CALLOUT, text=slide.takeaway))
     icons = icon_registry().search(" ".join([slide.assertion_title, slide.takeaway]), limit=3)
@@ -681,7 +755,6 @@ def _deterministic_content_spec(brief: DeckBrief, slide: SlidePlan) -> SlideCont
         content_blocks=blocks,
         emphasis=[truncate(slide.takeaway, 180)],
         suggested_icon_keys=icons,
-        source_refs=refs,
     )
 
 
@@ -690,16 +763,11 @@ def _normalize_content_for_recipe(
     brief: DeckBrief,
     slide: SlidePlan,
 ) -> SlideContentSpec:
-    """Apply recipe capacity and replace every metric with source ledger data."""
+    """Apply recipe capacity without rewriting model-approved content."""
 
     capacity = get_recipe(slide.layout_family).capacity
     remaining_chars = capacity.body_chars
     remaining_items = capacity.items
-    references = [ref for ref in content.source_refs if any(f.fact_id == ref for f in brief.facts)]
-    valued_facts = [fact for fact in _rank_facts(brief, slide) if fact.value]
-    metric_fact = next((fact for fact in valued_facts if fact.fact_id in references), None)
-    if metric_fact is None and valued_facts:
-        metric_fact = valued_facts[0]
     normalized: list[ContentBlock] = []
     item_blocks = {
         ContentBlockType.ICON_LABEL,
@@ -718,15 +786,14 @@ def _normalize_content_for_recipe(
 
     for block in content.content_blocks:
         if block.type is ContentBlockType.METRIC:
-            if metric_fact is None:
-                continue
-            references.append(metric_fact.fact_id)
-            metric_value = consume(f"{metric_fact.value}{metric_fact.unit}", 80)
-            metric_label = consume(metric_fact.statement, 120)
-            if metric_value or metric_label:
+            metric_value = consume(block.value, 80)
+            metric_label = consume(block.label, 120)
+            metric_text = consume(block.text, 700)
+            if metric_text or metric_value or metric_label:
                 normalized.append(
                     ContentBlock(
                         type=ContentBlockType.METRIC,
+                        text=metric_text,
                         value=metric_value,
                         label=metric_label,
                     )
@@ -765,7 +832,6 @@ def _normalize_content_for_recipe(
         update={
             "content_blocks": normalized[:10],
             "emphasis": [truncate(item, 180) for item in content.emphasis[:6]],
-            "source_refs": list(dict.fromkeys(references))[:20],
         }
     )
 
@@ -780,7 +846,6 @@ def _assert_content_source_safe(
             brief.source_text,
             slide.assertion_title,
             slide.takeaway,
-            *(f"{fact.statement} {fact.value}{fact.unit}" for fact in brief.facts),
         ]
     )
     allowed = set(extract_number_tokens(source))
@@ -804,21 +869,7 @@ def _assert_content_source_safe(
     if not risky_claims:
         return
 
-    source_values = [brief.source_text]
-    referenced_fact_ids = set(content.source_refs)
-    for fact in brief.facts:
-        if fact.fact_id not in referenced_fact_ids:
-            continue
-        source_values.extend(
-            [
-                fact.statement,
-                fact.source_excerpt,
-                fact.value,
-                f"{fact.value}{fact.unit}",
-                f"{fact.statement} {fact.value}{fact.unit}",
-            ]
-        )
-    unsupported = unsupported_qualitative_claims(risky_claims, source_values)
+    unsupported = unsupported_qualitative_claims(risky_claims, [brief.source_text])
     if unsupported:
         summary = "; ".join(
             f"{kind}={truncate(value, 100)!r}" for kind, value in unsupported[:4]
@@ -841,27 +892,6 @@ def _content_qualitative_claims(content: SlideContentSpec) -> list[tuple[str, st
         for value in [block.text, *block.items, block.label, block.value]:
             claims.extend(_qualitative_claims(value, force_quote=is_quote))
     return _deduplicate_qualitative_claims(claims)
-
-
-def _bounded_fact_statements(facts: list[Any], slide: SlidePlan, *, limit: int) -> list[str]:
-    capacity = get_recipe(slide.layout_family).capacity
-    item_count = max(1, min(limit, capacity.items or limit))
-    per_item = max(60, min(180, capacity.body_chars // item_count if capacity.body_chars else 120))
-    return [truncate(str(fact.statement), per_item) for fact in facts[:limit] if str(fact.statement).strip()]
-
-
-def _rank_facts(brief: DeckBrief, slide: SlidePlan) -> list[Any]:
-    terms = {
-        token.casefold()
-        for token in re.findall(r"[a-zA-Z0-9]{2,}|[\u3400-\u9fff]{2,4}", f"{slide.assertion_title} {slide.takeaway}")
-    }
-    return sorted(
-        brief.facts,
-        key=lambda fact: (
-            -sum(1 for term in terms if term in fact.statement.casefold()),
-            fact.fact_id,
-        ),
-    )
 
 
 def _neighbor_plans(plan: DeckPlan, index: int) -> dict[str, Any]:
@@ -1240,6 +1270,10 @@ def _deduplicate_diagnostics(items: list[dict[str, Any]]) -> list[dict[str, Any]
     return result
 
 
+def _has_error_diagnostic(diagnostics: list[dict[str, Any]]) -> bool:
+    return any(str(item.get("severity") or "").casefold() == "error" for item in diagnostics)
+
+
 def _json_hash(value: Any) -> str:
     canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -1258,6 +1292,29 @@ def _preview_event_id(
     return f"slide-preview:{request_id}:{slide_id}:{identity[:20]}"
 
 
+def _speculative_preview_png(project: DeckProjectPaths, page: int) -> Path:
+    return project.previews / f".page-{int(page):03d}.speculative.png"
+
+
+def _resolve_project_artifact(project: DeckProjectPaths, relative_path: str) -> Path:
+    if not relative_path or Path(relative_path).is_absolute():
+        raise BrowserEnvironmentError("speculative PNG path is invalid")
+    resolved = (project.root / relative_path).resolve()
+    try:
+        resolved.relative_to(project.root)
+    except ValueError as exc:
+        raise BrowserEnvironmentError("speculative PNG path escaped the project directory") from exc
+    return resolved
+
+
+def _discard_speculative_preview(state: DeckGraphState, output_dir: Path) -> None:
+    relative_path = str(state.get("current_speculative_preview_path") or "").strip()
+    if not relative_path:
+        return
+    project = DeckProjectPaths.for_request(output_dir, str(state["request_id"]))
+    _resolve_project_artifact(project, relative_path).unlink(missing_ok=True)
+
+
 def _atomic_write_json(path: Path, value: Any) -> None:
     _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2))
 
@@ -1274,7 +1331,8 @@ def _atomic_write_text(path: Path, value: str) -> None:
 __all__ = [
     "GenerationNodes",
     "MAX_SEMANTIC_REPAIRS",
-    "advance_slide",
+    "SlideProgressTracker",
+    "aggregate_slides",
     "build_fallback_html",
     "capture_png",
     "emit_slide_preview",

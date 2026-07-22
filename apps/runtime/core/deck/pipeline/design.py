@@ -91,7 +91,7 @@ def create_design_spec(
                 system=load_node_prompt("design_director"),
                 user=json.dumps(
                     {
-                        "brief": brief.model_dump(mode="json", exclude={"source_text", "facts"}),
+                        "brief": brief.model_dump(mode="json", exclude={"source_text"}),
                         "deck_plan": plan.model_dump(mode="json"),
                         "selected_theme": selected.model_dump(mode="json"),
                         "rules": {
@@ -133,7 +133,7 @@ def create_design_spec(
     design_payload = design.model_dump(mode="json")
     canonical = json.dumps(design_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     spec_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    blueprints = _page_blueprints(plan)
+    blueprints = _page_blueprints(plan, state.get("layout_preferences") or {})
     template_manifest = {
         "schema": "html-template-manifest.v1",
         "theme_id": selected.theme_id,
@@ -193,10 +193,14 @@ def _lock_approved_identity(proposed: DesignSpec, baseline: DesignSpec) -> Desig
     )
 
 
-def _page_blueprints(plan: DeckPlan) -> list[dict[str, Any]]:
+def _page_blueprints(
+    plan: DeckPlan,
+    layout_preferences: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for slide in plan.slides:
         recipe = get_recipe(slide.layout_family)
+        preference = layout_preferences.get(slide.slide_id) or {}
         result.append(
             {
                 "slide_id": slide.slide_id,
@@ -205,6 +209,7 @@ def _page_blueprints(plan: DeckPlan) -> list[dict[str, Any]]:
                 "assertion_title": slide.assertion_title,
                 "layout_family": slide.layout_family.value,
                 "rhythm": slide.rhythm.value,
+                "layout_variant": str(preference.get("layout_variant") or ""),
                 "recipe": recipe.prompt_manifest(),
             }
         )

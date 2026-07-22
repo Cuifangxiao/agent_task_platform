@@ -10,7 +10,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 
 import core.deck.pipeline.events as events
-from core.deck.design_system.catalog import recipe_prompt_manifest
+from core.deck.design_system.catalog import get_recipe, recipe_prompt_manifest
 from core.deck.domain.factuality import qualitative_claims, unsupported_qualitative_claims
 from core.deck.domain.text import extract_number_tokens, truncate
 from core.deck.runtime.llm import (
@@ -118,9 +118,6 @@ def normalize_request(
         {
             **interpreted_payload,
             "source_text": source_context,
-            # Evidence extraction is intentionally not part of the first
-            # model. Keep the legacy field empty for downstream compatibility.
-            "facts": [],
         }
     )
 
@@ -173,7 +170,7 @@ def plan_deck(
                         "first_role": "cover",
                         "last_role_when_multiple": "closing",
                         "stable_slide_ids": "s01, s02, ...",
-                        "no_invented_facts": True,
+                        "no_invented_claims": True,
                     },
                 },
                 ensure_ascii=False,
@@ -221,13 +218,45 @@ def plan_deck(
         _atomic_write_json(project.deck_plan_json, plan_payload)
         _atomic_write_text(project.outline_markdown, outline_markdown)
     writer(events.outline_ready(outline_markdown))
-    return {"deck_plan": plan_payload}
+    return {
+        "deck_plan": plan_payload,
+        "layout_preferences": allocate_layout_preferences(plan),
+    }
+
+
+def allocate_layout_preferences(plan: DeckPlan) -> dict[str, dict[str, Any]]:
+    """Pre-assign recipe variants so slide generation can safely fan out.
+
+    Variants rotate independently inside each layout family.  The preference
+    is deliberately descriptive rather than model-generated: every branch can
+    see the preceding visual rhythm without waiting for preceding HTML.
+    """
+
+    family_usage: dict[str, int] = {}
+    preferences: dict[str, dict[str, Any]] = {}
+    for slide in plan.slides:
+        family = slide.layout_family.value
+        recipe = get_recipe(slide.layout_family)
+        usage = family_usage.get(family, 0)
+        variant = recipe.variants[usage % len(recipe.variants)]
+        family_usage[family] = usage + 1
+        preferences[slide.slide_id] = {
+            "slide_id": slide.slide_id,
+            "index": slide.index,
+            "layout_family": family,
+            "layout_variant": variant,
+            "rhythm": slide.rhythm.value,
+            "composition_summary": (
+                f"Preallocated {variant} composition for {family} with "
+                f"{slide.rhythm.value} page rhythm."
+            ),
+        }
+    return preferences
 
 
 def _deterministic_plan(brief: DeckBrief) -> DeckPlan:
     count = brief.slide_count
-    facts = brief.facts
-    core = facts[0].statement if facts else brief.goal
+    core = brief.goal
     slides: list[SlidePlan] = []
     for index in range(1, count + 1):
         if index == 1:
@@ -265,11 +294,8 @@ def _deterministic_plan(brief: DeckBrief) -> DeckPlan:
             ]
             role = role_cycle[offset % len(role_cycle)]
             family = family_cycle[offset % len(family_cycle)]
-            fact = facts[offset % len(facts)] if facts else None
-            if fact and fact.value and index == 3:
-                family = LayoutFamily.KEY_METRIC
-            title = truncate(fact.statement if fact else f"{brief.topic}：{brief.goal}", 110)
-            takeaway = truncate(fact.statement if fact else brief.audience_outcome, 300)
+            title = truncate(f"{brief.topic}：{brief.goal}", 110)
+            takeaway = truncate(brief.audience_outcome, 300)
             intent = f"Advance the narrative through {role.value} without repeating earlier pages."
             rhythm = PageRhythm.DENSE if index % 3 else PageRhythm.BREATHING
         slides.append(
@@ -294,9 +320,8 @@ def _deterministic_plan(brief: DeckBrief) -> DeckPlan:
 
 
 def _lock_plan_contract(plan: DeckPlan, brief: DeckBrief) -> DeckPlan:
-    """Restore identifiers and evidence-sensitive recipe choices after LLM output."""
+    """Restore stable identifiers and boundary-page recipes after LLM output."""
 
-    has_numeric_fact = any(fact.value.strip() for fact in brief.facts)
     slides: list[SlidePlan] = []
     final_index = len(plan.slides)
     for index, slide in enumerate(plan.slides, start=1):
@@ -307,10 +332,6 @@ def _lock_plan_contract(plan: DeckPlan, brief: DeckBrief) -> DeckPlan:
             updates.update(
                 {"role": SlideRole.CLOSING, "layout_family": LayoutFamily.CLOSING_RESOLUTION}
             )
-        elif slide.layout_family is LayoutFamily.KEY_METRIC and not has_numeric_fact:
-            # A metric-led composition without a sourced value visually implies
-            # evidence that does not exist.  Use an assertion-led page instead.
-            updates["layout_family"] = LayoutFamily.STATEMENT_FOCUS
         slides.append(slide.model_copy(update=updates))
     return plan.model_copy(update={"deck_title": brief.topic, "slides": slides})
 
@@ -346,16 +367,7 @@ def _assert_source_safe_qualitative_claims(values: list[str], brief: DeckBrief) 
     claims = [claim for value in values for claim in qualitative_claims(value)]
     if not claims:
         return
-    source_values = [brief.topic, brief.source_text]
-    for fact in brief.facts:
-        source_values.extend(
-            [
-                fact.statement,
-                fact.source_excerpt,
-                f"{fact.statement} {fact.value}{fact.unit}",
-            ]
-        )
-    unsupported = unsupported_qualitative_claims(claims, source_values)
+    unsupported = unsupported_qualitative_claims(claims, [brief.topic, brief.source_text])
     if unsupported:
         summary = "; ".join(
             f"{kind}={truncate(value, 100)!r}" for kind, value in unsupported[:4]
@@ -385,4 +397,10 @@ def _atomic_write_text(path: Path, value: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-__all__ = ["PlanningNodes", "deck_plan_markdown", "normalize_request", "plan_deck"]
+__all__ = [
+    "PlanningNodes",
+    "allocate_layout_preferences",
+    "deck_plan_markdown",
+    "normalize_request",
+    "plan_deck",
+]

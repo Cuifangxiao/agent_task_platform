@@ -33,7 +33,6 @@ _STAGES = {
     "capture_png": PptStage.RENDERING,
     "persist_slide_artifacts": PptStage.RENDERING,
     "emit_slide_preview": PptStage.RENDERING,
-    "advance_slide": PptStage.GENERATING_PAGES,
     "assemble_image_pptx": PptStage.ASSEMBLING_PPT,
     # FINISHED remains owned by the service's terminal TASK_COMPLETED event.
     "finalize_deck": PptStage.ASSEMBLING_PPT,
@@ -75,11 +74,14 @@ def template_selected(name: str, template_id: str) -> PipelineEvent:
 
 
 def slide_started(message: str, payload: dict[str, Any]) -> PipelineEvent:
+    total = _positive_int(payload.get("total") or payload.get("page_count"))
     return PipelineEvent(
         EventType.STEP_STARTED,
         PptStage.GENERATING_PAGES,
         message,
-        progress=_page_progress(payload),
+        # Page index is page identity, not completion progress once branches
+        # can start out of order.
+        progress=_make_progress(0, total, "page") if total else None,
         page=_page(payload),
     )
 
@@ -144,9 +146,9 @@ def _make_progress(current: int, total: int, unit: str) -> Progress:
 
 
 def _page_progress(payload: dict[str, Any]) -> Progress | None:
-    index = _positive_int(payload.get("index"))
+    current = _positive_int(payload.get("completed") or payload.get("index"))
     total = _positive_int(payload.get("total") or payload.get("page_count"))
-    return _make_progress(index, total, "page") if index and total else None
+    return _make_progress(current, total, "page") if current and total else None
 
 
 def _page(payload: dict[str, Any]) -> PageDetail | None:

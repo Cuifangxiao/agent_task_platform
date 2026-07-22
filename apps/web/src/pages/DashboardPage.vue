@@ -86,6 +86,8 @@ function providerName(provider: string) {
   if (normalized.includes('openai')) return 'OpenAI'
   if (normalized.includes('deepseek')) return 'DeepSeek'
   if (normalized.includes('qwen') || normalized.includes('dashscope')) return 'Qwen'
+  if (normalized.includes('gemini')) return 'Google Gemini'
+  if (normalized.includes('kimi') || normalized.includes('moonshot')) return 'Kimi'
   return provider
 }
 

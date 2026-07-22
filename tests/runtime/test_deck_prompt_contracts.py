@@ -37,10 +37,10 @@ def test_active_prompts_are_formal_role_contracts(node_key):
 
 
 def test_prompt_version_records_the_semantic_prompt_upgrade():
-    assert PROMPT_VERSION == "html-deck.v3"
+    assert PROMPT_VERSION == "html-deck.v5"
 
 
-def test_brief_prompt_makes_raw_input_authoritative_without_fact_extraction():
+def test_brief_prompt_makes_raw_input_authoritative_without_evidence_extraction():
     prompt = load_node_prompt("deck_brief")
 
     for requirement in (
@@ -50,8 +50,8 @@ def test_brief_prompt_makes_raw_input_authoritative_without_fact_extraction():
         "raw_user_input",
         "Chinese numerals",
         "source_mode",
-        "does not produce facts",
-        "Do not output a `facts` field",
+        "Do not output citations",
+        "runtime-owned inputs",
     ):
         assert requirement in prompt
     assert "deterministic_brief" not in prompt
@@ -118,6 +118,7 @@ def test_html_prompt_defines_composition_fidelity_dom_and_css_contracts():
         "<css_contract>",
         "<anti_template_patterns>",
         "every non-empty approved content block",
+        "layout_preference",
         "--slide-bg",
         "data-title-lines",
         "1600×900",
