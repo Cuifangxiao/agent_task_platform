@@ -557,13 +557,7 @@ JSON 请求不支持附件：
   "thread_id": "5a5f7de4-1c1c-4aeb-8da3-c6994c2b723b",
   "client_request_id": "web-create-019f7e80",
   "agent_config_id": 1,
-  "description": "生成一份介绍 Agent Task Platform 架构的演示文稿",
-  "options": {
-    "language": "zh-CN",
-    "expected_slide_count": 8,
-    "aspect_ratio": "16:9",
-    "template_id": "auto"
-  }
+  "description": "生成一份介绍 Agent Task Platform 架构的 8 页中文演示文稿"
 }
 ```
 
@@ -573,10 +567,8 @@ JSON 请求不支持附件：
 | `client_request_id` | 否 | 最长 128 字符；建议每次用户创建意图生成一个稳定值 |
 | `agent_config_id` | 否 | 正整数；省略或 0 时选择当前用户默认 active PPT 配置，否则选择首个可用配置 |
 | `description` | 是 | trim 后非空，最多 5000 个 Unicode 字符 |
-| `options.language` | 否 | 空值默认 `zh-CN` |
-| `options.expected_slide_count` | 否 | 无符号整数；0 表示不指定 |
-| `options.aspect_ratio` | 否 | 空值默认 `16:9` |
-| `options.template_id` | 否 | 空值默认 `auto` |
+
+语言、目标页数、画面比例和视觉模板不作为独立请求字段。需求解析模型从 `description` 的自然语言中生成全局元数据；Processor 再依据该元数据和页面内容自动选择内部模板。
 
 有附件时使用 `multipart/form-data`：
 
@@ -586,10 +578,6 @@ JSON 请求不支持附件：
 | `client_request_id` | 否 | 规则同 JSON |
 | `agent_config_id` | 否 | 正整数；规则同 JSON |
 | `description` | 是 | PPT 需求 |
-| `language` | 否 | 语言 |
-| `expected_slide_count` | 否 | 正整数 |
-| `aspect_ratio` | 否 | 比例 |
-| `template_id` | 否 | 模板标识 |
 | `attachments` | 否 | 可重复文件字段；推荐名称 |
 | `source_files`、`source_file`、`file` | 否 | 与 `attachments` 等价的上传兼容名称 |
 
@@ -852,7 +840,6 @@ rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
 | `description` | `string` | PPT 需求 |
 | `attachments` | repeated `InputResource` | 内联输入附件 |
 | `models` | repeated `ModelConfig` | 五个节点的最终模型配置 |
-| `options` | `PptOptions` | 语言、页数、比例和模板 |
 
 `InputResource`：
 
@@ -872,7 +859,7 @@ rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
 | `max_tokens` | `int32` | 节点最终参数 |
 | `supports_image_input` | `bool` | 模型图片输入能力 |
 
-`PptOptions` 包含 `language`、`expected_slide_count`、`aspect_ratio`、`template_id`。公开 Task 的 `thread_id` 当前不在 `GeneratePptRequest` proto 中；Go 只用它做列表分组和单 thread worker 互斥，调用 Python 时仍传 `task_id=run_id`。因此 Python 不具有 thread checkpoint 语义。请求也不包含用户会话、当前阶段、resume 数据、review action 或版本号。
+`GeneratePptRequest` 不包含语言、页数、画面比例或模板选项；这些值不由 Go 注入。公开 Task 的 `thread_id` 当前也不在该 proto 中；Go 只用它做列表分组和单 thread worker 互斥，调用 Python 时仍传 `task_id=run_id`。因此 Python 不具有 thread checkpoint 语义。请求也不包含用户会话、当前阶段、resume 数据、review action 或版本号。
 
 ### 13.5 PPT 事件与资源
 

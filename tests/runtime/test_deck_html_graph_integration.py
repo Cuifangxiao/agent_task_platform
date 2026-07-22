@@ -39,7 +39,7 @@ class BriefLLM:
         self.calls += 1
         payload = _human_payload(messages)
         assert payload["raw_user_input"] == "验证完整规划、统一设计、逐页修订和图片型导出。"
-        assert payload["explicit_options"]["target_page_count"] == 8
+        assert "explicit_options" not in payload
         assert "deterministic_brief" not in payload
         return {
             "title": "八页集成测试演示",
@@ -68,9 +68,12 @@ class OutlineLLM:
 
     def invoke(self, messages):
         self.calls += 1
-        payload = _human_payload(messages)
-        if "scene_narrative_template" in payload:
-            assert payload["hard_constraints"]["target_page_count"] == 8
+        raw_prompt = messages[-1][1]
+        if raw_prompt.lstrip().startswith("{"):
+            payload = json.loads(raw_prompt)
+            assert payload["target_page_count"] == 8
+            assert "hard_constraints" not in payload
+            assert "forbidden_fields" not in payload
             return {
                 "scene": "general",
                 "pages": [
@@ -82,7 +85,10 @@ class OutlineLLM:
                     for index, category in enumerate(PAGE_CATEGORIES, start=1)
                 ],
             }
-        assert payload["hard_constraints"]["no_page_concept"] is True
+        assert "<presentation_context>" in raw_prompt
+        assert 'intended for this audience: "演示系统开发与验收人员"' in raw_prompt
+        assert "requested final deck length is 8 pages" in raw_prompt
+        assert '"hard_constraints"' not in raw_prompt
         return {
             "title": "八页集成测试演示",
             "central_thesis": "先锁定整套计划与设计，再按顺序完成每一页。",
@@ -95,9 +101,9 @@ class OutlineLLM:
                     "topics": [
                         {
                             "topic_id": f"t{index:02d}",
-                            "title": f"第{_CHINESE_ORDINALS[index - 1]}页形成独立判断",
-                            "intent": f"这一页推进{_CHINESE_ORDINALS[index - 1]}个叙事任务。",
-                            "key_points": ["推进整套叙事，同时避免重复前页结论。"],
+                            "title": f"第{_CHINESE_ORDINALS[index - 1]}个逻辑判断",
+                            "intent": f"推进第{_CHINESE_ORDINALS[index - 1]}个叙事任务。",
+                            "key_points": ["推进整套叙事，同时避免重复前序结论。"],
                         }
                         for index in range(1, 9)
                     ],
@@ -285,10 +291,6 @@ def _initial_state(output_root: Path, request_id: str) -> dict:
         "user_description": "验证完整规划、统一设计、逐页修订和图片型导出。",
         "uploaded_file_text": "",
         "source_chunks": [],
-        "expected_slide_count": 8,
-        "language": "zh-CN",
-        "aspect_ratio": "16:9",
-        "requested_template_id": "executive_signal",
         "current_slide_index": 0,
         "completed_slides": {},
         "layout_history": [],

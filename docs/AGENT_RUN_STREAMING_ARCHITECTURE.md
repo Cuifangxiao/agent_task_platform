@@ -309,12 +309,7 @@ flowchart LR
   "thread_id": "thread-uuid",
   "client_request_id": "request-uuid",
   "agent_config_id": 12,
-  "description": "生成一份季度复盘 PPT",
-  "options": {
-    "language": "zh-CN",
-    "expected_slide_count": 12,
-    "aspect_ratio": "16:9"
-  }
+  "description": "生成一份 12 页中文季度复盘 PPT"
 }
 ```
 

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 SCHEMA_VERSION = "deck-state.v5"
-PROMPT_VERSION = "html-deck.v6"
+PROMPT_VERSION = "html-deck.v7"
 RENDERER_VERSION = "chromium-html.v2"
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 900

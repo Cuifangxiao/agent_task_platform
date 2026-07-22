@@ -666,7 +666,7 @@ func (repo *memoryRunRepository) FindIdempotent(_ context.Context, ownerID int64
 	return nil, nil
 }
 
-func (repo *memoryRunRepository) CreateOrGet(_ context.Context, task Task, fingerprint string, _ PptOptions) (*Task, bool, error) {
+func (repo *memoryRunRepository) CreateOrGet(_ context.Context, task Task, fingerprint string) (*Task, bool, error) {
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 	repo.createCalls++

@@ -38,20 +38,11 @@ class InputResource:
 
 
 @dataclass(frozen=True)
-class PptOptions:
-    language: str = ""
-    expected_slide_count: int = 0
-    aspect_ratio: str = "16:9"
-    template_id: str = "auto"
-
-
-@dataclass(frozen=True)
 class GeneratePptInput:
     task_id: str
     description: str
     attachments: list[InputResource] = field(default_factory=list)
     models: list[ModelConfig] = field(default_factory=list)
-    options: PptOptions = field(default_factory=PptOptions)
 
 
 class EventType(str, Enum):
@@ -172,7 +163,6 @@ __all__ = [
     "ModelConfig",
     "PageDetail",
     "PipelineEvent",
-    "PptOptions",
     "PptStage",
     "Progress",
     "ResourceRef",

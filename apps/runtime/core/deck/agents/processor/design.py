@@ -58,7 +58,7 @@ def select_template(state: DeckGraphState) -> dict[str, Any]:
             plan.core_message,
         ]
     )
-    theme = select_html_theme(str(state.get("requested_template_id") or "auto"), context)
+    theme = select_html_theme("auto", context)
     writer(events.template_selected(theme.name, theme.theme_id))
     return {
         "selected_template_id": theme.theme_id,

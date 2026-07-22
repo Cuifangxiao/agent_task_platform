@@ -15,6 +15,7 @@ from core.deck.agents.preprocessor import (
 )
 from core.deck.agents.preprocessor.templates import SceneTemplateRepository
 from core.deck.agents.processor.layout import prepare_processor_input
+from core.deck.runtime.llm import StructuredOutputError
 
 
 class _BoundSchemaLLM:
@@ -23,7 +24,8 @@ class _BoundSchemaLLM:
         self.model_type = model_type
 
     def invoke(self, messages):
-        payload = json.loads(messages[-1][1])
+        raw_prompt = messages[-1][1]
+        payload = raw_prompt if self.model_type is LogicalOutline else json.loads(raw_prompt)
         self.parent.calls.append((self.model_type, payload))
         if self.model_type is GlobalMetaInterpretation:
             return {
@@ -73,7 +75,7 @@ class _BoundSchemaLLM:
                 ],
             }
         if self.model_type is PagePlan:
-            target = payload["hard_constraints"]["target_page_count"]
+            target = payload["target_page_count"]
             pages = [
                 {"page_no": 1, "page_category": "cover", "topic": "Transformer 入门"},
                 {"page_no": 2, "page_category": "catalog", "topic": "内容结构"},
@@ -112,15 +114,24 @@ class _SchemaAwareLLM:
         return _BoundSchemaLLM(self, model_type)
 
 
+class _InvalidOutlineLLM:
+    def __init__(self):
+        self.calls = 0
+
+    def with_structured_output(self, _model_type, **_kwargs):
+        return self
+
+    def invoke(self, _messages):
+        self.calls += 1
+        return {}
+
+
 def _initial_state(request_id: str = "preprocessor-test"):
     return {
         "task_id": request_id,
         "request_id": request_id,
         "user_description": "请生成三页 Transformer 论文答辩 PPT，面向初学者。",
         "uploaded_file_text": "",
-        "expected_slide_count": 0,
-        "language": "",
-        "aspect_ratio": "16:9",
     }
 
 
@@ -220,16 +231,28 @@ def test_preprocessor_runs_three_separated_steps_and_persists_contracts(tmp_path
 
     call_types = [model_type for model_type, _payload in llm.calls]
     assert call_types == [GlobalMetaInterpretation, LogicalOutline, PagePlan]
-    outline_payload = llm.calls[1][1]
-    assert "scene_narrative_template" not in outline_payload
-    assert "layout_recipe_manifest" not in outline_payload
+    requirement_payload = llm.calls[0][1]
+    assert set(requirement_payload) == {
+        "raw_user_input",
+        "attachment_context",
+        "hard_constraints",
+    }
+    outline_prompt = llm.calls[1][1]
+    assert isinstance(outline_prompt, str)
+    assert "<presentation_context>" in outline_prompt
+    assert 'intended for this audience: "刚接触深度学习的学生"' in outline_prompt
+    assert "requested final deck length is 3 pages" in outline_prompt
+    assert "do not create, count, reserve, or allocate pages" in outline_prompt
+    assert '"hard_constraints"' not in outline_prompt
+    assert "no_page_concept" not in outline_prompt
+    assert "scene_narrative_template" not in outline_prompt
+    assert "layout_recipe_manifest" not in outline_prompt
     page_payload = llm.calls[2][1]
     assert page_payload["scene_narrative_template"]["scene"] == "thesis_defense"
-    assert page_payload["hard_constraints"]["output_fields_per_page"] == [
-        "page_no",
-        "page_category",
-        "topic",
-    ]
+    assert page_payload["target_page_count"] == 10
+    assert "hard_constraints" not in page_payload
+    assert "forbidden_fields" not in page_payload
+    assert "output_fields_per_page" not in page_payload
 
     project = tmp_path / "preprocessor-test"
     assert (project / "global-meta.json").is_file()
@@ -270,3 +293,21 @@ def test_requirement_parsing_still_requires_the_brief_model(monkeypatch):
 
     with pytest.raises(ValueError, match="missing llm for deck node 'brief'"):
         preprocessor_graph.parse_requirements(_initial_state("missing"), {})
+
+
+def test_invalid_model_outline_fails_instead_of_using_a_programmatic_fallback(monkeypatch):
+    monkeypatch.setattr(preprocessor_graph, "get_stream_writer", lambda: lambda _event: None)
+    requirement_llm = _SchemaAwareLLM()
+    parsed = preprocessor_graph.parse_requirements(
+        _initial_state("invalid-outline"),
+        {"brief": requirement_llm},
+    )
+    outline_llm = _InvalidOutlineLLM()
+
+    with pytest.raises(StructuredOutputError):
+        preprocessor_graph.create_logical_outline(
+            {**_initial_state("invalid-outline"), **parsed},
+            {"outline": outline_llm},
+        )
+
+    assert outline_llm.calls == 3

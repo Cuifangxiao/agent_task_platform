@@ -188,12 +188,6 @@ func (c *Client) GeneratePpt(ctx context.Context, req pptagent.RuntimeRequest) (
 		Description: req.Description,
 		Attachments: attachments,
 		Models:      models,
-		Options: &pptagentpb.PptOptions{
-			Language:           req.Options.Language,
-			ExpectedSlideCount: req.Options.ExpectedSlideCount,
-			AspectRatio:        req.Options.AspectRatio,
-			TemplateId:         req.Options.TemplateID,
-		},
 	}, grpc.MaxCallSendMsgSize(maxPPTGRPCMessageBytes), grpc.MaxCallRecvMsgSize(maxPPTGRPCMessageBytes))
 	if err != nil {
 		cancel()

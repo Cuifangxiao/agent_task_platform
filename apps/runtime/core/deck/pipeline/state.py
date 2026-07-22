@@ -84,10 +84,6 @@ class DeckInputState(TypedDict, total=False):
     user_description: str
     uploaded_file_text: str
     source_chunks: list[dict[str, Any]]
-    expected_slide_count: int
-    language: str
-    aspect_ratio: str
-    requested_template_id: str
 
 
 class DeckPreprocessorState(TypedDict, total=False):

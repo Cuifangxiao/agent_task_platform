@@ -16,7 +16,8 @@ message GeneratePptRequest {
   string description = 2;
   repeated InputResource attachments = 3;
   repeated ModelConfig models = 4;
-  PptOptions options = 5;
+  reserved 5;
+  reserved "options";
 }
 
 message InputResource {
@@ -37,13 +38,6 @@ message ModelConfig {
   double temperature = 7;
   int32 max_tokens = 8;
   bool supports_image_input = 9;
-}
-
-message PptOptions {
-  string language = 1;
-  uint32 expected_slide_count = 2;
-  string aspect_ratio = 3;
-  string template_id = 4;
 }
 
 enum EventType {

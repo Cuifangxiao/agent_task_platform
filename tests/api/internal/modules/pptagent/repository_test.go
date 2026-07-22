@@ -38,8 +38,7 @@ func TestRunRepositoryCreateStoresNullableRequestFields(t *testing.T) {
 	task := repositoryTask(testRunID, now)
 	task.ClientRequestID = ""
 	task.AgentConfigID = 0
-	options := PptOptions{Language: "zh-CN", ExpectedSlideCount: 8, AspectRatio: "16:9", TemplateID: "auto"}
-	optionsJSON, _ := json.Marshal(options)
+	optionsJSON := []byte("{}")
 
 	mock.ExpectExec(regexp.QuoteMeta(insertRunQuery)).
 		WithArgs(
@@ -50,7 +49,7 @@ func TestRunRepositoryCreateStoresNullableRequestFields(t *testing.T) {
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	created, inserted, err := repo.CreateOrGet(t.Context(), task, "", options)
+	created, inserted, err := repo.CreateOrGet(t.Context(), task, "")
 	if err != nil {
 		t.Fatalf("CreateOrGet returned error: %v", err)
 	}
@@ -90,7 +89,7 @@ func TestRunRepositoryDuplicateClientRequestReturnsExistingOrConflict(t *testing
 				WithArgs(task.ownerID, task.ClientRequestID).
 				WillReturnRows(runRows(stored, test.storedFingerprint, false))
 
-			got, inserted, err := repo.CreateOrGet(t.Context(), task, testFingerprint, PptOptions{})
+			got, inserted, err := repo.CreateOrGet(t.Context(), task, testFingerprint)
 			if test.wantConflict {
 				if !errors.Is(err, ErrClientRequestConflict) || got != nil || inserted {
 					t.Fatalf("conflict result: task=%#v inserted=%v err=%v", got, inserted, err)
@@ -122,7 +121,7 @@ func TestRunRepositoryDuplicateActiveThreadReturnsConflict(t *testing.T) {
 		WithArgs(task.ownerID, task.ThreadID).
 		WillReturnRows(runRows(active, "", true))
 
-	got, inserted, err := repo.CreateOrGet(t.Context(), task, "", PptOptions{})
+	got, inserted, err := repo.CreateOrGet(t.Context(), task, "")
 	if !errors.Is(err, ErrThreadRunConflict) || got != nil || inserted {
 		t.Fatalf("active-thread result: task=%#v inserted=%v err=%v", got, inserted, err)
 	}

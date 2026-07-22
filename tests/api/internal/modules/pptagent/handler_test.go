@@ -25,8 +25,6 @@ func TestCreateTaskBindsMultipartAttachments(t *testing.T) {
 	_ = writer.WriteField("client_request_id", "request-42")
 	_ = writer.WriteField("agent_config_id", "42")
 	_ = writer.WriteField("description", "Generate a platform overview")
-	_ = writer.WriteField("language", "zh-CN")
-	_ = writer.WriteField("expected_slide_count", "8")
 	file, _ := writer.CreateFormFile("attachments", "source.md")
 	_, _ = file.Write([]byte("# Source"))
 	_ = writer.Close()
@@ -46,8 +44,8 @@ func TestCreateTaskBindsMultipartAttachments(t *testing.T) {
 	if service.created.ThreadID != "thread-42" || service.created.ClientRequestID != "request-42" || service.created.Description != "Generate a platform overview" || service.created.AgentConfigID != 42 {
 		t.Fatalf("unexpected request: %#v", service.created)
 	}
-	if service.created.Options.ExpectedSlideCount != 8 || len(service.created.Attachments) != 1 {
-		t.Fatalf("unexpected options or attachments: %#v", service.created)
+	if len(service.created.Attachments) != 1 {
+		t.Fatalf("unexpected attachments: %#v", service.created)
 	}
 	attachment := service.created.Attachments[0]
 	if attachment.Name != "source.md" || attachment.SHA256 == "" || string(attachment.Content) != "# Source" {

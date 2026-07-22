@@ -172,11 +172,10 @@ func bindCreateTask(c *gin.Context) (CreateTaskRequest, error) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBodyBytes)
 	var body struct {
-		ThreadID        string     `json:"thread_id"`
-		ClientRequestID string     `json:"client_request_id"`
-		AgentConfigID   int64      `json:"agent_config_id"`
-		Description     string     `json:"description"`
-		Options         PptOptions `json:"options"`
+		ThreadID        string `json:"thread_id"`
+		ClientRequestID string `json:"client_request_id"`
+		AgentConfigID   int64  `json:"agent_config_id"`
+		Description     string `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		return CreateTaskRequest{}, err
@@ -186,7 +185,6 @@ func bindCreateTask(c *gin.Context) (CreateTaskRequest, error) {
 		ClientRequestID: body.ClientRequestID,
 		AgentConfigID:   body.AgentConfigID,
 		Description:     body.Description,
-		Options:         body.Options,
 	}, nil
 }
 
@@ -202,10 +200,6 @@ func bindMultipartTask(c *gin.Context) (CreateTaskRequest, error) {
 	if err != nil {
 		return CreateTaskRequest{}, fmt.Errorf("agent_config_id: %w", err)
 	}
-	expectedSlideCount, err := parseOptionalUint32(c.PostForm("expected_slide_count"))
-	if err != nil {
-		return CreateTaskRequest{}, fmt.Errorf("expected_slide_count: %w", err)
-	}
 	attachments, err := readAttachments(c.Request.MultipartForm)
 	if err != nil {
 		return CreateTaskRequest{}, err
@@ -216,12 +210,6 @@ func bindMultipartTask(c *gin.Context) (CreateTaskRequest, error) {
 		AgentConfigID:   agentConfigID,
 		Description:     c.PostForm("description"),
 		Attachments:     attachments,
-		Options: PptOptions{
-			Language:           c.PostForm("language"),
-			ExpectedSlideCount: expectedSlideCount,
-			AspectRatio:        c.PostForm("aspect_ratio"),
-			TemplateID:         c.PostForm("template_id"),
-		},
 	}, nil
 }
 
@@ -308,17 +296,6 @@ func parsePositiveInt64(raw string) (int64, error) {
 		return 0, errors.New("must be a positive integer")
 	}
 	return value, nil
-}
-
-func parseOptionalUint32(raw string) (uint32, error) {
-	if strings.TrimSpace(raw) == "" {
-		return 0, nil
-	}
-	value, err := strconv.ParseUint(raw, 10, 32)
-	if err != nil || value == 0 {
-		return 0, errors.New("must be a positive integer")
-	}
-	return uint32(value), nil
 }
 
 func parseTaskListLimit(raw string) (int, error) {

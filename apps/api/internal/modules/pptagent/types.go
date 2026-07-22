@@ -172,7 +172,6 @@ type CreateTaskRequest struct {
 	AgentConfigID   int64
 	Description     string
 	Attachments     []InputResource
-	Options         PptOptions
 }
 
 type InputResource struct {
@@ -195,13 +194,6 @@ type RuntimeModelConfig struct {
 	SupportsImageInput bool
 }
 
-type PptOptions struct {
-	Language           string `json:"language"`
-	ExpectedSlideCount uint32 `json:"expected_slide_count"`
-	AspectRatio        string `json:"aspect_ratio"`
-	TemplateID         string `json:"template_id"`
-}
-
 type RuntimeRequest struct {
 	ThreadID    string
 	RunID       string
@@ -209,7 +201,6 @@ type RuntimeRequest struct {
 	Description string
 	Attachments []InputResource
 	Models      []RuntimeModelConfig
-	Options     PptOptions
 }
 
 type EventStream interface {

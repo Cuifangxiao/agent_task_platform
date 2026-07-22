@@ -103,8 +103,7 @@ func (s *Service) CreateTask(ctx context.Context, user actor.User, req CreateTas
 	if user.UserID <= 0 || req.AgentConfigID < 0 || description == "" || len([]rune(description)) > 5000 || len(threadID) > 128 || len(clientRequestID) > 128 {
 		return nil, fmt.Errorf("%w: user, agent_config_id, or description is invalid", ErrInvalidRequest)
 	}
-	options := normalizeOptions(req.Options)
-	fingerprint, err := createTaskFingerprint(threadID, description, req.AgentConfigID, req.Attachments, options)
+	fingerprint, err := createTaskFingerprint(threadID, description, req.AgentConfigID, req.Attachments)
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint task request: %w", err)
 	}
@@ -165,7 +164,7 @@ func (s *Service) CreateTask(ctx context.Context, user actor.User, req CreateTas
 		}
 		created := false
 		persistCtx, release := persistenceContext(ctx)
-		task, created, err = s.runRepo.CreateOrGet(persistCtx, seed, fingerprint, options)
+		task, created, err = s.runRepo.CreateOrGet(persistCtx, seed, fingerprint)
 		release()
 		if err != nil {
 			if isCreateSemanticError(err) {
@@ -228,7 +227,6 @@ func (s *Service) CreateTask(ctx context.Context, user actor.User, req CreateTas
 		Description: description,
 		Attachments: append([]InputResource(nil), req.Attachments...),
 		Models:      models,
-		Options:     options,
 	}
 	go s.runTask(taskContext, user.UserID, runtimeRequest)
 	return task, nil
@@ -774,20 +772,7 @@ func taskResourceURL(taskID string, resource ResourceRef) string {
 	return "/api/v1/ppt/tasks/" + url.PathEscape(taskID) + "/artifacts/" + strings.Join(parts, "/")
 }
 
-func normalizeOptions(options PptOptions) PptOptions {
-	options.Language = strings.TrimSpace(options.Language)
-	options.AspectRatio = strings.TrimSpace(options.AspectRatio)
-	options.TemplateID = strings.TrimSpace(options.TemplateID)
-	if options.AspectRatio == "" {
-		options.AspectRatio = "16:9"
-	}
-	if options.TemplateID == "" {
-		options.TemplateID = "auto"
-	}
-	return options
-}
-
-func createTaskFingerprint(threadID, description string, agentConfigID int64, attachments []InputResource, options PptOptions) (string, error) {
+func createTaskFingerprint(threadID, description string, agentConfigID int64, attachments []InputResource) (string, error) {
 	type fingerprintAttachment struct {
 		ResourceID    string `json:"resource_id"`
 		Name          string `json:"name"`
@@ -801,7 +786,6 @@ func createTaskFingerprint(threadID, description string, agentConfigID int64, at
 		AgentConfigID int64                   `json:"agent_config_id"`
 		Description   string                  `json:"description"`
 		Attachments   []fingerprintAttachment `json:"attachments"`
-		Options       PptOptions              `json:"options"`
 	}
 	items := make([]fingerprintAttachment, 0, len(attachments))
 	for _, attachment := range attachments {
@@ -820,7 +804,6 @@ func createTaskFingerprint(threadID, description string, agentConfigID int64, at
 		AgentConfigID: agentConfigID,
 		Description:   strings.TrimSpace(description),
 		Attachments:   items,
-		Options:       normalizeOptions(options),
 	})
 	if err != nil {
 		return "", err

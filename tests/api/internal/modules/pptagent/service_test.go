@@ -52,12 +52,6 @@ func TestCreateTaskUsesIndependentContextAndCompletes(t *testing.T) {
 	if runtime.request.ThreadID != task.ThreadID || runtime.request.RunID != task.RunID || runtime.request.TaskID != task.RunID {
 		t.Fatalf("runtime request did not receive thread/run aliases: %#v", runtime.request)
 	}
-	if runtime.request.Options.Language != "" {
-		t.Fatalf("unspecified language must remain empty for the Brief Agent, got %q", runtime.request.Options.Language)
-	}
-	if runtime.request.Options.AspectRatio != "16:9" {
-		t.Fatalf("unexpected aspect ratio default: %q", runtime.request.Options.AspectRatio)
-	}
 	close(release)
 
 	completed := waitForTask(t, service, 7, task.TaskID, TaskSucceeded)

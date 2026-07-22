@@ -12,7 +12,6 @@ from core.deck.domain.contracts import (
     GeneratePptInput,
     InputResource,
     ModelConfig,
-    PptOptions,
     PptStage,
     ResourceRef,
     ResourceType,
@@ -85,12 +84,6 @@ class PptHandler:
                 )
                 for item in request.models
             ],
-            options=PptOptions(
-                language=request.options.language,
-                expected_slide_count=request.options.expected_slide_count,
-                aspect_ratio=request.options.aspect_ratio,
-                template_id=request.options.template_id,
-            ),
         )
         for event in self._service.generate_ppt(inp):
             if context is not None and hasattr(context, "is_active") and not context.is_active():

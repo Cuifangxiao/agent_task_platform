@@ -99,9 +99,6 @@ class DeckService:
                 ),
             )
 
-            aspect_ratio = inp.options.aspect_ratio.strip() or "16:9"
-            if aspect_ratio != "16:9":
-                raise ValueError("the HTML deck renderer currently supports only 16:9")
             initial_state = {
                 "schema_version": SCHEMA_VERSION,
                 "prompt_version": PROMPT_VERSION,
@@ -116,12 +113,6 @@ class DeckService:
                 "uploaded_file_text": uploaded_file_text,
                 "source_chunks": source_chunks,
                 "user_description": description,
-                "expected_slide_count": max(0, int(inp.options.expected_slide_count or 0)),
-                "language": inp.options.language.strip(),
-                "aspect_ratio": aspect_ratio,
-                # The public transport calls this ``template_id``; inside the
-                # graph it is a preference resolved against the current catalog.
-                "requested_template_id": inp.options.template_id.strip() or "auto",
                 "current_slide_index": 0,
                 "completed_slides": {},
                 "layout_history": [],

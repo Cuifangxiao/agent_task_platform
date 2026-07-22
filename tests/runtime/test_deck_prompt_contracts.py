@@ -38,7 +38,7 @@ def test_active_prompts_are_formal_role_contracts(node_key):
 
 
 def test_prompt_version_records_the_semantic_prompt_upgrade():
-    assert PROMPT_VERSION == "html-deck.v6"
+    assert PROMPT_VERSION == "html-deck.v7"
 
 
 def test_brief_prompt_makes_raw_input_authoritative_without_evidence_extraction():
@@ -62,9 +62,12 @@ def test_planner_prompt_covers_narrative_layout_rhythm_and_whole_deck_coherence(
 
     for requirement in (
         "<narrative_workflow>",
+        "<hard_constraints>",
         "<separation_boundary>",
         "<quality_gate>",
         "no concept of slides or layouts",
+        "must not create, count, reserve, or allocate pages",
+        "Those decisions belong to later processor modules",
         "repaginated",
     ):
         assert requirement in prompt
@@ -78,6 +81,12 @@ def test_page_mapper_prompt_allows_only_asset_a_and_semantic_page_fields():
         "only template asset",
         "page_no, page_category, and topic",
         "Do not output layout_id",
+        "layout_template",
+        "layout_family",
+        "content payloads",
+        "media",
+        "HTML",
+        "SVG",
         "processor phase",
     ):
         assert requirement in prompt

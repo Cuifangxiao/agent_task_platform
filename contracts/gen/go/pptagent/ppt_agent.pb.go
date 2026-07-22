@@ -224,7 +224,6 @@ type GeneratePptRequest struct {
 	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
 	Attachments   []*InputResource       `protobuf:"bytes,3,rep,name=attachments,proto3" json:"attachments,omitempty"`
 	Models        []*ModelConfig         `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
-	Options       *PptOptions            `protobuf:"bytes,5,opt,name=options,proto3" json:"options,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -283,13 +282,6 @@ func (x *GeneratePptRequest) GetAttachments() []*InputResource {
 func (x *GeneratePptRequest) GetModels() []*ModelConfig {
 	if x != nil {
 		return x.Models
-	}
-	return nil
-}
-
-func (x *GeneratePptRequest) GetOptions() *PptOptions {
-	if x != nil {
-		return x.Options
 	}
 	return nil
 }
@@ -478,74 +470,6 @@ func (x *ModelConfig) GetSupportsImageInput() bool {
 	return false
 }
 
-type PptOptions struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	Language           string                 `protobuf:"bytes,1,opt,name=language,proto3" json:"language,omitempty"`
-	ExpectedSlideCount uint32                 `protobuf:"varint,2,opt,name=expected_slide_count,json=expectedSlideCount,proto3" json:"expected_slide_count,omitempty"`
-	AspectRatio        string                 `protobuf:"bytes,3,opt,name=aspect_ratio,json=aspectRatio,proto3" json:"aspect_ratio,omitempty"`
-	TemplateId         string                 `protobuf:"bytes,4,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
-}
-
-func (x *PptOptions) Reset() {
-	*x = PptOptions{}
-	mi := &file_ppt_agent_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PptOptions) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PptOptions) ProtoMessage() {}
-
-func (x *PptOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_ppt_agent_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PptOptions.ProtoReflect.Descriptor instead.
-func (*PptOptions) Descriptor() ([]byte, []int) {
-	return file_ppt_agent_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *PptOptions) GetLanguage() string {
-	if x != nil {
-		return x.Language
-	}
-	return ""
-}
-
-func (x *PptOptions) GetExpectedSlideCount() uint32 {
-	if x != nil {
-		return x.ExpectedSlideCount
-	}
-	return 0
-}
-
-func (x *PptOptions) GetAspectRatio() string {
-	if x != nil {
-		return x.AspectRatio
-	}
-	return ""
-}
-
-func (x *PptOptions) GetTemplateId() string {
-	if x != nil {
-		return x.TemplateId
-	}
-	return ""
-}
-
 type Progress struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Current       uint32                 `protobuf:"varint,1,opt,name=current,proto3" json:"current,omitempty"`
@@ -558,7 +482,7 @@ type Progress struct {
 
 func (x *Progress) Reset() {
 	*x = Progress{}
-	mi := &file_ppt_agent_proto_msgTypes[4]
+	mi := &file_ppt_agent_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -570,7 +494,7 @@ func (x *Progress) String() string {
 func (*Progress) ProtoMessage() {}
 
 func (x *Progress) ProtoReflect() protoreflect.Message {
-	mi := &file_ppt_agent_proto_msgTypes[4]
+	mi := &file_ppt_agent_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -583,7 +507,7 @@ func (x *Progress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Progress.ProtoReflect.Descriptor instead.
 func (*Progress) Descriptor() ([]byte, []int) {
-	return file_ppt_agent_proto_rawDescGZIP(), []int{4}
+	return file_ppt_agent_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Progress) GetCurrent() uint32 {
@@ -629,7 +553,7 @@ type ResourceRef struct {
 
 func (x *ResourceRef) Reset() {
 	*x = ResourceRef{}
-	mi := &file_ppt_agent_proto_msgTypes[5]
+	mi := &file_ppt_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -641,7 +565,7 @@ func (x *ResourceRef) String() string {
 func (*ResourceRef) ProtoMessage() {}
 
 func (x *ResourceRef) ProtoReflect() protoreflect.Message {
-	mi := &file_ppt_agent_proto_msgTypes[5]
+	mi := &file_ppt_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -654,7 +578,7 @@ func (x *ResourceRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceRef.ProtoReflect.Descriptor instead.
 func (*ResourceRef) Descriptor() ([]byte, []int) {
-	return file_ppt_agent_proto_rawDescGZIP(), []int{5}
+	return file_ppt_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ResourceRef) GetResourceId() string {
@@ -718,7 +642,7 @@ type PageDetail struct {
 
 func (x *PageDetail) Reset() {
 	*x = PageDetail{}
-	mi := &file_ppt_agent_proto_msgTypes[6]
+	mi := &file_ppt_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -730,7 +654,7 @@ func (x *PageDetail) String() string {
 func (*PageDetail) ProtoMessage() {}
 
 func (x *PageDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_ppt_agent_proto_msgTypes[6]
+	mi := &file_ppt_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -743,7 +667,7 @@ func (x *PageDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PageDetail.ProtoReflect.Descriptor instead.
 func (*PageDetail) Descriptor() ([]byte, []int) {
-	return file_ppt_agent_proto_rawDescGZIP(), []int{6}
+	return file_ppt_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PageDetail) GetPageId() string {
@@ -786,7 +710,7 @@ type ErrorDetail struct {
 
 func (x *ErrorDetail) Reset() {
 	*x = ErrorDetail{}
-	mi := &file_ppt_agent_proto_msgTypes[7]
+	mi := &file_ppt_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -798,7 +722,7 @@ func (x *ErrorDetail) String() string {
 func (*ErrorDetail) ProtoMessage() {}
 
 func (x *ErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_ppt_agent_proto_msgTypes[7]
+	mi := &file_ppt_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -811,7 +735,7 @@ func (x *ErrorDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorDetail.ProtoReflect.Descriptor instead.
 func (*ErrorDetail) Descriptor() ([]byte, []int) {
-	return file_ppt_agent_proto_rawDescGZIP(), []int{7}
+	return file_ppt_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ErrorDetail) GetCode() string {
@@ -853,7 +777,7 @@ type FinalResult struct {
 
 func (x *FinalResult) Reset() {
 	*x = FinalResult{}
-	mi := &file_ppt_agent_proto_msgTypes[8]
+	mi := &file_ppt_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -865,7 +789,7 @@ func (x *FinalResult) String() string {
 func (*FinalResult) ProtoMessage() {}
 
 func (x *FinalResult) ProtoReflect() protoreflect.Message {
-	mi := &file_ppt_agent_proto_msgTypes[8]
+	mi := &file_ppt_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -878,7 +802,7 @@ func (x *FinalResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinalResult.ProtoReflect.Descriptor instead.
 func (*FinalResult) Descriptor() ([]byte, []int) {
-	return file_ppt_agent_proto_rawDescGZIP(), []int{8}
+	return file_ppt_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *FinalResult) GetPptFile() *ResourceRef {
@@ -930,7 +854,7 @@ type AgentEvent struct {
 
 func (x *AgentEvent) Reset() {
 	*x = AgentEvent{}
-	mi := &file_ppt_agent_proto_msgTypes[9]
+	mi := &file_ppt_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -942,7 +866,7 @@ func (x *AgentEvent) String() string {
 func (*AgentEvent) ProtoMessage() {}
 
 func (x *AgentEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_ppt_agent_proto_msgTypes[9]
+	mi := &file_ppt_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -955,7 +879,7 @@ func (x *AgentEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentEvent.ProtoReflect.Descriptor instead.
 func (*AgentEvent) Descriptor() ([]byte, []int) {
-	return file_ppt_agent_proto_rawDescGZIP(), []int{9}
+	return file_ppt_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *AgentEvent) GetTaskId() string {
@@ -1088,13 +1012,12 @@ var File_ppt_agent_proto protoreflect.FileDescriptor
 
 const file_ppt_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x0fppt_agent.proto\x12\tppt.agent\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xec\x01\n" +
+	"\x0fppt_agent.proto\x12\tppt.agent\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xca\x01\n" +
 	"\x12GeneratePptRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
 	"\vattachments\x18\x03 \x03(\v2\x18.ppt.agent.InputResourceR\vattachments\x12.\n" +
-	"\x06models\x18\x04 \x03(\v2\x16.ppt.agent.ModelConfigR\x06models\x12/\n" +
-	"\aoptions\x18\x05 \x01(\v2\x15.ppt.agent.PptOptionsR\aoptions\"\x93\x01\n" +
+	"\x06models\x18\x04 \x03(\v2\x16.ppt.agent.ModelConfigR\x06modelsJ\x04\b\x05\x10\x06R\aoptions\"\x93\x01\n" +
 	"\rInputResource\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
 	"resourceId\x12\x12\n" +
@@ -1112,14 +1035,7 @@ const file_ppt_agent_proto_rawDesc = "" +
 	"\vtemperature\x18\a \x01(\x01R\vtemperature\x12\x1d\n" +
 	"\n" +
 	"max_tokens\x18\b \x01(\x05R\tmaxTokens\x120\n" +
-	"\x14supports_image_input\x18\t \x01(\bR\x12supportsImageInput\"\x9e\x01\n" +
-	"\n" +
-	"PptOptions\x12\x1a\n" +
-	"\blanguage\x18\x01 \x01(\tR\blanguage\x120\n" +
-	"\x14expected_slide_count\x18\x02 \x01(\rR\x12expectedSlideCount\x12!\n" +
-	"\faspect_ratio\x18\x03 \x01(\tR\vaspectRatio\x12\x1f\n" +
-	"\vtemplate_id\x18\x04 \x01(\tR\n" +
-	"templateId\"h\n" +
+	"\x14supports_image_input\x18\t \x01(\bR\x12supportsImageInput\"h\n" +
 	"\bProgress\x12\x18\n" +
 	"\acurrent\x18\x01 \x01(\rR\acurrent\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\rR\x05total\x12\x18\n" +
@@ -1217,7 +1133,7 @@ func file_ppt_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_ppt_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_ppt_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_ppt_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_ppt_agent_proto_goTypes = []any{
 	(EventType)(0),                // 0: ppt.agent.EventType
 	(PptStage)(0),                 // 1: ppt.agent.PptStage
@@ -1225,38 +1141,36 @@ var file_ppt_agent_proto_goTypes = []any{
 	(*GeneratePptRequest)(nil),    // 3: ppt.agent.GeneratePptRequest
 	(*InputResource)(nil),         // 4: ppt.agent.InputResource
 	(*ModelConfig)(nil),           // 5: ppt.agent.ModelConfig
-	(*PptOptions)(nil),            // 6: ppt.agent.PptOptions
-	(*Progress)(nil),              // 7: ppt.agent.Progress
-	(*ResourceRef)(nil),           // 8: ppt.agent.ResourceRef
-	(*PageDetail)(nil),            // 9: ppt.agent.PageDetail
-	(*ErrorDetail)(nil),           // 10: ppt.agent.ErrorDetail
-	(*FinalResult)(nil),           // 11: ppt.agent.FinalResult
-	(*AgentEvent)(nil),            // 12: ppt.agent.AgentEvent
-	(*structpb.Struct)(nil),       // 13: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*Progress)(nil),              // 6: ppt.agent.Progress
+	(*ResourceRef)(nil),           // 7: ppt.agent.ResourceRef
+	(*PageDetail)(nil),            // 8: ppt.agent.PageDetail
+	(*ErrorDetail)(nil),           // 9: ppt.agent.ErrorDetail
+	(*FinalResult)(nil),           // 10: ppt.agent.FinalResult
+	(*AgentEvent)(nil),            // 11: ppt.agent.AgentEvent
+	(*structpb.Struct)(nil),       // 12: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
 }
 var file_ppt_agent_proto_depIdxs = []int32{
 	4,  // 0: ppt.agent.GeneratePptRequest.attachments:type_name -> ppt.agent.InputResource
 	5,  // 1: ppt.agent.GeneratePptRequest.models:type_name -> ppt.agent.ModelConfig
-	6,  // 2: ppt.agent.GeneratePptRequest.options:type_name -> ppt.agent.PptOptions
-	13, // 3: ppt.agent.ModelConfig.provider_options:type_name -> google.protobuf.Struct
-	2,  // 4: ppt.agent.ResourceRef.type:type_name -> ppt.agent.ResourceType
-	8,  // 5: ppt.agent.FinalResult.ppt_file:type_name -> ppt.agent.ResourceRef
-	14, // 6: ppt.agent.AgentEvent.created_at:type_name -> google.protobuf.Timestamp
-	0,  // 7: ppt.agent.AgentEvent.type:type_name -> ppt.agent.EventType
-	1,  // 8: ppt.agent.AgentEvent.stage:type_name -> ppt.agent.PptStage
-	7,  // 9: ppt.agent.AgentEvent.progress:type_name -> ppt.agent.Progress
-	8,  // 10: ppt.agent.AgentEvent.resources:type_name -> ppt.agent.ResourceRef
-	9,  // 11: ppt.agent.AgentEvent.page:type_name -> ppt.agent.PageDetail
-	10, // 12: ppt.agent.AgentEvent.error:type_name -> ppt.agent.ErrorDetail
-	11, // 13: ppt.agent.AgentEvent.final_result:type_name -> ppt.agent.FinalResult
-	3,  // 14: ppt.agent.PptAgentService.GeneratePpt:input_type -> ppt.agent.GeneratePptRequest
-	12, // 15: ppt.agent.PptAgentService.GeneratePpt:output_type -> ppt.agent.AgentEvent
-	15, // [15:16] is the sub-list for method output_type
-	14, // [14:15] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	12, // 2: ppt.agent.ModelConfig.provider_options:type_name -> google.protobuf.Struct
+	2,  // 3: ppt.agent.ResourceRef.type:type_name -> ppt.agent.ResourceType
+	7,  // 4: ppt.agent.FinalResult.ppt_file:type_name -> ppt.agent.ResourceRef
+	13, // 5: ppt.agent.AgentEvent.created_at:type_name -> google.protobuf.Timestamp
+	0,  // 6: ppt.agent.AgentEvent.type:type_name -> ppt.agent.EventType
+	1,  // 7: ppt.agent.AgentEvent.stage:type_name -> ppt.agent.PptStage
+	6,  // 8: ppt.agent.AgentEvent.progress:type_name -> ppt.agent.Progress
+	7,  // 9: ppt.agent.AgentEvent.resources:type_name -> ppt.agent.ResourceRef
+	8,  // 10: ppt.agent.AgentEvent.page:type_name -> ppt.agent.PageDetail
+	9,  // 11: ppt.agent.AgentEvent.error:type_name -> ppt.agent.ErrorDetail
+	10, // 12: ppt.agent.AgentEvent.final_result:type_name -> ppt.agent.FinalResult
+	3,  // 13: ppt.agent.PptAgentService.GeneratePpt:input_type -> ppt.agent.GeneratePptRequest
+	11, // 14: ppt.agent.PptAgentService.GeneratePpt:output_type -> ppt.agent.AgentEvent
+	14, // [14:15] is the sub-list for method output_type
+	13, // [13:14] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_ppt_agent_proto_init() }
@@ -1264,7 +1178,7 @@ func file_ppt_agent_proto_init() {
 	if File_ppt_agent_proto != nil {
 		return
 	}
-	file_ppt_agent_proto_msgTypes[9].OneofWrappers = []any{
+	file_ppt_agent_proto_msgTypes[8].OneofWrappers = []any{
 		(*AgentEvent_Page)(nil),
 		(*AgentEvent_Error)(nil),
 		(*AgentEvent_FinalResult)(nil),
@@ -1275,7 +1189,7 @@ func file_ppt_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ppt_agent_proto_rawDesc), len(file_ppt_agent_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   10,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

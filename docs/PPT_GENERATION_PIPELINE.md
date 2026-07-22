@@ -104,7 +104,7 @@ LLM 边界使用 `core/deck/agents/preprocessor/schema.py` 与 `core/deck/domain
 | `html_slide_designer.md` | 从焦点和阅读路径出发构图，完整执行 content、DOM、CSS、SVG、安全和几何合同 |
 | `html_repair.md` | 按诊断优先级和最小改动阶梯修复，不改事实、标题、主题或 layout family |
 
-当前机器可读版本标识为 `deck-state.v5`、`html-deck.v6` 和 `chromium-html.v2`。正式节点提示词统一采用岗位合同；prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/pipeline/state.py` 将 state 分为八个逻辑区域：
+当前机器可读版本标识为 `deck-state.v5`、`html-deck.v7` 和 `chromium-html.v2`。正式节点提示词统一采用岗位合同；prompt 由 `load_node_prompt()` 缓存，部署新版本后必须重启 runtime 进程。`core/deck/pipeline/state.py` 将 state 分为八个逻辑区域：
 
 - `DeckRunState`：版本、run/request ID 和图内状态；失败终态及错误详情由图外的 service 事件统一发布；
 - `DeckInputState`：用户描述、解析后文本、source chunks、页数、语言和模板偏好；

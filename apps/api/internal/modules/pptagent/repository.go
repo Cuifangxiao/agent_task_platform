@@ -64,7 +64,7 @@ const updateRecoveredRunSnapshotQuery = `
 // event log. Live WebSocket fan-out remains the responsibility of TaskHub.
 type RunRepository interface {
 	FindIdempotent(context.Context, int64, string, string) (*Task, error)
-	CreateOrGet(context.Context, Task, string, PptOptions) (*Task, bool, error)
+	CreateOrGet(context.Context, Task, string) (*Task, bool, error)
 	Get(context.Context, int64, string) (*Task, error)
 	List(context.Context, int64, string, int) ([]*Task, error)
 	AppendEvent(context.Context, AgentEvent, time.Time) (*Task, *AgentEvent, error)
@@ -123,7 +123,7 @@ func (r *mysqlRunRepository) FindIdempotent(ctx context.Context, ownerID int64, 
 // CreateOrGet atomically relies on MySQL uniqueness for durable idempotency
 // and the one-worker-per-owner/thread invariant. The bool is true only when a
 // new row was inserted.
-func (r *mysqlRunRepository) CreateOrGet(ctx context.Context, task Task, fingerprint string, options PptOptions) (*Task, bool, error) {
+func (r *mysqlRunRepository) CreateOrGet(ctx context.Context, task Task, fingerprint string) (*Task, bool, error) {
 	if r == nil || r.db == nil {
 		return nil, false, fmt.Errorf("%w: run repository is unavailable", ErrInvalidRequest)
 	}
@@ -134,10 +134,9 @@ func (r *mysqlRunRepository) CreateOrGet(ctx context.Context, task Task, fingerp
 	task = prepared.task
 	fingerprint = prepared.requestFingerprint
 
-	optionsJSON, err := json.Marshal(options)
-	if err != nil {
-		return nil, false, fmt.Errorf("marshal ppt run options: %w", err)
-	}
+	// Keep the legacy non-null database column stable while the public and
+	// runtime request contracts no longer accept presentation options.
+	optionsJSON := []byte("{}")
 	resultJSON, err := marshalOptionalJSON(task.Result)
 	if err != nil {
 		return nil, false, fmt.Errorf("marshal ppt run result: %w", err)
