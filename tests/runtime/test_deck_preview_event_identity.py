@@ -1,4 +1,4 @@
-import core.deck.pipeline.generation as nodes
+import core.deck.agents.processor.generation as nodes
 
 
 def test_preview_event_id_is_stable_for_replay_and_changes_with_content_or_resource_hash():

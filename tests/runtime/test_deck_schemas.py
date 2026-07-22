@@ -1,12 +1,8 @@
-import json
-
 import pytest
 from pydantic import ValidationError
 
-import core.deck.pipeline.planning as planning_nodes
-from core.deck.pipeline.design import _has_readable_contrast, _lock_approved_identity
-from core.deck.pipeline.planning import _deterministic_plan
-from core.deck.pipeline.generation import _normalize_content_for_recipe
+from core.deck.agents.processor.design import _has_readable_contrast, _lock_approved_identity
+from core.deck.agents.processor.generation import _normalize_content_for_recipe
 from core.deck.design_system.catalog import (
     get_html_theme,
     list_html_themes,
@@ -16,7 +12,6 @@ from core.deck.design_system.catalog import (
 from core.deck.domain.schemas import (
     ContentBlock,
     DeckBrief,
-    DeckBriefInterpretation,
     DeckPlan,
     HtmlSlideSpec,
     LayoutFamily,
@@ -153,175 +148,6 @@ def test_catalog_rejects_removed_or_unknown_theme_ids():
     assert design.typography.body.size_px >= 21
 
 
-def test_brief_model_boundary_excludes_runtime_owned_source_and_legacy_facts():
-    model_payload = {
-        "topic": "Transformer 入门",
-        "audience": "刚接触深度学习的学生",
-        "goal": "解释 Transformer 的核心思路",
-        "audience_outcome": "能够说清注意力机制在模型中的作用",
-        "tone": "清晰、教学导向",
-        "language": "zh-CN",
-        "slide_count": 3,
-        "aspect_ratio": "16:9",
-        "communication_job": "演示结束时，学生应能建立 Transformer 的基础认知框架。",
-        "content_requirements": ["解释核心结构", "控制在三页"],
-        "brand_preferences": [],
-        "color_preferences": [],
-        "style_preferences": ["简洁的技术教学风格"],
-        "source_mode": "general_knowledge",
-    }
-
-    interpreted = DeckBriefInterpretation.model_validate(model_payload)
-    brief = DeckBrief.model_validate(
-        {**interpreted.model_dump(mode="json"), "source_text": "原始请求"}
-    )
-    plan = _deterministic_plan(brief)
-
-    assert brief.slide_count == 3
-    assert "facts" not in brief.model_dump(mode="json")
-    assert len(plan.slides) == 3
-    with pytest.raises(ValidationError, match="Extra inputs"):
-        DeckBriefInterpretation.model_validate(
-            {**model_payload, "source_text": "模型不应输出", "facts": []}
-        )
-    with pytest.raises(ValidationError, match="Extra inputs"):
-        DeckBrief.model_validate(
-            {**brief.model_dump(mode="json"), "facts": []}
-        )
-    missing_language = dict(model_payload)
-    missing_language.pop("language")
-    with pytest.raises(ValidationError, match="Field required"):
-        DeckBriefInterpretation.model_validate(missing_language)
-
-
-class _StaticStructuredLLM:
-    def __init__(self, response):
-        self.response = response
-        self.calls = 0
-        self.messages = []
-
-    def with_structured_output(self, _model_type):
-        return self
-
-    def invoke(self, messages):
-        self.calls += 1
-        self.messages.append(messages)
-        return self.response
-
-
-def test_plan_deck_falls_back_when_model_title_invents_qualitative_fact(monkeypatch):
-    emitted = []
-    monkeypatch.setattr(planning_nodes, "get_stream_writer", lambda: emitted.append)
-    brief = _brief(
-        goal="Explain the product without customer evidence.",
-        source_text="Explain the product without customer evidence.",
-    )
-    fallback = _deterministic_plan(brief)
-    slides = list(fallback.slides)
-    slides[0] = slides[0].model_copy(
-        update={
-            "assertion_title": "CEO Alice said customers adopted Atlas.",
-            "takeaway": "Atlas has reduced onboarding uncertainty.",
-        }
-    )
-    invented = fallback.model_copy(
-        update={
-            "core_message": "A fabricated customer account anchors the story.",
-            "slides": slides,
-        }
-    )
-    llm = _StaticStructuredLLM(invented)
-
-    result = planning_nodes.plan_deck(
-        {"brief": brief.model_dump(mode="json")},
-        {"outline": llm},
-    )
-
-    assert result["deck_plan"] == fallback.model_dump(mode="json")
-    assert llm.calls == 1
-    assert any("unsupported qualitative factual claims" in event.message for event in emitted)
-
-
-def test_planner_guard_allows_exact_source_and_ordinary_framing():
-    sourced_claim = "CEO Alice said customers adopted Atlas."
-    brief = _brief(source_text=sourced_claim)
-
-    planning_nodes._assert_source_safe_qualitative_claims(
-        [
-            sourced_claim,
-            "Customer outcomes",
-            "Teams can improve handoffs by reducing ambiguity.",
-        ],
-        brief,
-    )
-
-
-def test_normalize_request_uses_first_model_to_interpret_raw_chinese_request(monkeypatch):
-    emitted = []
-    monkeypatch.setattr(planning_nodes, "get_stream_writer", lambda: emitted.append)
-    description = "请生成三页介绍 Transformer 的 PPT，面向刚接触深度学习的学生。"
-    state = {
-        "deck_title": description,
-        "user_description": description,
-        "uploaded_file_text": "",
-        "source_chunks": [],
-        "expected_slide_count": 0,
-        "language": "",
-        "aspect_ratio": "16:9",
-        "requested_template_id": "auto",
-    }
-    brief_llm = _StaticStructuredLLM(
-        {
-            "topic": "Transformer 入门",
-            "audience": "刚接触深度学习的学生",
-            "goal": "用三页解释 Transformer 的核心思路",
-            "audience_outcome": "建立对 Transformer 及注意力机制的基础认知",
-            "tone": "清晰、教学导向",
-            "language": "zh-CN",
-            "slide_count": 3,
-            "aspect_ratio": "16:9",
-            "communication_job": (
-                "演示结束时，初学者应能说清 Transformer 的基本作用和核心机制。"
-            ),
-            "content_requirements": ["控制在三页", "解释 Transformer 的核心机制"],
-            "brand_preferences": [],
-            "color_preferences": [],
-            "style_preferences": ["简洁的技术教学风格"],
-            "source_mode": "general_knowledge",
-        }
-    )
-
-    normalized = planning_nodes.normalize_request(state, {"brief": brief_llm})
-    normalized_brief = planning_nodes.DeckBrief.model_validate(normalized["brief"])
-    assert normalized["deck_title"] == "Transformer 入门"
-    assert normalized_brief.topic == "Transformer 入门"
-    assert normalized_brief.slide_count == 3
-    assert normalized_brief.audience == "刚接触深度学习的学生"
-    assert normalized_brief.source_text == description
-    assert "facts" not in normalized["brief"]
-    assert brief_llm.calls == 1
-
-    payload = json.loads(brief_llm.messages[0][-1][1])
-    assert payload["raw_user_input"] == description
-    assert payload["explicit_options"]["slide_count"] is None
-    assert payload["explicit_options"]["language"] is None
-    assert payload["attachment_context"] == {"present": False, "normalized_text": ""}
-    assert "deterministic_brief" not in payload
-    assert "facts" not in payload
-    assert emitted[-1].message == "Deck brief ready"
-
-
-def test_plan_contract_keeps_key_metric_without_a_fact_ledger():
-    brief = _brief(slide_count=3)
-    plan = _deterministic_plan(brief)
-    slides = list(plan.slides)
-    slides[1] = slides[1].model_copy(update={"layout_family": LayoutFamily.KEY_METRIC})
-
-    locked = planning_nodes._lock_plan_contract(plan.model_copy(update={"slides": slides}), brief)
-
-    assert locked.slides[1].layout_family is LayoutFamily.KEY_METRIC
-
-
 @pytest.mark.parametrize("metric_value", ["35%", "复购"])
 def test_metric_block_survives_recipe_normalization_without_a_fact_ledger(metric_value):
     brief = _brief(source_text=f"The approved measure is {metric_value}.")
@@ -339,22 +165,6 @@ def test_metric_block_survives_recipe_normalization_without_a_fact_ledger(metric
 
     assert normalized.content_blocks[0].type.value == "metric"
     assert normalized.content_blocks[0].value == metric_value
-
-
-def test_normalize_request_requires_a_brief_model(monkeypatch):
-    monkeypatch.setattr(planning_nodes, "get_stream_writer", lambda: lambda _event: None)
-
-    with pytest.raises(ValueError, match="missing llm for deck node 'brief'"):
-        planning_nodes.normalize_request(
-            {
-                "user_description": "Create a short architecture overview.",
-                "uploaded_file_text": "",
-                "expected_slide_count": 0,
-                "language": "",
-                "aspect_ratio": "16:9",
-            },
-            {},
-        )
 
 
 def test_style_model_cannot_override_browser_tested_catalog_tokens():

@@ -58,7 +58,7 @@ class SuccessfulGraph:
 class FailingGraph:
     def stream(self, _initial_state, *, stream_mode):
         assert stream_mode == ["custom", "values"]
-        yield ("custom", events.stage_started("plan_deck", "Planning"))
+        yield ("custom", events.stage_started("create_logical_outline", "Planning"))
         raise RuntimeError("private pipeline details")
 
 

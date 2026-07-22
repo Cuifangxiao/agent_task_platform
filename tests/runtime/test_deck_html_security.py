@@ -1,7 +1,7 @@
 import pytest
 
 from core.deck.design_system.catalog import get_html_theme
-from core.deck.pipeline.generation import (
+from core.deck.agents.processor.generation import (
     _assert_content_source_safe,
     _content_contract_diagnostics,
 )

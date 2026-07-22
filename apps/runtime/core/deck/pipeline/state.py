@@ -90,7 +90,18 @@ class DeckInputState(TypedDict, total=False):
     requested_template_id: str
 
 
-class DeckPlanningState(TypedDict, total=False):
+class DeckPreprocessorState(TypedDict, total=False):
+    """Canonical outputs of the preprocessor phase."""
+
+    global_meta: dict[str, Any]
+    logical_outline: dict[str, Any]
+    narrative_template: dict[str, Any]
+    page_plan: dict[str, Any]
+
+
+class DeckProcessorPlanningState(TypedDict, total=False):
+    """Layout-aware contracts created inside the processor phase."""
+
     brief: dict[str, Any]
     deck_plan: dict[str, Any]
     # Deterministic recipe variants are allocated with the plan so parallel
@@ -98,12 +109,12 @@ class DeckPlanningState(TypedDict, total=False):
     layout_preferences: dict[str, dict[str, Any]]
 
 
-class DeckDesignState(TypedDict, total=False):
+class DeckProcessorDesignState(TypedDict, total=False):
     selected_template_id: str
     design_spec: dict[str, Any]
 
 
-class DeckCurrentSlideState(TypedDict, total=False):
+class DeckProcessorSlideState(TypedDict, total=False):
     current_slide_index: int
     current_slide_plan: dict[str, Any]
     current_slide_content_spec: dict[str, Any]
@@ -122,7 +133,7 @@ class DeckCurrentSlideState(TypedDict, total=False):
     previous_compositions: list[dict[str, Any]]
 
 
-class DeckGenerationState(TypedDict, total=False):
+class DeckProcessorResultState(TypedDict, total=False):
     # Canonical idempotent output map. Nodes replace values by slide_id; they
     # never use an append reducer that could duplicate a replayed page.
     completed_slides: Annotated[dict[str, dict[str, Any]], merge_completed_slides]
@@ -138,31 +149,33 @@ class SlideGenerationOutput(TypedDict, total=False):
     validation_issues: list[dict[str, Any]]
 
 
-class DeckOutputState(TypedDict, total=False):
+class DeckPostprocessorState(TypedDict, total=False):
     artifact_path: str
 
 
 class DeckGraphState(
     DeckRunState,
     DeckInputState,
-    DeckPlanningState,
-    DeckDesignState,
-    DeckCurrentSlideState,
-    DeckGenerationState,
-    DeckOutputState,
+    DeckPreprocessorState,
+    DeckProcessorPlanningState,
+    DeckProcessorDesignState,
+    DeckProcessorSlideState,
+    DeckProcessorResultState,
+    DeckPostprocessorState,
     total=False,
 ):
     """Complete state shared by the root graph and isolated slide branches."""
 
 
 __all__ = [
-    "DeckCurrentSlideState",
-    "DeckDesignState",
-    "DeckGenerationState",
     "DeckGraphState",
     "DeckInputState",
-    "DeckOutputState",
-    "DeckPlanningState",
+    "DeckPostprocessorState",
+    "DeckPreprocessorState",
+    "DeckProcessorDesignState",
+    "DeckProcessorPlanningState",
+    "DeckProcessorResultState",
+    "DeckProcessorSlideState",
     "DeckRunState",
     "SlideGenerationOutput",
     "merge_completed_slides",

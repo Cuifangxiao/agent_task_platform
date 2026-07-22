@@ -28,24 +28,25 @@ apps/runtime/
 │   ├── provider/            #   contract.py(Input/Output DTO) + service.py(业务)
 │   ├── deck/                #   PPT HTML-first 领域模块
 │   │   ├── service.py       #   应用入口与终态事件
+│   │   ├── agents/          #   三阶段 agent（各自持有 graph.py）
+│   │   │   ├── preprocessor/   # 需求解析、逻辑大纲、资产 A 分页
+│   │   │   ├── processor/      # layout、design、HTML、DOM QA、repair、PNG
+│   │   │   └── postprocessor/  # manifest、质量报告、PPTX 导出校验
 │   │   ├── domain/          #   contracts、Pydantic schemas、错误与事实规则
-│   │   ├── pipeline/        #   根图、节点、state、events 与 instrumentation
+│   │   ├── pipeline/        #   三阶段根图、共享 state、events 与 instrumentation
 │   │   ├── runtime/         #   LLM 调用、模型注册与请求级指标
 │   │   ├── workspace/       #   来源解析与 task-local 路径
 │   │   ├── design_system/   #   catalog、主题、recipes、base CSS 与本地图标
 │   │   ├── html/            #   sanitizer、assembler、Chromium DOM QA 与 fallback
 │   │   ├── export/          #   image-only PPTX 导出
-│   │   └── prompts/         #   六个正式节点提示词
-│   ├── agents/              #   agent 编排: 组合 llm/rag/memory/tools
-│   ├── llm/                 #   模型接入层: 各 provider 客户端(统一 BaseLLMClient 接口)
-│   ├── rag/  memory/  tools/
+│   │   └── prompts/         #   前处理与 HTML 生成节点提示词
 └── utils/
     └── logger.py            # dictConfig 日志初始化
 ```
 
 测试统一放在仓库根目录的 `tests/runtime/`。
 
-Deck 内部依赖保持单向：`service -> pipeline -> {html, export, runtime, workspace, design_system} -> domain`。各子包的 `__init__.py` 不做 eager re-export，避免普通包导入提前加载 LangGraph、Playwright 或形成初始化循环。
+Deck 内部依赖保持单向：`service -> pipeline/graph -> agents/{preprocessor, processor, postprocessor}`。Preprocessor 不依赖 `design_system/html/export`；processor 使用 `design_system/html` 生成并修复页面；postprocessor 使用 `export` 汇总 PPTX。
 
 ## 分层约定
 
@@ -85,16 +86,23 @@ run 创建独立的 `core/deck/pipeline/graph.py::PptGraph`，通过 custom stre
 当前 HTML-first 流水线在 DesignSpec 锁定后使用 LangGraph `Send` 做页面级 map-reduce：
 
 ```text
-normalize_request -> plan_deck -> select_template -> create_design_spec
--> Send(generate_slide, slide_1 .. slide_n)
-   -> prepare_slide -> generate_slide_content -> generate_slide_html
-   -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
-      -> [repair_slide_html -> sanitize...] | [build_fallback_html -> sanitize...] | capture_png
-   -> persist_slide_artifacts -> emit_slide_preview
--> aggregate_slides -> assemble_image_pptx -> finalize_deck
+preprocessor_phase
+  -> parse_requirements -> create_logical_outline -> map_outline_to_pages
+processor_phase
+  -> prepare_processor_input -> select_template -> create_design_spec
+  -> Send(generate_slide, slide_1 .. slide_n)
+     -> prepare_slide -> generate_slide_content -> generate_slide_html
+     -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
+        -> [repair_slide_html -> sanitize...] | [build_fallback_html -> sanitize...] | capture_png
+     -> persist_slide_artifacts -> emit_slide_preview
+  -> aggregate_slides
+postprocessor_phase
+  -> assemble_image_pptx -> finalize_deck
 ```
 
-LLM 边界使用 `DeckBrief`、`DeckPlan`、`DesignSpec`、`SlideContentSpec` 和
+前处理边界使用 `GlobalMeta`、`LogicalOutline`、`SceneNarrativeTemplate` 和 `PagePlan`；其中
+`PagePlan` 单页只允许 `page_no + page_category + topic`，不读取或保存 layout。Processor 在前处理完成后生成
+layout-aware `DeckBrief`/`DeckPlan`，并继续使用 `DesignSpec`、`SlideContentSpec` 和
 `HtmlSlideSpec` 等严格 Pydantic schema；LangGraph state 只保存可序列化字典、诊断和相对产物信息。
 planner 会预分配 recipe variant，避免 designer 依赖前一分支的实际构图结果；`completed_slides`、
 `layout_history` 和 `validation_issues` 通过 reducer 在 fan-in 时确定性归并。每个请求从头执行，当前没有

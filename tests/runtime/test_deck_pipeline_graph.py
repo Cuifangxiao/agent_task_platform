@@ -1,25 +1,49 @@
-from core.deck.pipeline.graph import (
-    NODE_SEQUENCE,
-    PptGraph,
+import inspect
+from pathlib import Path
+
+import core.deck.agents.postprocessor.graph as postprocessor_graph
+import core.deck.agents.processor.graph as processor_graph
+from core.deck.agents.postprocessor.graph import POSTPROCESSOR_NODE_SEQUENCE
+from core.deck.agents.preprocessor.graph import PREPROCESSOR_NODE_SEQUENCE
+from core.deck.agents.processor.graph import (
+    PROCESSOR_NODE_SEQUENCE,
     SLIDE_NODE_SEQUENCE,
-    _fan_out_slides,
-    _route_after_validation,
+    fan_out_slides,
+    route_after_validation,
 )
+from core.deck.agents.processor.layout import allocate_layout_preferences
+from core.deck.pipeline.graph import NODE_SEQUENCE, PptGraph
 from core.deck.pipeline.state import DeckGraphState
-from core.deck.pipeline.planning import allocate_layout_preferences
 from core.deck.domain.schemas import DeckPlan
 
 
 ROOT_EDGES = {
-    ("__start__", "normalize_request"),
-    ("normalize_request", "plan_deck"),
-    ("plan_deck", "select_template"),
+    ("__start__", "preprocessor_phase"),
+    ("preprocessor_phase", "processor_phase"),
+    ("processor_phase", "postprocessor_phase"),
+    ("postprocessor_phase", "__end__"),
+}
+
+PROCESSOR_EDGES = {
+    ("__start__", "prepare_processor_input"),
+    ("prepare_processor_input", "select_template"),
     ("select_template", "create_design_spec"),
     ("create_design_spec", "generate_slide"),
     ("generate_slide", "aggregate_slides"),
-    ("aggregate_slides", "assemble_image_pptx"),
+    ("aggregate_slides", "__end__"),
+}
+
+POSTPROCESSOR_EDGES = {
+    ("__start__", "assemble_image_pptx"),
     ("assemble_image_pptx", "finalize_deck"),
     ("finalize_deck", "__end__"),
+}
+
+PREPROCESSOR_EDGES = {
+    ("__start__", "parse_requirements"),
+    ("parse_requirements", "create_logical_outline"),
+    ("create_logical_outline", "map_outline_to_pages"),
+    ("map_outline_to_pages", "__end__"),
 }
 
 SLIDE_EDGES = {
@@ -44,15 +68,64 @@ def _edges(graph) -> set[tuple[str, str]]:
     return {(edge.source, edge.target) for edge in graph.get_graph().edges}
 
 
-def test_root_graph_fans_out_into_explicit_slide_authoring_subgraph(tmp_path):
+def test_root_graph_cleanly_composes_three_phase_agents(tmp_path):
     module = PptGraph({}, tmp_path, browser_session=object())
 
     assert _edges(module.graph) == ROOT_EDGES
     graph_nodes = set(module.graph.get_graph().nodes) - {"__start__", "__end__"}
     assert graph_nodes == set(NODE_SEQUENCE)
-    assert _edges(module.slide_graph) == SLIDE_EDGES
-    slide_nodes = set(module.slide_graph.get_graph().nodes) - {"__start__", "__end__"}
+    assert _edges(module.processor.graph) == PROCESSOR_EDGES
+    processor_nodes = set(module.processor.graph.get_graph().nodes) - {
+        "__start__",
+        "__end__",
+    }
+    assert processor_nodes == set(PROCESSOR_NODE_SEQUENCE)
+    assert _edges(module.processor.slide_graph) == SLIDE_EDGES
+    slide_nodes = set(module.processor.slide_graph.get_graph().nodes) - {
+        "__start__",
+        "__end__",
+    }
     assert slide_nodes == set(SLIDE_NODE_SEQUENCE)
+    assert _edges(module.preprocessor.graph) == PREPROCESSOR_EDGES
+    preprocessor_nodes = set(module.preprocessor.graph.get_graph().nodes) - {
+        "__start__",
+        "__end__",
+    }
+    assert preprocessor_nodes == set(PREPROCESSOR_NODE_SEQUENCE)
+    assert _edges(module.postprocessor.graph) == POSTPROCESSOR_EDGES
+    postprocessor_nodes = set(module.postprocessor.graph.get_graph().nodes) - {
+        "__start__",
+        "__end__",
+    }
+    assert postprocessor_nodes == set(POSTPROCESSOR_NODE_SEQUENCE)
+
+
+def test_phase_directories_and_dependency_boundaries_are_explicit():
+    deck_root = Path(__file__).resolve().parents[2] / "apps" / "runtime" / "core" / "deck"
+    pipeline_files = {
+        path.name for path in (deck_root / "pipeline").glob("*.py") if path.is_file()
+    }
+    assert pipeline_files == {
+        "__init__.py",
+        "events.py",
+        "graph.py",
+        "instrumentation.py",
+        "state.py",
+    }
+    assert {
+        path.name for path in (deck_root / "agents" / "processor").glob("*.py")
+    } == {"__init__.py", "design.py", "generation.py", "graph.py", "layout.py"}
+    assert {
+        path.name for path in (deck_root / "agents" / "postprocessor").glob("*.py")
+    } == {"__init__.py", "export.py", "graph.py"}
+
+    processor_source = inspect.getsource(processor_graph)
+    postprocessor_source = inspect.getsource(postprocessor_graph)
+    assert "generate_slide_html" in processor_source
+    assert "repair_slide_html" in processor_source
+    assert "ImagePptxExporter" not in processor_source
+    assert "HTMLAssembler" not in postprocessor_source
+    assert "GenerationNodes" not in postprocessor_source
 
 
 def test_every_request_gets_fresh_pipeline_dependencies(tmp_path):
@@ -60,20 +133,19 @@ def test_every_request_gets_fresh_pipeline_dependencies(tmp_path):
     second = PptGraph({}, tmp_path / "second", browser_session=object())
 
     assert first.graph is not second.graph
-    assert first.planning is not second.planning
-    assert first.design is not second.design
-    assert first.generation is not second.generation
-    assert first.delivery is not second.delivery
-    assert first.design.output_dir == tmp_path / "first"
-    assert second.design.output_dir == tmp_path / "second"
-    assert first.generation.output_dir == tmp_path / "first"
-    assert second.delivery.output_dir == (tmp_path / "second").resolve()
+    assert first.preprocessor is not second.preprocessor
+    assert first.processor is not second.processor
+    assert first.postprocessor is not second.postprocessor
+    assert first.processor.design.output_dir == tmp_path / "first"
+    assert second.processor.design.output_dir == tmp_path / "second"
+    assert first.processor.generation.output_dir == tmp_path / "first"
+    assert second.postprocessor.output_dir == (tmp_path / "second").resolve()
 
 
 def test_validation_router_has_only_bounded_repair_outcomes():
-    assert _route_after_validation({"current_render_decision": "valid"}) == "valid"
-    assert _route_after_validation({"current_render_decision": "repair"}) == "repair"
-    assert _route_after_validation({"current_render_decision": "fallback"}) == "fallback"
+    assert route_after_validation({"current_render_decision": "valid"}) == "valid"
+    assert route_after_validation({"current_render_decision": "repair"}) == "repair"
+    assert route_after_validation({"current_render_decision": "fallback"}) == "fallback"
 
 
 def test_send_fanout_assigns_independent_state_and_planned_composition_history():
@@ -106,7 +178,7 @@ def test_send_fanout_assigns_independent_state_and_planned_composition_history()
         "s02": {"slide_id": "s02", "layout_variant": "answer_field"},
     }
 
-    sends = _fan_out_slides(
+    sends = fan_out_slides(
         {
             "deck_plan": {
                 "deck_title": "Demo",
@@ -172,6 +244,9 @@ def test_layout_preferences_rotate_variants_within_a_repeated_family():
 def test_state_contract_contains_only_current_pipeline_concepts():
     fields = set(DeckGraphState.__annotations__)
     assert {
+        "global_meta",
+        "logical_outline",
+        "page_plan",
         "brief",
         "deck_plan",
         "design_spec",

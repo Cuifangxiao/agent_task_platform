@@ -4,7 +4,7 @@ from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-import core.deck.pipeline.delivery as nodes
+import core.deck.agents.postprocessor.export as nodes
 from core.deck.domain.contracts import EventType, ResourceType
 from core.deck.export.image_pptx import ImagePptxExporter
 from core.deck.workspace.paths import DeckProjectPaths

@@ -15,15 +15,15 @@ from core.deck.pipeline.graph import PptGraph
 from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 
 
-SLIDE_ROSTER = (
-    ("cover", "cover_minimal", "anchor"),
-    ("context", "editorial_split", "dense"),
-    ("insight", "three_points", "breathing"),
-    ("evidence", "comparison", "dense"),
-    ("problem", "statement_focus", "anchor"),
-    ("process", "process", "dense"),
-    ("decision", "timeline", "breathing"),
-    ("closing", "closing_resolution", "anchor"),
+PAGE_CATEGORIES = (
+    "cover",
+    "catalog",
+    "content",
+    "chart",
+    "section",
+    "content",
+    "summary",
+    "thanks",
 )
 
 
@@ -39,19 +39,22 @@ class BriefLLM:
         self.calls += 1
         payload = _human_payload(messages)
         assert payload["raw_user_input"] == "验证完整规划、统一设计、逐页修订和图片型导出。"
-        assert payload["explicit_options"]["slide_count"] == 8
+        assert payload["explicit_options"]["target_page_count"] == 8
         assert "deterministic_brief" not in payload
         return {
-            "topic": "八页集成测试演示",
+            "title": "八页集成测试演示",
+            "subtitle": "",
+            "presenter": "",
             "audience": "演示系统开发与验收人员",
+            "scene": "general",
             "goal": "验证演示文稿流水线的完整执行路径",
             "audience_outcome": "确认规划、设计、修订和导出能够连续完成",
-            "tone": "清晰、技术导向",
-            "language": "zh-CN",
-            "slide_count": 8,
-            "aspect_ratio": "16:9",
             "communication_job": "演示结束时，验收人员应能确认完整流水线可连续执行。",
-            "content_requirements": ["覆盖规划、统一设计、逐页修订和图片型导出"],
+            "language": "zh-CN",
+            "target_page_count": 8,
+            "aspect_ratio": "16:9",
+            "tone": "清晰、技术导向",
+            "content_constraints": ["覆盖规划、统一设计、逐页修订和图片型导出"],
             "brand_preferences": [],
             "color_preferences": [],
             "style_preferences": [],
@@ -66,29 +69,40 @@ class OutlineLLM:
     def invoke(self, messages):
         self.calls += 1
         payload = _human_payload(messages)
-        assert payload["hard_constraints"]["slide_count"] == 8
-        slides = []
-        for index, (role, family, rhythm) in enumerate(SLIDE_ROSTER, start=1):
-            slides.append(
-                {
-                    "slide_id": f"s{index:02d}",
-                    "index": index,
-                    "role": role,
-                    "assertion_title": f"第{_CHINESE_ORDINALS[index - 1]}页形成独立判断",
-                    "takeaway": f"这一页推进{_CHINESE_ORDINALS[index - 1]}个叙事任务。",
-                    "content_intent": "推进整套叙事，同时避免重复前页结论。",
-                    "layout_family": family,
-                    "rhythm": rhythm,
-                    "transition_from_previous": (
-                        "承接前页并提出下一层问题。" if index > 1 else ""
-                    ),
-                }
-            )
+        if "scene_narrative_template" in payload:
+            assert payload["hard_constraints"]["target_page_count"] == 8
+            return {
+                "scene": "general",
+                "pages": [
+                    {
+                        "page_no": index,
+                        "page_category": category,
+                        "topic": f"第{_CHINESE_ORDINALS[index - 1]}页形成独立判断",
+                    }
+                    for index, category in enumerate(PAGE_CATEGORIES, start=1)
+                ],
+            }
+        assert payload["hard_constraints"]["no_page_concept"] is True
         return {
-            "deck_title": "八页集成测试演示",
-            "core_message": "先锁定整套计划与设计，再按顺序完成每一页。",
-            "narrative_arc": ["建立问题", "验证路径", "收束行动"],
-            "slides": slides,
+            "title": "八页集成测试演示",
+            "central_thesis": "先锁定整套计划与设计，再按顺序完成每一页。",
+            "narrative_strategy": "建立问题，验证路径，最后收束行动。",
+            "sections": [
+                {
+                    "section_id": "sec01",
+                    "title": "完整执行路径",
+                    "purpose": "验证规划、设计、修订和导出能够连续完成。",
+                    "topics": [
+                        {
+                            "topic_id": f"t{index:02d}",
+                            "title": f"第{_CHINESE_ORDINALS[index - 1]}页形成独立判断",
+                            "intent": f"这一页推进{_CHINESE_ORDINALS[index - 1]}个叙事任务。",
+                            "key_points": ["推进整套叙事，同时避免重复前页结论。"],
+                        }
+                        for index in range(1, 9)
+                    ],
+                }
+            ],
         }
 
 
@@ -298,7 +312,6 @@ def test_parallel_html_graph_repairs_falls_back_streams_and_exports_eight_pages(
 
     latest_state: dict = {}
     previews: list[PipelineEvent] = []
-    page_events_saw_global_contract: list[bool] = []
     for mode, data in graph.stream(
         _initial_state(tmp_path, "html-graph-eight"),
         stream_mode=["custom", "values"],
@@ -308,18 +321,14 @@ def test_parallel_html_graph_repairs_falls_back_streams_and_exports_eight_pages(
             continue
         assert mode == "custom"
         assert isinstance(data, PipelineEvent)
-        if data.page is not None:
-            page_events_saw_global_contract.append(
-                bool(latest_state.get("deck_plan") and latest_state.get("design_spec"))
-            )
         if data.type is EventType.ARTIFACT_READY and any(
             resource.type is ResourceType.PAGE_PREVIEW for resource in data.resources
         ):
             previews.append(data)
 
-    assert page_events_saw_global_contract and all(page_events_saw_global_contract)
+    assert latest_state.get("deck_plan") and latest_state.get("design_spec")
     assert brief.calls == 1
-    assert outline.calls == 1
+    assert outline.calls == 2
     assert content.max_inflight >= 2
     expected_slide_ids = [f"s{index:02d}" for index in range(1, 9)]
     assert sorted(content.slide_ids) == expected_slide_ids
@@ -356,12 +365,12 @@ def test_parallel_html_graph_repairs_falls_back_streams_and_exports_eight_pages(
         for slide_id in expected_slide_ids
     ] == [
         "offset_orbit",
-        "text_left_signal_right",
         "numbered_axis",
-        "before_after",
+        "text_left_signal_right",
+        "hero_left",
+        "band",
+        "evidence_left_answer_right",
         "centered",
-        "horizontal_flow",
-        "horizontal_axis",
         "answer_field",
     ]
     assert [

@@ -1,0 +1,7 @@
+{
+  "scene": "project_report",
+  "mandatory_page_types": ["cover", "summary"],
+  "suggest_page_order": ["cover", "catalog", "content", "content", "chart", "content", "summary"],
+  "page_min": 6,
+  "page_max": 18
+}

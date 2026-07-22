@@ -92,8 +92,10 @@ flowchart LR
 ```text
 POST 创建任务
   → Go 解析五个模型节点，并在 MySQL 创建 Run/幂等键/同 thread worker guard
-  → Python 先生成完整 DeckPlan/DesignSpec，再通过 Send 并发生成并清洗各页 HTML/CSS
+  → Python 先生成 GlobalMeta、无页面逻辑大纲与只含页型/主题的 PagePlan
+  → Processor 生成 DeckPlan/DesignSpec，再通过 Send 并发生成、校验和修复各页 HTML/CSS
   → 受控 Chromium session pool 执行 DOM QA、有限 repair/fallback，并按完成顺序发送 PNG AgentEvent
+  → Postprocessor 只负责质量报告、manifest 与 image-only PPTX 导出
   → Go 校验事件，在同一事务写 Event + Run 快照，提交后通过 WS 广播
   → Go 校验最终 PPTX 存在且 size/hash 匹配，再提交 TASK_COMPLETED
   → worker 退出后释放同 thread guard；终态历史继续保留在 MySQL

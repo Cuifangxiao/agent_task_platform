@@ -1,4 +1,4 @@
-"""Terminal nodes for the HTML-first, image-only PPTX workflow.
+"""Export nodes owned exclusively by the postprocessor phase.
 
 The generation graph owns HTML authoring and PNG capture.  This module has a
 deliberately narrow responsibility: validate the completed PNG roster, assemble
@@ -29,8 +29,8 @@ GENERATION_MANIFEST_SCHEMA = "deck-generation-manifest.v2"
 QUALITY_REPORT_SCHEMA = "deck-quality-report.v2"
 
 
-class DeliveryNodes:
-    """Dependencies and callable nodes used after parallel slide fan-in."""
+class ExportNodes:
+    """Dependencies and callable export nodes used by the postprocessor."""
 
     def __init__(
         self,
@@ -382,7 +382,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 __all__ = [
     "GENERATION_MANIFEST_SCHEMA",
-    "DeliveryNodes",
+    "ExportNodes",
     "QUALITY_REPORT_SCHEMA",
     "assemble_image_pptx",
     "finalize_deck",

@@ -14,8 +14,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-SCHEMA_VERSION = "deck-state.v4"
-PROMPT_VERSION = "html-deck.v5"
+SCHEMA_VERSION = "deck-state.v5"
+PROMPT_VERSION = "html-deck.v6"
 RENDERER_VERSION = "chromium-html.v2"
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 900

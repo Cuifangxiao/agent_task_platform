@@ -29,7 +29,8 @@ from core.deck.runtime.llm import ModelInvocationError
 from core.deck.runtime.model_config import build_ppt_llms, describe_model_assignment
 from core.deck.workspace.paths import DeckProjectPaths, artifact_dir
 from core.deck.html.browser import SecureBrowserSessionPool, resolve_browser_concurrency
-from core.deck.pipeline.graph import PptGraph, resolve_slide_concurrency
+from core.deck.agents.processor.graph import resolve_slide_concurrency
+from core.deck.pipeline.graph import PptGraph
 from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VERSION
 from core.deck.workspace.sources import (
     parse_uploaded_files_with_provenance,

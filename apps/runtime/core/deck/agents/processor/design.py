@@ -1,4 +1,4 @@
-"""Global theme selection and immutable DesignSpec nodes."""
+"""Global theme selection and immutable DesignSpec nodes for the processor."""
 
 from __future__ import annotations
 

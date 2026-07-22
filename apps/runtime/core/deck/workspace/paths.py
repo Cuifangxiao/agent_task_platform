@@ -84,6 +84,26 @@ class DeckProjectPaths:
         return self.root / "deck-brief.json"
 
     @property
+    def global_meta_json(self) -> Path:
+        return self.root / "global-meta.json"
+
+    @property
+    def logical_outline_json(self) -> Path:
+        return self.root / "logical-outline.json"
+
+    @property
+    def logical_outline_text(self) -> Path:
+        return self.root / "logical-outline.txt"
+
+    @property
+    def scene_template_json(self) -> Path:
+        return self.root / "scene-narrative-template.json"
+
+    @property
+    def page_plan_json(self) -> Path:
+        return self.root / "page-plan.json"
+
+    @property
     def deck_plan_json(self) -> Path:
         return self.root / "deck-plan.json"
 

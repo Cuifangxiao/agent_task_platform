@@ -1,4 +1,4 @@
-"""Explicit per-slide nodes for HTML authoring, QA, repair, and persistence."""
+"""Per-slide content authoring, HTML generation, DOM QA, repair, and capture."""
 
 from __future__ import annotations
 

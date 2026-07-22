@@ -7,8 +7,9 @@ from core.deck.domain.schemas import PROMPT_VERSION
 
 
 ACTIVE_PROMPTS = (
-    "deck_brief",
-    "deck_planner",
+    "requirement_parser",
+    "content_ideator",
+    "page_mapper",
     "design_director",
     "slide_content",
     "html_slide_designer",
@@ -20,7 +21,7 @@ ACTIVE_PROMPTS = (
 def test_active_prompts_are_formal_role_contracts(node_key):
     prompt = load_node_prompt(node_key)
 
-    assert 5_000 <= len(prompt) <= 16_000
+    assert 1_000 <= len(prompt) <= 16_000
     assert prompt.startswith("<role>\n")
     assert "<input_contract>" in prompt
     assert "<quality_gate>" in prompt
@@ -37,38 +38,47 @@ def test_active_prompts_are_formal_role_contracts(node_key):
 
 
 def test_prompt_version_records_the_semantic_prompt_upgrade():
-    assert PROMPT_VERSION == "html-deck.v5"
+    assert PROMPT_VERSION == "html-deck.v6"
 
 
 def test_brief_prompt_makes_raw_input_authoritative_without_evidence_extraction():
-    prompt = load_node_prompt("deck_brief")
+    prompt = load_node_prompt("requirement_parser")
 
     for requirement in (
         "<authority_order>",
         "<interpretation_workflow>",
-        "<communication_job_standard>",
+        "communication_job",
         "raw_user_input",
-        "Chinese numerals",
         "source_mode",
-        "Do not output citations",
-        "runtime-owned inputs",
+        "Do not create chapters",
+        "semantic",
     ):
         assert requirement in prompt
     assert "deterministic_brief" not in prompt
 
 
 def test_planner_prompt_covers_narrative_layout_rhythm_and_whole_deck_coherence():
-    prompt = load_node_prompt("deck_planner")
+    prompt = load_node_prompt("content_ideator")
 
     for requirement in (
-        "<narrative_logic>",
-        "<layout_decision_rules>",
-        "<rhythm_system>",
+        "<narrative_workflow>",
+        "<separation_boundary>",
         "<quality_gate>",
-        "Content:",
-        "Design intent:",
-        "Coherence:",
-        "closing_resolution",
+        "no concept of slides or layouts",
+        "repaginated",
+    ):
+        assert requirement in prompt
+
+
+def test_page_mapper_prompt_allows_only_asset_a_and_semantic_page_fields():
+    prompt = load_node_prompt("page_mapper")
+
+    for requirement in (
+        "scene narrative template",
+        "only template asset",
+        "page_no, page_category, and topic",
+        "Do not output layout_id",
+        "processor phase",
     ):
         assert requirement in prompt
 

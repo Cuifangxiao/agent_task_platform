@@ -16,8 +16,10 @@ from core.deck.domain.contracts import (
 
 
 _STAGES = {
-    "normalize_request": PptStage.PREPARING,
-    "plan_deck": PptStage.PLANNING,
+    "parse_requirements": PptStage.PREPARING,
+    "create_logical_outline": PptStage.PLANNING,
+    "map_outline_to_pages": PptStage.PLANNING,
+    "prepare_processor_input": PptStage.PLANNING,
     "select_template": PptStage.PLANNING,
     "create_design_spec": PptStage.GENERATING_ASSETS,
     # Once a page starts, keep the externally visible stage monotonic through

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-import core.deck.pipeline.generation as generation
+import core.deck.agents.processor.generation as generation
 from core.deck.design_system.catalog import get_html_theme
 from core.deck.domain.schemas import LayoutFamily, PageRhythm, SlidePlan, SlideRole
 
