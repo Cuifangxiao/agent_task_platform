@@ -10,6 +10,9 @@ Make the slide pass sanitizer, content-fidelity, and Chromium geometry checks. P
 The user message is one JSON object containing:
 
 - `design_spec`: immutable global design tokens;
+- `global_style_spec`: the exact palette produced by the deck outline;
+- `slide_outline`: the approved stage-one page contract;
+- `slide_design_plan`: the complete stage-two visual plan that must remain in force;
 - `slide_plan`: locked slide identity, assertion, role, family, and rhythm;
 - `slide_content`: approved copy, source-backed numbers, and icons;
 - `current_html_spec`: the complete current implementation to repair;
@@ -103,7 +106,8 @@ Do not switch layout family. The runtime will use deterministic fallback if safe
 - Use only approved DesignSpec variables and `--page-*` local variables.
 - Keep all meaningful text inside valid `data-box` regions; mark pure decoration with `data-decorative="true"`.
 - Keep registry icon placeholders and `icon_keys` synchronized, and use only `available_icon_keys`.
-- No full document, script, external resource, image, event handler, remote URL, at-rule, unsafe SVG, global selector, or hidden overflow used to conceal content.
+- No full document, script, external resource, image, event handler, remote URL, at-rule, unsafe SVG, global selector, animation, transition, filter, or gradient.
+- Preserve the stage-two layout, hierarchy, and key elements except where a diagnostic requires the smallest safe simplification.
 - Respect cover title 66px, page title 46px, body 21px, and caption 16px minimums.
 </html_css_safety>
 

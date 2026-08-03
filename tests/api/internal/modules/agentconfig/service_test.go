@@ -4,6 +4,7 @@ import (
 	"agent-task-platform/apps/api/internal/shared/actor"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,7 +78,6 @@ func TestCreateValidatesAndSavesAgentConfigBindings(t *testing.T) {
 	modelRepo := &stubModelConfigRepo{byID: map[int64]*modelconfig.ModelConfig{
 		1: {ID: 1, Status: modelconfig.StatusActive},
 		2: {ID: 2, Status: modelconfig.StatusActive},
-		3: {ID: 3, Status: modelconfig.StatusActive},
 	}}
 	service := NewService(repo, modelRepo)
 
@@ -89,13 +89,9 @@ func TestCreateValidatesAndSavesAgentConfigBindings(t *testing.T) {
 		Description: "balanced node models",
 		IsDefault:   true,
 		NodeBindings: []NodeBindingRequest{
-			{NodeKey: "brief", ModelConfigID: 1},
 			{NodeKey: "outline", ModelConfigID: 1, Temperature: &temperature},
 			{NodeKey: "style", ModelConfigID: 2},
-			{NodeKey: "writer", ModelConfigID: 2, MaxTokens: &maxTokens},
-			{NodeKey: "designer", ModelConfigID: 2},
-			{NodeKey: "review", ModelConfigID: 3},
-			{NodeKey: "coherence", ModelConfigID: 1},
+			{NodeKey: "designer", ModelConfigID: 2, MaxTokens: &maxTokens},
 		},
 	})
 	if err != nil {
@@ -108,8 +104,8 @@ func TestCreateValidatesAndSavesAgentConfigBindings(t *testing.T) {
 	if repo.lastCreated.AgentID != 1 {
 		t.Fatalf("expected agent id 1, got %d", repo.lastCreated.AgentID)
 	}
-	if len(resp.NodeBindings) != 7 {
-		t.Fatalf("expected 7 node bindings, got %d", len(resp.NodeBindings))
+	if len(resp.NodeBindings) != 3 {
+		t.Fatalf("expected 3 node bindings, got %d", len(resp.NodeBindings))
 	}
 }
 
@@ -127,11 +123,41 @@ func TestCreateRejectsMissingRequiredNode(t *testing.T) {
 		Name:    "incomplete",
 		NodeBindings: []NodeBindingRequest{
 			{NodeKey: "outline", ModelConfigID: 1},
-			{NodeKey: "writer", ModelConfigID: 2},
+			{NodeKey: "style", ModelConfigID: 2},
 		},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "missing binding for node 'designer'") {
+		t.Fatalf("expected missing designer error, got %v", err)
+	}
+}
+
+func TestCreateRejectsLegacyPPTModelNodes(t *testing.T) {
+	for _, legacyNode := range []string{"brief", "writer"} {
+		t.Run(legacyNode, func(t *testing.T) {
+			service := NewService(
+				&stubRepo{agents: map[int64]*AgentDefinition{1: testPPTAgent()}},
+				&stubModelConfigRepo{byID: map[int64]*modelconfig.ModelConfig{
+					1: {ID: 1, Status: modelconfig.StatusActive},
+				}},
+			)
+
+			_, err := service.CreateConfig(context.Background(), testUser(), CreateConfigRequest{
+				AgentID: 1,
+				Name:    "legacy node",
+				NodeBindings: []NodeBindingRequest{
+					{NodeKey: "outline", ModelConfigID: 1},
+					{NodeKey: "style", ModelConfigID: 1},
+					{NodeKey: "designer", ModelConfigID: 1},
+					{NodeKey: legacyNode, ModelConfigID: 1},
+				},
+			})
+			if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "is not configurable") {
+				t.Fatalf("expected legacy node %q to be rejected, got %v", legacyNode, err)
+			}
+		})
 	}
 }
 
@@ -141,7 +167,6 @@ func TestCreateRejectsInactiveModelConfig(t *testing.T) {
 		&stubModelConfigRepo{byID: map[int64]*modelconfig.ModelConfig{
 			1: {ID: 1, Status: modelconfig.StatusActive},
 			2: {ID: 2, Status: modelconfig.StatusInactive},
-			3: {ID: 3, Status: modelconfig.StatusActive},
 		}},
 	)
 
@@ -149,13 +174,9 @@ func TestCreateRejectsInactiveModelConfig(t *testing.T) {
 		AgentID: 1,
 		Name:    "inactive model",
 		NodeBindings: []NodeBindingRequest{
-			{NodeKey: "brief", ModelConfigID: 1},
 			{NodeKey: "outline", ModelConfigID: 1},
-			{NodeKey: "style", ModelConfigID: 1},
-			{NodeKey: "writer", ModelConfigID: 2},
+			{NodeKey: "style", ModelConfigID: 2},
 			{NodeKey: "designer", ModelConfigID: 1},
-			{NodeKey: "review", ModelConfigID: 3},
-			{NodeKey: "coherence", ModelConfigID: 1},
 		},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
@@ -177,13 +198,9 @@ func TestCreateRejectsImageModelConfig(t *testing.T) {
 		AgentID: 1,
 		Name:    "image model",
 		NodeBindings: []NodeBindingRequest{
-			{NodeKey: "brief", ModelConfigID: 1},
 			{NodeKey: "outline", ModelConfigID: 1},
 			{NodeKey: "style", ModelConfigID: 1},
-			{NodeKey: "writer", ModelConfigID: 2},
-			{NodeKey: "designer", ModelConfigID: 1},
-			{NodeKey: "review", ModelConfigID: 1},
-			{NodeKey: "coherence", ModelConfigID: 1},
+			{NodeKey: "designer", ModelConfigID: 2},
 		},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
@@ -201,13 +218,9 @@ func testPPTAgent() *AgentDefinition {
 		Name:     "PPTAgent",
 		Status:   StatusActive,
 		Nodes: []NodeDefinition{
-			{Key: "brief", RequiresModel: true},
 			{Key: "outline", RequiresModel: true},
 			{Key: "style", RequiresModel: true},
-			{Key: "writer", RequiresModel: true},
 			{Key: "designer", RequiresModel: true},
-			{Key: "review", RequiresModel: true},
-			{Key: "coherence", RequiresModel: true},
 		},
 	}
 }

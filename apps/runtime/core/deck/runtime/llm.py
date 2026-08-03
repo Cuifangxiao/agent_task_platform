@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
@@ -96,6 +97,7 @@ def invoke_structured_with_retries(
     system: str,
     user: str,
     attempts: int = 2,
+    output_validator: Callable[[StructuredModel], StructuredModel] | None = None,
 ) -> StructuredModel:
     """Invoke a model through a formal Pydantic schema boundary.
 
@@ -139,7 +141,13 @@ def invoke_structured_with_retries(
             response = target.invoke([("system", strict_system), ("human", prompt)])
             record_token_usage(response)
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            if _is_structured_validation_exception(exc):
+            # LangChain structured wrappers commonly surface schema/parser
+            # failures as plain ValueError.  A raw provider ValueError remains
+            # an invocation error; only the structured wrapper gets this
+            # validation classification.
+            if _is_structured_validation_exception(exc) or (
+                structured_llm is not None and isinstance(exc, ValueError)
+            ):
                 last_validation_error = exc
                 _log_call_error(
                     llm,
@@ -181,6 +189,8 @@ def invoke_structured_with_retries(
                 text = extract_text(response).strip()
                 output_chars = len(text)
                 parsed = model_type.model_validate_json(text)
+            if output_validator is not None:
+                parsed = output_validator(parsed)
         except (ValidationError, ValueError, TypeError, json.JSONDecodeError) as exc:
             last_validation_error = exc
             _log_call_error(

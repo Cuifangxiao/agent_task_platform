@@ -35,6 +35,7 @@ from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VE
 from core.deck.workspace.sources import (
     parse_uploaded_files_with_provenance,
     persist_normalized_source_bundle,
+    persist_uploaded_local_assets,
 )
 
 
@@ -77,11 +78,13 @@ class DeckService:
                 resolve_browser_concurrency(slide_concurrency=slide_concurrency)
             )
             uploaded_file_names, uploaded_file_text, source_chunks = parse_uploaded_files_with_provenance(inp)
+            local_assets = persist_uploaded_local_assets(project.root, inp)
             persist_normalized_source_bundle(
                 project.root,
                 source_names=uploaded_file_names,
                 normalized_text=uploaded_file_text,
                 source_chunks=source_chunks,
+                local_assets=local_assets,
             )
             attachment_count = len(inp.attachments)
             sequence += 1
@@ -107,11 +110,12 @@ class DeckService:
                 "request_id": task_id,
                 "project_dir": str(project.root),
                 "status": "created",
-                # The first Brief Agent owns semantic interpretation, including
-                # the title. Do not derive one from the request in application code.
+                # The outline model owns semantic interpretation and the title.
+                # Application code only enforces page-count and safety contracts.
                 "deck_title": "",
                 "uploaded_file_text": uploaded_file_text,
                 "source_chunks": source_chunks,
+                "local_assets": local_assets,
                 "user_description": description,
                 "current_slide_index": 0,
                 "completed_slides": {},

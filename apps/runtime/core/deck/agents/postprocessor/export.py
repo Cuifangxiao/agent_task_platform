@@ -177,6 +177,8 @@ def _build_generation_manifest(
                 "layout_family": str(slide.get("layout_family") or ""),
                 "layout_variant": str(slide.get("layout_variant") or ""),
                 "composition_summary": str(slide.get("composition_summary") or ""),
+                "design_plan": str(slide.get("design_plan_path") or ""),
+                "html_spec": str(slide.get("html_spec_path") or ""),
                 "html": str(slide.get("html_path") or ""),
                 "preview": str(slide.get("preview_path") or ""),
                 "diagnostics": str(slide.get("diagnostics_path") or ""),
@@ -201,6 +203,8 @@ def _build_generation_manifest(
     deck_plan = state.get("deck_plan") if isinstance(state.get("deck_plan"), dict) else {}
     design_spec = state.get("design_spec") if isinstance(state.get("design_spec"), dict) else {}
     public_design_files = {
+        "deck_outline": _relative_if_file(project, project.deck_outline_json),
+        "global_style": _relative_if_file(project, project.global_style_json),
         "design_spec": _relative_if_file(project, project.design_spec_json),
         "design_spec_markdown": _relative_if_file(project, project.design_spec_markdown),
         "execution_lock": _relative_if_file(project, project.spec_lock_json),

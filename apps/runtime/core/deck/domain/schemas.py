@@ -14,18 +14,35 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-SCHEMA_VERSION = "deck-state.v5"
-PROMPT_VERSION = "html-deck.v7"
+SCHEMA_VERSION = "deck-state.v6"
+PROMPT_VERSION = "html-deck.v8"
 RENDERER_VERSION = "chromium-html.v2"
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 900
+HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
-PreferenceText = Annotated[str, Field(min_length=1, max_length=120)]
+
+def _color_luminance(value: str) -> float:
+    channels = [int(value[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+
+    def linear(channel: float) -> float:
+        return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (linear(channel) for channel in channels)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _color_contrast(first: str, second: str) -> float:
+    high, low = sorted((_color_luminance(first), _color_luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
 NarrativeText = Annotated[str, Field(min_length=1, max_length=500)]
 ContentItemText = Annotated[str, Field(min_length=1, max_length=180)]
 EmphasisText = Annotated[str, Field(min_length=1, max_length=180)]
-ContentRequirement = Annotated[str, Field(min_length=1, max_length=240)]
 IconKey = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
+KeywordText = Annotated[str, Field(min_length=1, max_length=80)]
+DesignElementText = Annotated[str, Field(min_length=1, max_length=240)]
 
 
 class StrictModel(BaseModel):
@@ -34,44 +51,67 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class DeckBriefInterpretation(StrictModel):
-    """Semantic request interpretation returned by the first deck model.
+class GlobalStyleSpec(StrictModel):
+    """The single, model-planned palette inherited by every page."""
 
-    Runtime-owned source text and any future evidence ledger are deliberately
-    absent from this model-output schema. The brief model interprets the raw
-    request; application code only validates and carries its structured answer.
-    """
+    primary_color: str
+    secondary_color: str
+    accent_color: str
+    background_color: str
+    surface_color: str
+    text_primary: str
+    text_secondary: str
+    text_muted: str
+    border_color: str
+    success_color: str
 
-    topic: str = Field(min_length=1, max_length=180)
-    audience: str = Field(min_length=1, max_length=180)
-    goal: str = Field(min_length=1, max_length=300)
-    audience_outcome: str = Field(min_length=1, max_length=300)
-    tone: str = Field(min_length=1, max_length=120)
-    language: str = Field(min_length=2, max_length=20)
-    slide_count: int = Field(ge=1, le=30)
-    aspect_ratio: Literal["16:9"]
-    communication_job: str = Field(min_length=1, max_length=500)
-    content_requirements: list[ContentRequirement] = Field(max_length=16)
-    brand_preferences: list[PreferenceText] = Field(max_length=8)
-    color_preferences: list[PreferenceText] = Field(max_length=8)
-    style_preferences: list[PreferenceText] = Field(max_length=8)
-    source_mode: Literal["general_knowledge", "source_grounded"]
+    @field_validator(
+        "primary_color",
+        "secondary_color",
+        "accent_color",
+        "background_color",
+        "surface_color",
+        "text_primary",
+        "text_secondary",
+        "text_muted",
+        "border_color",
+        "success_color",
+    )
+    @classmethod
+    def valid_hex_color(cls, value: str) -> str:
+        if not HEX_COLOR_RE.fullmatch(value):
+            raise ValueError("colors must use six-digit #RRGGBB notation")
+        return value.upper()
 
-
-class DeckBrief(DeckBriefInterpretation):
-    """Validated brief plus runtime-owned source text for downstream nodes."""
-
-    # Runtime-carried fields retain defaults; the model-output schema above
-    # requires every model-owned field.
-    language: str = Field(default="zh-CN", min_length=2, max_length=20)
-    slide_count: int = Field(default=8, ge=1, le=30)
-    aspect_ratio: Literal["16:9"] = "16:9"
-    content_requirements: list[ContentRequirement] = Field(default_factory=list, max_length=16)
-    brand_preferences: list[PreferenceText] = Field(default_factory=list, max_length=8)
-    color_preferences: list[PreferenceText] = Field(default_factory=list, max_length=8)
-    style_preferences: list[PreferenceText] = Field(default_factory=list, max_length=8)
-    source_mode: Literal["general_knowledge", "source_grounded"] = "general_knowledge"
-    source_text: str = Field(default="", max_length=60_000)
+    @model_validator(mode="after")
+    def readable_foreground(self) -> "GlobalStyleSpec":
+        for surface_name, surface in (
+            ("background_color", self.background_color),
+            ("surface_color", self.surface_color),
+        ):
+            if _color_contrast(surface, self.text_primary) < 4.5:
+                raise ValueError(
+                    f"text_primary must have at least 4.5:1 contrast on {surface_name}"
+                )
+            if _color_contrast(surface, self.text_secondary) < 3.0:
+                raise ValueError(
+                    f"text_secondary must have at least 3:1 contrast on {surface_name}"
+                )
+            if _color_contrast(surface, self.text_muted) < 3.0:
+                raise ValueError(
+                    f"text_muted must have at least 3:1 contrast on {surface_name}"
+                )
+            for signal_name, signal in (
+                ("primary_color", self.primary_color),
+                ("secondary_color", self.secondary_color),
+                ("accent_color", self.accent_color),
+                ("success_color", self.success_color),
+            ):
+                if _color_contrast(surface, signal) < 3.0:
+                    raise ValueError(
+                        f"{signal_name} must have at least 3:1 contrast on {surface_name}"
+                    )
+        return self
 
 
 class SlideRole(str, Enum):
@@ -106,6 +146,86 @@ class PageRhythm(str, Enum):
     BREATHING = "breathing"
 
 
+class ContentMode(str, Enum):
+    LIST = "list"
+    PARAGRAPH = "paragraph"
+    DATA = "data"
+    MIXED = "mixed"
+
+
+class DeckOutlineMetadata(StrictModel):
+    author: str = Field(default="", max_length=120)
+    date: str = Field(default="", max_length=120)
+    language: str = Field(min_length=2, max_length=20)
+    keywords: list[KeywordText] = Field(default_factory=list, max_length=12)
+    design_style: str = Field(min_length=1, max_length=240)
+    source_summary: str = Field(min_length=1, max_length=1_200)
+    global_style_spec: GlobalStyleSpec
+
+
+class SlideOutlineSpec(StrictModel):
+    """One page planned by the deck-wide outline model."""
+
+    id: str = Field(pattern=r"^s\d{2}$")
+    title: str = Field(min_length=1, max_length=180)
+    type: SlideRole
+    key_points: list[ContentItemText] = Field(default_factory=list, max_length=6)
+    layout_suggestion: LayoutFamily
+    content_mode: ContentMode
+    content_note: str = Field(min_length=1, max_length=1_200)
+
+
+class DeckOutlineSpec(StrictModel):
+    """The only model output produced before pages fan out."""
+
+    title: str = Field(min_length=1, max_length=180)
+    subtitle: str = Field(default="", max_length=240)
+    metadata: DeckOutlineMetadata
+    slides: list[SlideOutlineSpec] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def validate_slide_roster(self) -> "DeckOutlineSpec":
+        identifiers = [slide.id for slide in self.slides]
+        expected = [f"s{index:02d}" for index in range(1, len(self.slides) + 1)]
+        if identifiers != expected:
+            raise ValueError("slide ids must be unique, consecutive, and ordered from s01")
+        return self
+
+
+class SlideDesignRationale(StrictModel):
+    """Short, auditable design decisions rather than hidden chain-of-thought."""
+
+    request_analysis: str = Field(min_length=1, max_length=800)
+    content_structure: str = Field(min_length=1, max_length=800)
+    layout_reasoning: str = Field(min_length=1, max_length=800)
+    design_choices: str = Field(min_length=1, max_length=800)
+    consistency_check: str = Field(min_length=1, max_length=800)
+
+
+class SlideTypographyPlan(StrictModel):
+    font_family: str = Field(min_length=1, max_length=160)
+    title: str = Field(min_length=1, max_length=160)
+    heading: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=160)
+    caption: str = Field(min_length=1, max_length=160)
+
+
+class SlideDesignSpecifications(StrictModel):
+    layout_type: LayoutFamily
+    color_scheme: GlobalStyleSpec
+    typography: SlideTypographyPlan
+    key_elements: list[DesignElementText] = Field(min_length=1, max_length=12)
+    visual_hierarchy: list[DesignElementText] = Field(min_length=1, max_length=12)
+
+
+class SlideDesignPlan(StrictModel):
+    """Per-page output of the visual-planning model."""
+
+    slide_id: str = Field(pattern=r"^s\d{2}$")
+    design_rationale: SlideDesignRationale
+    design_specifications: SlideDesignSpecifications
+
+
 class SlidePlan(StrictModel):
     slide_id: str = Field(pattern=r"^s\d{2,3}$")
     index: int = Field(ge=1, le=30)
@@ -137,9 +257,6 @@ class DeckPlan(StrictModel):
         if len(self.slides) > 1 and self.slides[-1].role is not SlideRole.CLOSING:
             raise ValueError("the final slide must have role=closing")
         return self
-
-
-HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class PaletteSpec(StrictModel):
@@ -209,6 +326,7 @@ class ShapeStyleSpec(StrictModel):
 class DesignSpec(StrictModel):
     theme_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,63}$")
     palette: PaletteSpec
+    global_style_spec: GlobalStyleSpec | None = None
     typography: TypographySpec
     spacing: SpacingSpec
     shape_style: ShapeStyleSpec
@@ -274,6 +392,7 @@ class HtmlSlideSpec(StrictModel):
         # rejects the safe and commonly used ``<header>`` element.
         if re.search(
             r"<\s*(?:!doctype\b|html(?:\s|>)|head(?:\s|>)|script(?:\s|>)|"
+            r"style(?:\s|>)|template(?:\s|>)|textarea(?:\s|>)|title(?:\s|>)|"
             r"iframe(?:\s|>)|object(?:\s|>)|embed(?:\s|>))",
             self.body_html,
             flags=re.IGNORECASE,
@@ -311,6 +430,8 @@ class SlideArtifactMetadata(StrictModel):
     layout_family: LayoutFamily
     layout_variant: str = Field(min_length=1, max_length=80)
     composition_summary: str = Field(min_length=1, max_length=360)
+    design_plan_path: str = Field(default="", max_length=500)
+    html_spec_path: str = Field(default="", max_length=500)
     html_path: str = Field(min_length=1, max_length=500)
     preview_path: str = Field(min_length=1, max_length=500)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -332,15 +453,17 @@ class SlideArtifactMetadata(StrictModel):
 __all__ = [
     "CANVAS_HEIGHT",
     "CANVAS_WIDTH",
+    "ContentMode",
     "ContentBlock",
     "ContentBlockType",
-    "DeckBrief",
-    "DeckBriefInterpretation",
+    "DeckOutlineMetadata",
+    "DeckOutlineSpec",
     "DeckPlan",
     "DesignSpec",
     "DiagnosticCategory",
     "DiagnosticSeverity",
     "HtmlSlideSpec",
+    "GlobalStyleSpec",
     "LayoutFamily",
     "PROMPT_VERSION",
     "PageRhythm",
@@ -351,8 +474,13 @@ __all__ = [
     "ShapeStyleSpec",
     "SlideArtifactMetadata",
     "SlideContentSpec",
+    "SlideDesignPlan",
+    "SlideDesignRationale",
+    "SlideDesignSpecifications",
+    "SlideOutlineSpec",
     "SlidePlan",
     "SlideRole",
+    "SlideTypographyPlan",
     "SpacingSpec",
     "TypeToken",
     "TypographySpec",

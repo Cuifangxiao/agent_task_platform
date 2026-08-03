@@ -1,313 +1,270 @@
-import inspect
 import json
 
 import pytest
-from pydantic import ValidationError
 
 import core.deck.agents.preprocessor.graph as preprocessor_graph
-from core.deck.agents.preprocessor import (
-    GlobalMeta,
-    GlobalMetaInterpretation,
-    LogicalOutline,
-    PagePlan,
-    PagePlanItem,
-    Preprocessor,
-)
-from core.deck.agents.preprocessor.templates import SceneTemplateRepository
-from core.deck.agents.processor.layout import prepare_processor_input
+from core.deck.agents.preprocessor import PREPROCESSOR_NODE_SEQUENCE, Preprocessor
+from core.deck.domain.schemas import SCHEMA_VERSION, DeckOutlineSpec, LayoutFamily, SlideRole
 from core.deck.runtime.llm import StructuredOutputError
 
 
-class _BoundSchemaLLM:
+PALETTE = {
+    "primary_color": "#1570EF",
+    "secondary_color": "#B692F6",
+    "accent_color": "#F79009",
+    "background_color": "#101828",
+    "surface_color": "#1D2939",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#D0D5DD",
+    "text_muted": "#98A2B3",
+    "border_color": "#475467",
+    "success_color": "#12B76A",
+}
+
+
+def _outline_payload(page_count: int) -> dict:
+    interior_layouts = [
+        LayoutFamily.EDITORIAL_SPLIT.value,
+        LayoutFamily.THREE_POINTS.value,
+        LayoutFamily.COMPARISON.value,
+        LayoutFamily.KEY_METRIC.value,
+    ]
+    slides = []
+    for index in range(1, page_count + 1):
+        if index == 1:
+            role = SlideRole.COVER.value
+            layout = LayoutFamily.COVER_MINIMAL.value
+        elif index == page_count:
+            role = SlideRole.CLOSING.value
+            layout = LayoutFamily.CLOSING_RESOLUTION.value
+        else:
+            role = SlideRole.INSIGHT.value
+            layout = interior_layouts[(index - 2) % len(interior_layouts)]
+        slides.append(
+            {
+                "id": f"s{index:02d}",
+                "title": f"Page {index}",
+                "type": role,
+                "key_points": [f"Evidence for page {index}"],
+                "layout_suggestion": layout,
+                "content_mode": "mixed",
+                "content_note": f"Use source section {index}.",
+            }
+        )
+    return {
+        "title": "Transformer Overview",
+        "subtitle": "From mechanism to application",
+        "metadata": {
+            "author": "",
+            "date": "",
+            "language": "en-US",
+            "keywords": ["transformer", "attention"],
+            "design_style": "Dark executive editorial",
+            "source_summary": "A concise explanation of Transformer architecture.",
+            "global_style_spec": PALETTE,
+        },
+        "slides": slides,
+    }
+
+
+class _BoundOutlineLLM:
     def __init__(self, parent, model_type):
         self.parent = parent
         self.model_type = model_type
 
     def invoke(self, messages):
-        raw_prompt = messages[-1][1]
-        payload = raw_prompt if self.model_type is LogicalOutline else json.loads(raw_prompt)
+        payload, _ = json.JSONDecoder().raw_decode(messages[-1][1])
         self.parent.calls.append((self.model_type, payload))
-        if self.model_type is GlobalMetaInterpretation:
-            return {
-                "title": "Transformer 入门",
-                "subtitle": "",
-                "presenter": "",
-                "audience": "刚接触深度学习的学生",
-                "scene": "thesis_defense",
-                "goal": "解释 Transformer 的核心机制",
-                "audience_outcome": "建立对注意力机制的基础认知",
-                "communication_job": "学生应理解 Transformer 的核心机制并形成继续学习的框架。",
-                "language": "zh-CN",
-                "target_page_count": 3,
-                "aspect_ratio": "16:9",
-                "tone": "清晰、教学导向",
-                "content_constraints": ["解释注意力机制", "说明整体结构"],
-                "brand_preferences": [],
-                "color_preferences": [],
-                "style_preferences": [],
-                "source_mode": "general_knowledge",
-            }
-        if self.model_type is LogicalOutline:
-            return {
-                "title": "Transformer 入门",
-                "central_thesis": "理解注意力机制是理解整体结构的基础",
-                "narrative_strategy": "从学习问题进入核心机制，再回到整体结构",
-                "sections": [
-                    {
-                        "section_id": "sec01",
-                        "title": "核心机制",
-                        "purpose": "建立概念基础",
-                        "topics": [
-                            {
-                                "topic_id": "t01",
-                                "title": "注意力机制",
-                                "intent": "解释信息关联方式",
-                                "key_points": ["关联序列中的上下文信息"],
-                            },
-                            {
-                                "topic_id": "t02",
-                                "title": "整体结构",
-                                "intent": "说明核心模块如何协作",
-                                "key_points": ["从局部机制回到整体认知"],
-                            },
-                        ],
-                    }
-                ],
-            }
-        if self.model_type is PagePlan:
-            target = payload["target_page_count"]
-            pages = [
-                {"page_no": 1, "page_category": "cover", "topic": "Transformer 入门"},
-                {"page_no": 2, "page_category": "catalog", "topic": "内容结构"},
-            ]
-            for page_no in range(3, target - 1):
-                pages.append(
-                    {
-                        "page_no": page_no,
-                        "page_category": "content",
-                        "topic": "注意力机制" if page_no % 2 else "整体结构",
-                    }
-                )
-            pages.extend(
-                [
-                    {
-                        "page_no": target - 1,
-                        "page_category": "summary",
-                        "topic": "核心认识",
-                    },
-                    {
-                        "page_no": target,
-                        "page_category": "thanks",
-                        "topic": "总结与交流",
-                    },
-                ]
-            )
-            return {"scene": "thesis_defense", "pages": pages}
-        raise AssertionError(f"unexpected schema: {self.model_type}")
+        page_count = self.parent.returned_page_count
+        if page_count is None:
+            page_count = payload["requested_page_count"] or 4
+        return _outline_payload(page_count)
 
 
-class _SchemaAwareLLM:
-    def __init__(self):
+class _OutlineLLM:
+    def __init__(self, *, returned_page_count: int | None = None):
+        self.returned_page_count = returned_page_count
         self.calls = []
 
     def with_structured_output(self, model_type, **_kwargs):
-        return _BoundSchemaLLM(self, model_type)
+        assert model_type is DeckOutlineSpec
+        return _BoundOutlineLLM(self, model_type)
 
 
-class _InvalidOutlineLLM:
-    def __init__(self):
-        self.calls = 0
-
-    def with_structured_output(self, _model_type, **_kwargs):
-        return self
-
-    def invoke(self, _messages):
-        self.calls += 1
-        return {}
-
-
-def _initial_state(request_id: str = "preprocessor-test"):
+def _initial_state(request_id: str = "outline-test", *, pages: int = 3) -> dict:
     return {
+        "schema_version": SCHEMA_VERSION,
         "task_id": request_id,
         "request_id": request_id,
-        "user_description": "请生成三页 Transformer 论文答辩 PPT，面向初学者。",
-        "uploaded_file_text": "",
-    }
-
-
-def test_page_plan_schema_forbids_layout_and_content_fields():
-    valid = {"page_no": 1, "page_category": "content", "topic": "核心机制"}
-    assert PagePlanItem.model_validate(valid).topic == "核心机制"
-
-    for forbidden in ("layout_id", "layout_template", "layout_family", "content", "html"):
-        with pytest.raises(ValidationError, match="Extra inputs"):
-            PagePlanItem.model_validate({**valid, forbidden: "not-allowed"})
-
-
-def test_global_meta_and_logical_outline_keep_runtime_and_page_fields_out():
-    meta_payload = {
-        "title": "Topic",
-        "subtitle": "",
-        "presenter": "",
-        "audience": "Audience",
-        "scene": "general",
-        "goal": "Explain the topic",
-        "audience_outcome": "Understand the topic",
-        "communication_job": "The audience should understand the topic.",
-        "language": "en-US",
-        "target_page_count": 4,
-        "aspect_ratio": "16:9",
-        "tone": "clear",
-        "content_constraints": [],
-        "brand_preferences": [],
-        "color_preferences": [],
-        "style_preferences": [],
-        "source_mode": "general_knowledge",
-    }
-    with pytest.raises(ValidationError, match="Extra inputs"):
-        GlobalMetaInterpretation.model_validate({**meta_payload, "source_text": "runtime only"})
-
-    outline_payload = {
-        "title": "Topic",
-        "central_thesis": "Explain the topic",
-        "narrative_strategy": "Move from context to conclusion",
-        "sections": [
+        "user_description": f"Create a {pages} page Transformer presentation.",
+        "uploaded_file_text": "Attention connects every token to relevant context.",
+        "source_chunks": [
             {
-                "section_id": "sec01",
-                "title": "Context",
-                "purpose": "Establish the question",
-                "topics": [
-                    {
-                        "topic_id": "t01",
-                        "title": "Question",
-                        "intent": "Define the question",
-                        "key_points": [],
-                    }
-                ],
+                "source_file": "research.md",
+                "page": 1,
+                "section": "Attention",
+                "excerpt": "Attention connects every token to relevant context.",
+            }
+        ],
+        "local_assets": [
+            {
+                "asset_id": "attention-map",
+                "kind": "image",
+                "original_name": "attention-map.png",
+                "mime_type": "image/png",
+                "relative_path": "sources/assets/asset-001.png",
+                "size_bytes": 128,
+                "sha256": "a" * 64,
+                "trusted_local_only": True,
+                "visual_analysis_available": False,
+                "html_embedding_allowed": False,
             }
         ],
     }
-    with pytest.raises(ValidationError, match="Extra inputs"):
-        LogicalOutline.model_validate({**outline_payload, "pages": []})
-    outline_payload["sections"][0]["topics"][0]["page_no"] = 1
-    with pytest.raises(ValidationError, match="Extra inputs"):
-        LogicalOutline.model_validate(outline_payload)
 
 
-def test_scene_template_repository_matches_asset_a_contract():
-    template = SceneTemplateRepository().resolve("论文答辩")
+def test_preprocessor_is_one_outline_node_and_calls_outline_model_once(tmp_path):
+    llm = _OutlineLLM()
+    result = Preprocessor({"outline": llm}, tmp_path).run(_initial_state())
 
-    assert template.model_dump(mode="json") == {
-        "scene": "thesis_defense",
-        "mandatory_page_types": ["cover", "catalog", "thanks"],
-        "suggest_page_order": [
-            "cover",
-            "catalog",
-            "content",
-            "content",
-            "chart",
-            "summary",
-            "thanks",
-        ],
-        "page_min": 10,
-        "page_max": 16,
+    assert PREPROCESSOR_NODE_SEQUENCE == ("generate_deck_outline",)
+    assert len(llm.calls) == 1
+    assert llm.calls[0][0] is DeckOutlineSpec
+
+    payload = llm.calls[0][1]
+    assert payload["requested_page_count"] == 3
+    assert payload["hard_constraints"]["minimum_page_count"] == 1
+    assert payload["hard_constraints"]["maximum_page_count"] == 30
+    assert payload["hard_constraints"]["canvas"] == "1600x900 (16:9)"
+    assert set(payload["hard_constraints"]["supported_layout_types"]) == {
+        layout.value for layout in LayoutFamily
     }
-
-
-def test_preprocessor_runs_three_separated_steps_and_persists_contracts(tmp_path):
-    llm = _SchemaAwareLLM()
-    preprocessor = Preprocessor({"brief": llm, "outline": llm}, tmp_path)
-
-    result = preprocessor.run(_initial_state())
-
-    meta = GlobalMeta.model_validate(result["global_meta"])
-    outline = LogicalOutline.model_validate(result["logical_outline"])
-    page_plan = PagePlan.model_validate(result["page_plan"])
-    assert meta.title == "Transformer 入门"
-    assert outline.title == meta.title
-    assert len(page_plan.pages) == 10
-    assert [page.page_category.value for page in page_plan.pages[:2]] == ["cover", "catalog"]
-    assert page_plan.pages[-1].page_category.value == "thanks"
-
-    call_types = [model_type for model_type, _payload in llm.calls]
-    assert call_types == [GlobalMetaInterpretation, LogicalOutline, PagePlan]
-    requirement_payload = llm.calls[0][1]
-    assert set(requirement_payload) == {
-        "raw_user_input",
-        "attachment_context",
-        "hard_constraints",
-    }
-    outline_prompt = llm.calls[1][1]
-    assert isinstance(outline_prompt, str)
-    assert "<presentation_context>" in outline_prompt
-    assert 'intended for this audience: "刚接触深度学习的学生"' in outline_prompt
-    assert "requested final deck length is 3 pages" in outline_prompt
-    assert "do not create, count, reserve, or allocate pages" in outline_prompt
-    assert '"hard_constraints"' not in outline_prompt
-    assert "no_page_concept" not in outline_prompt
-    assert "scene_narrative_template" not in outline_prompt
-    assert "layout_recipe_manifest" not in outline_prompt
-    page_payload = llm.calls[2][1]
-    assert page_payload["scene_narrative_template"]["scene"] == "thesis_defense"
-    assert page_payload["target_page_count"] == 10
-    assert "hard_constraints" not in page_payload
-    assert "forbidden_fields" not in page_payload
-    assert "output_fields_per_page" not in page_payload
-
-    project = tmp_path / "preprocessor-test"
-    assert (project / "global-meta.json").is_file()
-    assert (project / "logical-outline.json").is_file()
-    assert (project / "logical-outline.txt").is_file()
-    assert (project / "scene-narrative-template.json").is_file()
-    persisted_page_plan = json.loads((project / "page-plan.json").read_text(encoding="utf-8"))
-    assert persisted_page_plan == page_plan.model_dump(mode="json")
-
-
-def test_preprocessor_module_has_no_design_or_renderer_dependency():
-    source = inspect.getsource(preprocessor_graph)
-
-    assert "core.deck.design_system" not in source
-    assert "LayoutFamily" not in source
-    assert "HTMLAssembler" not in source
-    assert "ImagePptxExporter" not in source
-
-
-def test_processor_layout_planning_runs_after_and_does_not_mutate_page_plan(monkeypatch):
-    llm = _SchemaAwareLLM()
-    preprocessed = Preprocessor({"brief": llm, "outline": llm}).run(_initial_state("adapter"))
-    original_page_plan = json.loads(json.dumps(preprocessed["page_plan"]))
-    monkeypatch.setattr(
-        "core.deck.agents.processor.layout.get_stream_writer",
-        lambda: lambda _event: None,
+    assert payload["available_assets"]["source_files"] == ["research.md"]
+    assert payload["available_assets"]["local_assets"][0]["relative_path"] == (
+        "sources/assets/asset-001.png"
     )
 
-    adapted = prepare_processor_input(preprocessed)
+    outline = DeckOutlineSpec.model_validate(result["deck_outline"])
+    assert len(outline.slides) == 3
+    assert [slide.id for slide in outline.slides] == ["s01", "s02", "s03"]
+    assert outline.slides[0].type is SlideRole.COVER
+    assert outline.slides[-1].type is SlideRole.CLOSING
+    assert result["global_style_spec"] == outline.metadata.global_style_spec.model_dump(mode="json")
+    assert result["requested_page_count"] == 3
 
-    assert preprocessed["page_plan"] == original_page_plan
-    assert all("layout_family" not in page for page in preprocessed["page_plan"]["pages"])
-    assert all("layout_family" in slide for slide in adapted["deck_plan"]["slides"])
+    project = tmp_path / "outline-test"
+    persisted_outline = json.loads((project / "deck-outline.json").read_text(encoding="utf-8"))
+    persisted_style = json.loads((project / "global-style.json").read_text(encoding="utf-8"))
+    assert persisted_outline == outline.model_dump(mode="json")
+    assert persisted_style == outline.metadata.global_style_spec.model_dump(mode="json")
+    assert (project / "deck-plan.json").is_file()
+    assert (project / "design-spec.json").is_file()
 
 
-def test_requirement_parsing_still_requires_the_brief_model(monkeypatch):
-    monkeypatch.setattr(preprocessor_graph, "get_stream_writer", lambda: lambda _event: None)
+@pytest.mark.parametrize("page_count", [1, 30])
+def test_outline_phase_accepts_supported_page_count_boundaries(page_count, tmp_path):
+    llm = _OutlineLLM()
+    request_id = f"boundary-{page_count}"
 
-    with pytest.raises(ValueError, match="missing llm for deck node 'brief'"):
-        preprocessor_graph.parse_requirements(_initial_state("missing"), {})
-
-
-def test_invalid_model_outline_fails_instead_of_using_a_programmatic_fallback(monkeypatch):
-    monkeypatch.setattr(preprocessor_graph, "get_stream_writer", lambda: lambda _event: None)
-    requirement_llm = _SchemaAwareLLM()
-    parsed = preprocessor_graph.parse_requirements(
-        _initial_state("invalid-outline"),
-        {"brief": requirement_llm},
+    result = Preprocessor({"outline": llm}, tmp_path).run(
+        _initial_state(request_id, pages=page_count)
     )
-    outline_llm = _InvalidOutlineLLM()
 
-    with pytest.raises(StructuredOutputError):
-        preprocessor_graph.create_logical_outline(
-            {**_initial_state("invalid-outline"), **parsed},
-            {"outline": outline_llm},
+    outline = DeckOutlineSpec.model_validate(result["deck_outline"])
+    assert len(outline.slides) == page_count
+    assert outline.slides[-1].id == f"s{page_count:02d}"
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.parametrize("page_count", [0, 31])
+def test_outline_phase_rejects_explicit_page_count_outside_system_range(page_count, tmp_path):
+    llm = _OutlineLLM()
+
+    with pytest.raises(ValueError, match="between 1 and 30"):
+        Preprocessor({"outline": llm}, tmp_path).run(
+            _initial_state(f"out-of-range-{page_count}", pages=page_count)
         )
 
-    assert outline_llm.calls == 3
+    assert llm.calls == []
+
+
+@pytest.mark.parametrize(
+    ("request_text", "page_count"),
+    [
+        ("Make an 8-page deck", 8),
+        ("Page count: 12", 12),
+        ("生成八页演示文稿", 8),
+        ("生成十二张幻灯片", 12),
+    ],
+)
+def test_explicit_page_count_parser_supports_common_request_forms(request_text, page_count):
+    assert preprocessor_graph._requested_page_count(request_text) == page_count
+
+
+@pytest.mark.parametrize("schema_version", ["", "deck-state.v5"])
+def test_outline_phase_rejects_missing_or_legacy_state_version(schema_version, tmp_path):
+    llm = _OutlineLLM()
+    state = _initial_state("legacy-state")
+    state["schema_version"] = schema_version
+
+    with pytest.raises(ValueError, match="restart the task with deck-state.v6"):
+        Preprocessor({"outline": llm}, tmp_path).run(state)
+
+    assert llm.calls == []
+
+
+def test_explicit_page_count_mismatch_retries_and_never_persists_partial_outline(tmp_path):
+    llm = _OutlineLLM(returned_page_count=4)
+
+    with pytest.raises(StructuredOutputError, match="requested 3"):
+        Preprocessor({"outline": llm}, tmp_path).run(_initial_state("mismatch", pages=3))
+
+    assert len(llm.calls) == 3
+    assert not (tmp_path / "mismatch" / "deck-outline.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda payload: payload["slides"][0].update(
+                {"type": SlideRole.CONTEXT.value}
+            ),
+            "first outline slide",
+        ),
+        (
+            lambda payload: payload["slides"][-1].update(
+                {"type": SlideRole.DECISION.value}
+            ),
+            "final outline slide",
+        ),
+        (
+            lambda payload: payload["slides"][1].update(
+                {"layout_suggestion": payload["slides"][0]["layout_suggestion"]}
+            ),
+            "adjacent slides",
+        ),
+    ],
+)
+def test_outline_business_validation_enforces_boundary_roles_and_layout_diversity(
+    mutate, message
+):
+    payload = _outline_payload(3)
+    mutate(payload)
+    outline = DeckOutlineSpec.model_validate(payload)
+
+    with pytest.raises(ValueError, match=message):
+        preprocessor_graph._validate_outline_output(  # pylint: disable=protected-access
+            outline,
+            requested_page_count=3,
+        )
+
+
+def test_outline_phase_requires_outline_model_not_retired_nodes(monkeypatch):
+    monkeypatch.setattr(preprocessor_graph, "get_stream_writer", lambda: lambda _event: None)
+
+    with pytest.raises(ValueError, match="missing llm for deck node 'outline'"):
+        preprocessor_graph.generate_deck_outline(
+            _initial_state("missing-outline"),
+            {"brief": object(), "writer": object()},
+        )

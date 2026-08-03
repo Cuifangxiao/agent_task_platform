@@ -232,6 +232,14 @@ APPROVED_CSS_VARIABLES = frozenset(
         "--accent",
         "--secondary",
         "--divider",
+        "--primary-color",
+        "--secondary-color",
+        "--accent-color",
+        "--background-color",
+        "--surface-color",
+        "--text-secondary",
+        "--border-color",
+        "--success-color",
         "--font-zh",
         "--font-latin",
         "--font-cover-title-size",
@@ -263,6 +271,14 @@ DESIGN_COLOR_VARIABLES = frozenset(
         "--accent",
         "--secondary",
         "--divider",
+        "--primary-color",
+        "--secondary-color",
+        "--accent-color",
+        "--background-color",
+        "--surface-color",
+        "--text-secondary",
+        "--border-color",
+        "--success-color",
     }
 )
 COLOR_ONLY_PROPERTIES = frozenset(
@@ -627,6 +643,8 @@ def _unsafe_css_value(name: str, value: str, tokens: Iterable[Any]) -> str:
         return "raw HTML delimiters are forbidden in CSS"
     if any(token in lowered for token in ("javascript:", "data:", "http:", "https:", "@import", "-moz-binding", "behavior:")):
         return "external or executable resource"
+    if "gradient(" in lowered:
+        return "CSS gradients are forbidden"
     if _contains_unsafe_css_token(tokens):
         return "url() or expression() is forbidden"
     theme_reason = _unsafe_theme_value(name, value, tokens)
@@ -656,8 +674,8 @@ def _unsafe_css_value(name: str, value: str, tokens: Iterable[Any]) -> str:
                 return "z-index exceeds the allowed range"
         except ValueError:
             return "z-index must be numeric"
-    if name == "background-image" and "gradient(" not in lowered and lowered != "none":
-        return "only gradients are allowed as background images"
+    if name == "background-image" and lowered != "none":
+        return "background images are forbidden"
     if name == "box-shadow":
         numbers = [abs(float(item)) for item in re.findall(r"-?\d+(?:\.\d+)?", value)]
         if any(number > 160 for number in numbers):
@@ -694,7 +712,11 @@ def _unsafe_theme_value(name: str, value: str, tokens: Iterable[Any]) -> str:
         return "font-family must use only --font-zh/--font-latin"
 
     if name in COLOR_ONLY_PROPERTIES:
-        color_var = r"var\(\s*--(?:slide-bg|surface|text-primary|text-muted|accent|secondary|divider)\s*\)"
+        color_var = (
+            r"var\(\s*--(?:slide-bg|surface|text-primary|text-muted|accent|secondary|divider|"
+            r"primary-color|secondary-color|accent-color|background-color|surface-color|"
+            r"text-secondary|border-color|success-color)\s*\)"
+        )
         color_token = rf"(?:{color_var}|currentcolor|transparent|inherit)"
         if re.fullmatch(rf"{color_token}(?:\s+{color_token}){{0,3}}", lowered):
             return ""
@@ -742,11 +764,6 @@ def _unsafe_theme_value(name: str, value: str, tokens: Iterable[Any]) -> str:
     }
     allowed_functions = {
         "var",
-        "linear-gradient",
-        "radial-gradient",
-        "conic-gradient",
-        "repeating-linear-gradient",
-        "repeating-radial-gradient",
         "calc",
         "min",
         "max",

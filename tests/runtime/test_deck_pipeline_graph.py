@@ -18,17 +18,18 @@ from core.deck.domain.schemas import DeckPlan
 
 
 ROOT_EDGES = {
-    ("__start__", "preprocessor_phase"),
-    ("preprocessor_phase", "processor_phase"),
-    ("processor_phase", "postprocessor_phase"),
-    ("postprocessor_phase", "__end__"),
+    ("__start__", "generate_deck_outline"),
+    ("generate_deck_outline", "fan_out_slides"),
+    ("fan_out_slides", "generate_slide"),
+    ("generate_slide", "aggregate_slides"),
+    ("aggregate_slides", "assemble_image_pptx"),
+    ("assemble_image_pptx", "finalize_deck"),
+    ("finalize_deck", "__end__"),
 }
 
 PROCESSOR_EDGES = {
-    ("__start__", "prepare_processor_input"),
-    ("prepare_processor_input", "select_template"),
-    ("select_template", "create_design_spec"),
-    ("create_design_spec", "generate_slide"),
+    ("__start__", "fan_out_slides"),
+    ("fan_out_slides", "generate_slide"),
     ("generate_slide", "aggregate_slides"),
     ("aggregate_slides", "__end__"),
 }
@@ -40,16 +41,14 @@ POSTPROCESSOR_EDGES = {
 }
 
 PREPROCESSOR_EDGES = {
-    ("__start__", "parse_requirements"),
-    ("parse_requirements", "create_logical_outline"),
-    ("create_logical_outline", "map_outline_to_pages"),
-    ("map_outline_to_pages", "__end__"),
+    ("__start__", "generate_deck_outline"),
+    ("generate_deck_outline", "__end__"),
 }
 
 SLIDE_EDGES = {
     ("__start__", "prepare_slide"),
-    ("prepare_slide", "generate_slide_content"),
-    ("generate_slide_content", "generate_slide_html"),
+    ("prepare_slide", "generate_slide_design"),
+    ("generate_slide_design", "generate_slide_html"),
     ("generate_slide_html", "sanitize_and_assemble_html"),
     ("sanitize_and_assemble_html", "render_html_and_measure_dom"),
     ("render_html_and_measure_dom", "validate_dom"),
@@ -68,7 +67,7 @@ def _edges(graph) -> set[tuple[str, str]]:
     return {(edge.source, edge.target) for edge in graph.get_graph().edges}
 
 
-def test_root_graph_cleanly_composes_three_phase_agents(tmp_path):
+def test_root_graph_is_the_real_outline_to_parallel_pages_to_pptx_topology(tmp_path):
     module = PptGraph({}, tmp_path, browser_session=object())
 
     assert _edges(module.graph) == ROOT_EDGES
@@ -121,8 +120,11 @@ def test_phase_directories_and_dependency_boundaries_are_explicit():
 
     processor_source = inspect.getsource(processor_graph)
     postprocessor_source = inspect.getsource(postprocessor_graph)
+    assert '"generate_slide_design": (self.generation.generate_slide_design, "style")' in processor_source
+    assert '"generate_slide_html": (self.generation.generate_slide_html, "designer")' in processor_source
     assert "generate_slide_html" in processor_source
     assert "repair_slide_html" in processor_source
+    assert "generate_slide_content" not in processor_source
     assert "ImagePptxExporter" not in processor_source
     assert "HTMLAssembler" not in postprocessor_source
     assert "GenerationNodes" not in postprocessor_source
@@ -136,8 +138,8 @@ def test_every_request_gets_fresh_pipeline_dependencies(tmp_path):
     assert first.preprocessor is not second.preprocessor
     assert first.processor is not second.processor
     assert first.postprocessor is not second.postprocessor
-    assert first.processor.design.output_dir == tmp_path / "first"
-    assert second.processor.design.output_dir == tmp_path / "second"
+    assert first.preprocessor.output_dir == tmp_path / "first"
+    assert second.preprocessor.output_dir == tmp_path / "second"
     assert first.processor.generation.output_dir == tmp_path / "first"
     assert second.postprocessor.output_dir == (tmp_path / "second").resolve()
 
@@ -180,6 +182,50 @@ def test_send_fanout_assigns_independent_state_and_planned_composition_history()
 
     sends = fan_out_slides(
         {
+            "deck_outline": {
+                "title": "Demo",
+                "subtitle": "One argument",
+                "metadata": {
+                    "author": "",
+                    "date": "",
+                    "language": "en-US",
+                    "keywords": [],
+                    "design_style": "Clean editorial",
+                    "source_summary": "Open and resolve one argument.",
+                    "global_style_spec": {
+                        "primary_color": "#0057B8",
+                        "secondary_color": "#6B4EFF",
+                        "accent_color": "#C2410C",
+                        "background_color": "#FFFFFF",
+                        "surface_color": "#F5F5F5",
+                        "text_primary": "#111111",
+                        "text_secondary": "#333333",
+                        "text_muted": "#555555",
+                        "border_color": "#C7C7C7",
+                        "success_color": "#15803D",
+                    },
+                },
+                "slides": [
+                    {
+                        "id": "s01",
+                        "title": "Opening",
+                        "type": "cover",
+                        "key_points": ["Open the argument."],
+                        "layout_suggestion": "cover_minimal",
+                        "content_mode": "paragraph",
+                        "content_note": "Set up the promise.",
+                    },
+                    {
+                        "id": "s02",
+                        "title": "Closing",
+                        "type": "closing",
+                        "key_points": ["Resolve the argument."],
+                        "layout_suggestion": "closing_resolution",
+                        "content_mode": "paragraph",
+                        "content_note": "Close with an action.",
+                    },
+                ],
+            },
             "deck_plan": {
                 "deck_title": "Demo",
                 "core_message": "One argument",
@@ -244,18 +290,24 @@ def test_layout_preferences_rotate_variants_within_a_repeated_family():
 def test_state_contract_contains_only_current_pipeline_concepts():
     fields = set(DeckGraphState.__annotations__)
     assert {
-        "global_meta",
-        "logical_outline",
-        "page_plan",
-        "brief",
+        "deck_outline",
+        "global_style_spec",
         "deck_plan",
         "design_spec",
+        "current_slide_outline",
+        "current_slide_design_plan",
         "current_slide_plan",
+        "current_html_slide_spec",
         "completed_slides",
         "artifact_path",
     } <= fields
     assert fields.isdisjoint(
         {
+            "global_meta",
+            "logical_outline",
+            "narrative_template",
+            "page_plan",
+            "brief",
             "job_id",
             "deck_id",
             "source_images",

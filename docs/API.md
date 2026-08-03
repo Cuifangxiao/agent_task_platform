@@ -405,9 +405,9 @@ body 中所有字段均可选：`name`、`provider`、`model_name`、`model_type
   "description": "...",
   "nodes": [
     {
-      "key": "brief",
-      "display_name": "Brief Research",
-      "description": "...",
+      "key": "outline",
+      "display_name": "Deck Outline Planning",
+      "description": "Create the deck-wide outline, global style palette, and slide-level content plan.",
       "requires_model": true
     }
   ],
@@ -417,7 +417,7 @@ body 中所有字段均可选：`name`、`provider`、`model_name`、`model_type
 }
 ```
 
-Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent 的可配置模型节点只有 `brief`、`outline`、`style`、`writer`、`designer`；以接口返回的 `nodes` 为最终依据。
+Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent 的可配置模型节点只有 `outline`、`style`、`designer`：分别负责全局大纲与页面规划、逐页视觉设计规划、逐页 HTML 生成及必要修复；以接口返回的 `nodes` 为最终依据。
 
 ### 7.2 `AgentConfig` 响应
 
@@ -454,10 +454,8 @@ Agent 定义由迁移/系统维护，不是用户 CRUD 资源。当前 PPT Agent
   "name": "默认 PPT 工作流",
   "description": "统一使用生产模型",
   "node_bindings": [
-    { "node_key": "brief", "model_config_id": 10 },
     { "node_key": "outline", "model_config_id": 10 },
     { "node_key": "style", "model_config_id": 10 },
-    { "node_key": "writer", "model_config_id": 10 },
     { "node_key": "designer", "model_config_id": 10 }
   ],
   "is_default": true,
@@ -548,7 +546,7 @@ PPT 使用持久化 Run，不再使用旧 Conversation、Job、Action 或恢复�
 
 `POST /api/v1/ppt/tasks`
 
-成功返回 `202 Accepted` 和 `PptTask`。服务先完整校验描述和五个模型节点绑定，再把初始 Run 提交到 MySQL，注册本地 worker 后返回；输入或模型校验失败不会留下 Run，持久化失败也不会启动 Python Runtime。
+成功返回 `202 Accepted` 和 `PptTask`。服务先完整校验描述和 `outline`、`style`、`designer` 三个模型节点绑定，再把初始 Run 提交到 MySQL，注册本地 worker 后返回；输入或模型校验失败不会留下 Run，持久化失败也不会启动 Python Runtime。
 
 JSON 请求不支持附件：
 
@@ -568,7 +566,7 @@ JSON 请求不支持附件：
 | `agent_config_id` | 否 | 正整数；省略或 0 时选择当前用户默认 active PPT 配置，否则选择首个可用配置 |
 | `description` | 是 | trim 后非空，最多 5000 个 Unicode 字符 |
 
-语言、目标页数、画面比例和视觉模板不作为独立请求字段。需求解析模型从 `description` 的自然语言中生成全局元数据；Processor 再依据该元数据和页面内容自动选择内部模板。
+语言、目标页数、画面比例和视觉模板不作为独立请求字段。`outline` 模型从 `description` 的自然语言中一次生成全局元数据、大纲与样式；确定性 adapter 再依据该结果和页面内容选择受控内部模板。
 
 有附件时使用 `multipart/form-data`：
 
@@ -588,9 +586,9 @@ JSON 请求不支持附件：
 .png .jpg .jpeg .webp
 ```
 
-空文件返回 `400`，不支持的扩展名返回 `415`。单个文件最多 20 MiB，文件内容合计最多 100 MiB，multipart request body 最多 101 MiB；超限返回 `413`。Go 读取附件后计算 SHA-256，摘要参与持久化幂等指纹，并把字节内容直接放入本次内部 gRPC 请求；当前不持久化附件原文。
+空文件返回 `400`，不支持的扩展名返回 `415`。单个文件最多 20 MiB，文件内容合计最多 100 MiB，multipart request body 最多 101 MiB；超限返回 `413`。Go 读取附件后计算 SHA-256，摘要参与持久化幂等指纹，并把字节内容直接放入本次内部 gRPC 请求；Go 不持久化附件原文。Runtime 会把图片复制到本任务的 `sources/assets/`，仅将有界元数据提供给模型，不把图片字节放入图状态，也不允许模型直接把它们编排为 HTML 资源。
 
-PPT Agent 配置必须 active，并且恰好能解析 `brief`、`outline`、`style`、`writer`、`designer` 五个 active 文本/多模态模型。任一节点缺失、模型停用或 `max_tokens <= 0` 都拒绝创建任务。
+PPT Agent 配置必须 active，并且恰好能解析 `outline`、`style`、`designer` 三个 active 文本/多模态模型。任一节点缺失、模型停用或 `max_tokens <= 0` 都拒绝创建任务。
 
 `client_request_id` 在当前用户内是 MySQL 唯一的持久幂等键：同一键与完全相同的规范化请求会跨请求、跨 API 重启返回原 Task；同一键换了 thread、需求、配置、附件或 options 会返回 `409 client_request_conflict`。同一用户的同一 `thread_id` 同时只允许一个尚未退出的 worker，数据库唯一约束与本地 Hub 共同保护该规则；冲突返回 `409 thread_run_conflict`，不同 thread 可并行。当前 thread 仍只用于 Go 侧分组和互斥，不是 Python checkpoint。
 
@@ -706,10 +704,10 @@ Run 快照和 canonical 事件以 MySQL 为权威；TaskHub 只提供当前进�
 | `stage` | 含义 |
 | --- | --- |
 | `PREPARING` | 校验输入、保存附件、建立项目目录 |
-| `PLANNING` | brief、outline、style |
-| `GENERATING_CONTENT` | writer 生成逐页内容 |
-| `GENERATING_ASSETS` | 准备页面资源 |
-| `GENERATING_PAGES` | designer 生成页面 |
+| `PLANNING` | outline 生成全局大纲、页面规划与全局样式 |
+| `GENERATING_CONTENT` | 兼容保留；当前三模型流程不主动发出 |
+| `GENERATING_ASSETS` | 兼容保留；当前三模型流程不主动发出 |
+| `GENERATING_PAGES` | 每页依次执行 style 视觉规划、designer HTML 生成，以及清洗/修复 |
 | `RENDERING` | 渲染 HTML、执行 DOM QA 并生成 PNG 预览 |
 | `ASSEMBLING_PPT` | 组装 PPTX |
 | `FINISHED` | 成功完成 |
@@ -839,7 +837,7 @@ rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
 | `task_id` | `string` | Go 生成的 Run UUID；当前 `task_id == run_id` |
 | `description` | `string` | PPT 需求 |
 | `attachments` | repeated `InputResource` | 内联输入附件 |
-| `models` | repeated `ModelConfig` | 五个节点的最终模型配置 |
+| `models` | repeated `ModelConfig` | 三个节点的最终模型配置 |
 
 `InputResource`：
 
@@ -852,7 +850,7 @@ rpc GeneratePpt(GeneratePptRequest) returns (stream AgentEvent);
 
 | 字段 | Proto 类型 | 说明 |
 | --- | --- | --- |
-| `node_key` | `string` | `brief`、`outline`、`style`、`writer`、`designer` 之一 |
+| `node_key` | `string` | `outline`、`style`、`designer` 之一 |
 | `provider`、`model`、`api_key`、`base_url` | `string` | Provider 调用配置；API key 只在内部传输 |
 | `provider_options` | `google.protobuf.Struct` | Provider 扩展选项 |
 | `temperature` | `double` | 节点最终参数 |

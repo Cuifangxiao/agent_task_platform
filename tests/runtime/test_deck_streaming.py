@@ -58,7 +58,7 @@ class SuccessfulGraph:
 class FailingGraph:
     def stream(self, _initial_state, *, stream_mode):
         assert stream_mode == ["custom", "values"]
-        yield ("custom", events.stage_started("create_logical_outline", "Planning"))
+        yield ("custom", events.stage_started("generate_deck_outline", "Planning"))
         raise RuntimeError("private pipeline details")
 
 
@@ -171,7 +171,10 @@ def test_service_uses_ppt_graph_when_no_factory_is_injected(monkeypatch, tmp_pat
         return SuccessfulGraph()
 
     monkeypatch.setenv("DECK_ARTIFACTS_DIR", str(tmp_path))
-    monkeypatch.setattr("core.deck.service.build_ppt_llms", lambda _inp: {"brief": object()})
+    monkeypatch.setattr(
+        "core.deck.service.build_ppt_llms",
+        lambda _inp: {"outline": object(), "style": object(), "designer": object()},
+    )
     monkeypatch.setattr("core.deck.service.SecureBrowserSessionPool", TrackingBrowserSession)
     monkeypatch.setattr("core.deck.service.PptGraph", ppt_graph)
 

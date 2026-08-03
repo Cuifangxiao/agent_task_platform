@@ -9,6 +9,16 @@ from core.deck.workspace.sources import persist_normalized_source_bundle
 def test_deck_project_paths_separate_author_sources_previews_and_delivery(tmp_path):
     project = DeckProjectPaths.for_request(tmp_path, "request-1").ensure()
 
+    assert project.deck_outline_json.relative_to(project.root).as_posix() == "deck-outline.json"
+    assert project.global_style_json.relative_to(project.root).as_posix() == "global-style.json"
+    assert (
+        project.slide_design_spec(2).relative_to(project.root).as_posix()
+        == "slide_specs/page-002.design.json"
+    )
+    assert (
+        project.html_slide_spec(2).relative_to(project.root).as_posix()
+        == "slide_specs/page-002.html.json"
+    )
     assert project.preview_html(2).relative_to(project.root).as_posix() == "previews/page-002.html"
     assert project.preview_png(2).relative_to(project.root).as_posix() == "previews/page-002.png"
     assert project.deck_pptx.relative_to(project.root).as_posix() == "exports/deck.pptx"
@@ -24,6 +34,14 @@ def test_deck_project_paths_separate_author_sources_previews_and_delivery(tmp_pa
         assert directory.is_dir()
     assert not project.private_debug.is_relative_to(project.root)
     assert project.raw_model_output(1, 0).is_relative_to(project.private_debug)
+
+
+@pytest.mark.parametrize("path_method", ["slide_design_spec", "html_slide_spec"])
+def test_new_per_slide_artifact_paths_reject_non_positive_pages(tmp_path, path_method):
+    project = DeckProjectPaths.for_request(tmp_path, "request-invalid")
+
+    with pytest.raises(ValueError, match="page index must be positive"):
+        getattr(project, path_method)(0)
 
 
 def test_normalized_sources_are_archived_before_strategy(tmp_path):

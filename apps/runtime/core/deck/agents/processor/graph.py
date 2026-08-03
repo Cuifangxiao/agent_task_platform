@@ -1,4 +1,4 @@
-"""Processor graph for layout allocation, HTML authoring, QA, and repair."""
+"""Parallel per-slide visual planning, HTML authoring, QA, and capture."""
 
 from __future__ import annotations
 
@@ -9,10 +9,8 @@ from typing import Any, Literal
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from core.deck.agents.processor.design import DesignNodes
 from core.deck.agents.processor.generation import GenerationNodes
-from core.deck.agents.processor.layout import LayoutPlanningNodes
-from core.deck.domain.schemas import DeckPlan
+from core.deck.domain.schemas import DeckOutlineSpec, DeckPlan
 from core.deck.html import HTMLAssembler
 from core.deck.html.browser import (
     HTMLBrowserRenderer,
@@ -28,16 +26,14 @@ from core.deck.runtime.llm import normalize_llm_registry
 DEFAULT_SLIDE_CONCURRENCY = 6
 
 PROCESSOR_NODE_SEQUENCE = (
-    "prepare_processor_input",
-    "select_template",
-    "create_design_spec",
+    "fan_out_slides",
     "generate_slide",
     "aggregate_slides",
 )
 
 SLIDE_NODE_SEQUENCE = (
     "prepare_slide",
-    "generate_slide_content",
+    "generate_slide_design",
     "generate_slide_html",
     "sanitize_and_assemble_html",
     "render_html_and_measure_dom",
@@ -51,7 +47,7 @@ SLIDE_NODE_SEQUENCE = (
 
 
 class Processor:
-    """Own the complete middle phase from PagePlan to validated page images."""
+    """Own the parallel page phase from a validated outline to page images."""
 
     def __init__(
         self,
@@ -61,8 +57,6 @@ class Processor:
         *,
         assembler: HTMLAssembler | None = None,
         browser_renderer: HTMLBrowserRenderer | None = None,
-        layout_nodes: LayoutPlanningNodes | None = None,
-        design_nodes: DesignNodes | None = None,
         generation_nodes: GenerationNodes | None = None,
         max_repairs: int = 2,
         slide_concurrency: int | None = None,
@@ -76,9 +70,6 @@ class Processor:
         self._owns_browser_session = browser_session is None
         self.assembler = assembler or HTMLAssembler()
         self.browser_renderer = browser_renderer or HTMLBrowserRenderer(self.browser_session)
-
-        self.layout = layout_nodes or LayoutPlanningNodes(llms, self.output_dir)
-        self.design = design_nodes or DesignNodes(llms, self.output_dir)
         self.generation = generation_nodes or GenerationNodes(
             llms,
             self.output_dir,
@@ -89,13 +80,18 @@ class Processor:
         self.slide_graph = self.compile_slide_graph()
         self.graph = self.compile_graph()
 
+    def prepare_fan_out(self, state: DeckGraphState) -> dict[str, Any]:
+        DeckOutlineSpec.model_validate(state.get("deck_outline") or {})
+        DeckPlan.model_validate(state.get("deck_plan") or {})
+        return {"status": "designing"}
+
     def compile_slide_graph(self):
-        """Compile the isolated single-page HTML authoring and repair graph."""
+        """Compile the isolated visual-plan -> HTML -> repair page graph."""
 
         builder = StateGraph(DeckGraphState, output_schema=SlideGenerationOutput)
         handlers = {
             "prepare_slide": (self.generation.prepare_slide, ""),
-            "generate_slide_content": (self.generation.generate_slide_content, "writer"),
+            "generate_slide_design": (self.generation.generate_slide_design, "style"),
             "generate_slide_html": (self.generation.generate_slide_html, "designer"),
             "sanitize_and_assemble_html": (self.generation.sanitize_and_assemble_html, ""),
             "render_html_and_measure_dom": (self.generation.render_html_and_measure_dom, ""),
@@ -114,8 +110,8 @@ class Processor:
             )
 
         builder.add_edge(START, "prepare_slide")
-        builder.add_edge("prepare_slide", "generate_slide_content")
-        builder.add_edge("generate_slide_content", "generate_slide_html")
+        builder.add_edge("prepare_slide", "generate_slide_design")
+        builder.add_edge("generate_slide_design", "generate_slide_html")
         builder.add_edge("generate_slide_html", "sanitize_and_assemble_html")
         builder.add_edge("sanitize_and_assemble_html", "render_html_and_measure_dom")
         builder.add_edge("render_html_and_measure_dom", "validate_dom")
@@ -136,29 +132,25 @@ class Processor:
         return builder.compile()
 
     def compile_graph(self):
-        """Compile the middle phase around the parallel page subgraph."""
+        """Compile the fan-out/fan-in middle phase."""
 
         builder = StateGraph(DeckGraphState)
-        handlers = {
-            "prepare_processor_input": (self.layout.prepare_processor_input, ""),
-            "select_template": (self.design.select_template, "style"),
-            "create_design_spec": (self.design.create_design_spec, "style"),
-            "aggregate_slides": (self.generation.aggregate_slides, ""),
-        }
-        for name in PROCESSOR_NODE_SEQUENCE:
-            if name == "generate_slide":
-                builder.add_node(name, self.slide_graph)
-                continue
-            handler, model_key = handlers[name]
-            builder.add_node(
-                name,
-                instrument_node(name, handler, self.llm_registry, model_key=model_key),
-            )
-
-        builder.add_edge(START, "prepare_processor_input")
-        builder.add_edge("prepare_processor_input", "select_template")
-        builder.add_edge("select_template", "create_design_spec")
-        builder.add_conditional_edges("create_design_spec", fan_out_slides, ["generate_slide"])
+        builder.add_node(
+            "fan_out_slides",
+            instrument_node("fan_out_slides", self.prepare_fan_out, self.llm_registry, model_key=""),
+        )
+        builder.add_node("generate_slide", self.slide_graph)
+        builder.add_node(
+            "aggregate_slides",
+            instrument_node(
+                "aggregate_slides",
+                self.generation.aggregate_slides,
+                self.llm_registry,
+                model_key="",
+            ),
+        )
+        builder.add_edge(START, "fan_out_slides")
+        builder.add_conditional_edges("fan_out_slides", fan_out_slides, ["generate_slide"])
         builder.add_edge("generate_slide", "aggregate_slides")
         builder.add_edge("aggregate_slides", END)
         return builder.compile()
@@ -179,16 +171,21 @@ def route_after_validation(state: DeckGraphState) -> Literal["valid", "repair", 
 
 
 def fan_out_slides(state: DeckGraphState) -> list[Send]:
-    """Create one independent page state after processor planning and design."""
+    """Create one independent page state after the global outline is complete."""
 
+    outline = DeckOutlineSpec.model_validate(state.get("deck_outline") or {})
     plan = DeckPlan.model_validate(state.get("deck_plan") or {})
+    if len(outline.slides) != len(plan.slides):
+        raise ValueError("deck outline and renderer plan have different page counts")
     preferences = state.get("layout_preferences") or {}
     if not isinstance(preferences, dict):
         preferences = {}
     ordered_preferences = [dict(preferences.get(slide.slide_id) or {}) for slide in plan.slides]
     shared = dict(state)
     sends: list[Send] = []
-    for offset, _slide in enumerate(plan.slides):
+    for offset, slide in enumerate(plan.slides):
+        if outline.slides[offset].id != slide.slide_id:
+            raise ValueError("deck outline and renderer plan slide ids are not aligned")
         branch_state = {
             **shared,
             "current_slide_index": offset,

@@ -16,6 +16,12 @@ import (
 	"agent-task-platform/apps/api/internal/shared/actor"
 )
 
+func TestPPTModelNodesMatchThreeStageRuntimeContract(t *testing.T) {
+	if got, want := strings.Join(pptModelNodes[:], ","), "outline,style,designer"; got != want {
+		t.Fatalf("ppt model nodes = %q, want %q", got, want)
+	}
+}
+
 func TestCreateTaskUsesIndependentContextAndCompletes(t *testing.T) {
 	release := make(chan struct{})
 	runtime := &gatedRuntime{release: release, contexts: make(chan context.Context, 1)}
@@ -60,6 +66,13 @@ func TestCreateTaskUsesIndependentContextAndCompletes(t *testing.T) {
 	}
 	if len(runtime.request.Models) != len(pptModelNodes) {
 		t.Fatalf("runtime received %d models, want %d", len(runtime.request.Models), len(pptModelNodes))
+	}
+	modelNodes := make([]string, 0, len(runtime.request.Models))
+	for _, model := range runtime.request.Models {
+		modelNodes = append(modelNodes, model.NodeKey)
+	}
+	if got, want := strings.Join(modelNodes, ","), "outline,style,designer"; got != want {
+		t.Fatalf("runtime model nodes = %q, want %q", got, want)
 	}
 }
 

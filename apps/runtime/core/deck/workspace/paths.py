@@ -38,6 +38,10 @@ class DeckProjectPaths:
         return self.root / "sources"
 
     @property
+    def source_assets(self) -> Path:
+        return self.sources / "assets"
+
+    @property
     def slide_specs(self) -> Path:
         return self.root / "slide_specs"
 
@@ -80,28 +84,12 @@ class DeckProjectPaths:
         return self.root / "design-spec.json"
 
     @property
-    def brief_json(self) -> Path:
-        return self.root / "deck-brief.json"
+    def deck_outline_json(self) -> Path:
+        return self.root / "deck-outline.json"
 
     @property
-    def global_meta_json(self) -> Path:
-        return self.root / "global-meta.json"
-
-    @property
-    def logical_outline_json(self) -> Path:
-        return self.root / "logical-outline.json"
-
-    @property
-    def logical_outline_text(self) -> Path:
-        return self.root / "logical-outline.txt"
-
-    @property
-    def scene_template_json(self) -> Path:
-        return self.root / "scene-narrative-template.json"
-
-    @property
-    def page_plan_json(self) -> Path:
-        return self.root / "page-plan.json"
+    def global_style_json(self) -> Path:
+        return self.root / "global-style.json"
 
     @property
     def deck_plan_json(self) -> Path:
@@ -155,6 +143,9 @@ class DeckProjectPaths:
     def html_slide_spec(self, page: int) -> Path:
         return self.slide_specs / f"page-{_positive_page(page):03d}.html.json"
 
+    def slide_design_spec(self, page: int) -> Path:
+        return self.slide_specs / f"page-{_positive_page(page):03d}.design.json"
+
     def slide_diagnostics(self, page: int) -> Path:
         return self.diagnostics / f"page-{_positive_page(page):03d}.json"
 
@@ -166,6 +157,7 @@ class DeckProjectPaths:
         for path in (
             self.root,
             self.sources,
+            self.source_assets,
             self.slide_specs,
             self.diagnostics,
             self.private_debug,

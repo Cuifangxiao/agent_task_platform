@@ -777,10 +777,10 @@ DOM_MEASUREMENT_JS = r"""
     const foreground = parseColor(computed.color);
     const background = nearestSolidBackground(textEl);
     const contrastRatio = foreground && foreground.a >= .95 ? contrast(foreground, background) : 0;
-    if (contrastRatio < 2.75) {
+    if (contrastRatio < 3) {
       push('LOW_TEXT_CONTRAST', selector(textEl), `Text contrast is ${contrastRatio.toFixed(2)}:1.`, 'Use a readable DesignSpec text color for this background.', rectObject(rect), { contrastRatio });
     }
-    if (computed.display === 'none' || computed.visibility === 'hidden' || effectiveOpacity(textEl) < .05 || rect.width < 1 || rect.height < 1) {
+    if (computed.display === 'none' || computed.visibility === 'hidden' || effectiveOpacity(textEl) < .95 || rect.width < 1 || rect.height < 1) {
       push('TEXT_HIDDEN', selector(textEl), 'Text is hidden, transparent, or zero-sized.', 'Restore visible text geometry and opacity.', rectObject(rect));
     }
     let occlusion = null;

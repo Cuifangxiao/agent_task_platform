@@ -1,7 +1,0 @@
-{
-  "scene": "business_pitch",
-  "mandatory_page_types": ["cover", "summary"],
-  "suggest_page_order": ["cover", "content", "content", "chart", "content", "content", "summary"],
-  "page_min": 7,
-  "page_max": 15
-}

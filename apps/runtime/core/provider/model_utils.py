@@ -87,6 +87,7 @@ class ProviderDefinition(BaseModel):
     sdk: str = ""
     default_base_url: str = ""
     supports_custom_base_url: bool = True
+    request_timeout_seconds: float = Field(default=60.0, gt=0)
     structured_output_method: StructuredOutputMethod = "json_schema"
     credential_test: CredentialTestConfig = Field(default_factory=CredentialTestConfig)
     models: list[ProviderModelDefinition] = Field(default_factory=list)
@@ -203,7 +204,7 @@ class ProviderConfigManager:
             "model": model.model_name,
             "api_key": api_key,
             "base_url": base_url or provider.default_base_url or None,
-            "timeout": 60,
+            "timeout": provider.request_timeout_seconds,
             "max_retries": 0,
             "max_tokens": max_tokens,
             "metadata": {

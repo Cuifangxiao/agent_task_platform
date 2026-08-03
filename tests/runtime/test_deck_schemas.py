@@ -1,95 +1,234 @@
+import copy
+
 import pytest
 from pydantic import ValidationError
 
-from core.deck.agents.processor.design import _has_readable_contrast, _lock_approved_identity
-from core.deck.agents.processor.generation import _normalize_content_for_recipe
-from core.deck.design_system.catalog import (
-    get_html_theme,
-    list_html_themes,
-    recipe_catalog,
-    resolve_theme_id,
-)
+from core.deck.agents.processor.generation import _validate_design_plan
+from core.deck.agents.processor.layout import deck_plan_from_outline
 from core.deck.domain.schemas import (
-    ContentBlock,
-    DeckBrief,
+    CANVAS_HEIGHT,
+    CANVAS_WIDTH,
+    PROMPT_VERSION,
+    RENDERER_VERSION,
+    SCHEMA_VERSION,
+    DeckOutlineSpec,
     DeckPlan,
+    GlobalStyleSpec,
     HtmlSlideSpec,
     LayoutFamily,
-    PageRhythm,
-    SlideContentSpec,
-    SlidePlan,
+    SlideDesignPlan,
+    SlideOutlineSpec,
     SlideRole,
 )
 
 
-def _slide(index: int, role: SlideRole, layout: LayoutFamily) -> SlidePlan:
-    return SlidePlan(
-        slide_id=f"s{index:02d}",
-        index=index,
-        role=role,
-        assertion_title=f"Assertion {index}",
-        takeaway=f"Takeaway {index}",
-        content_intent=f"Explain point {index}",
-        layout_family=layout,
-        rhythm=PageRhythm.BREATHING,
+PALETTE = {
+    "primary_color": "#1570EF",
+    "secondary_color": "#B692F6",
+    "accent_color": "#F79009",
+    "background_color": "#101828",
+    "surface_color": "#1D2939",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#D0D5DD",
+    "text_muted": "#98A2B3",
+    "border_color": "#475467",
+    "success_color": "#12B76A",
+}
+
+
+def _slide_payload(index: int, page_count: int) -> dict:
+    if index == 1:
+        role = "cover"
+        layout = "cover_minimal"
+    elif index == page_count:
+        role = "closing"
+        layout = "closing_resolution"
+    else:
+        role = "insight"
+        layout = "editorial_split" if index % 2 else "three_points"
+    return {
+        "id": f"s{index:02d}",
+        "title": f"Page {index}",
+        "type": role,
+        "key_points": [f"Point {index}"],
+        "layout_suggestion": layout,
+        "content_mode": "mixed",
+        "content_note": f"Source section {index}.",
+    }
+
+
+def _outline_payload(page_count: int = 3) -> dict:
+    return {
+        "title": "Three-stage deck",
+        "subtitle": "Outline, visual plan, HTML",
+        "metadata": {
+            "author": "",
+            "date": "",
+            "language": "en-US",
+            "keywords": ["deck", "html"],
+            "design_style": "Dark executive editorial",
+            "source_summary": "A source-grounded explanation of the new pipeline.",
+            "global_style_spec": PALETTE,
+        },
+        "slides": [_slide_payload(index, page_count) for index in range(1, page_count + 1)],
+    }
+
+
+def _design_plan_payload(slide_id: str = "s02") -> dict:
+    return {
+        "slide_id": slide_id,
+        "design_rationale": {
+            "request_analysis": "Show the approved evidence clearly.",
+            "content_structure": "Assertion first, evidence second.",
+            "layout_reasoning": "Use the locked split layout for the evidence hierarchy.",
+            "design_choices": "Use restrained spacing and approved typography.",
+            "consistency_check": "The palette and layout match the deck-wide lock.",
+        },
+        "design_specifications": {
+            "layout_type": "three_points",
+            "color_scheme": PALETTE,
+            "typography": {
+                "font_family": "Noto Sans CJK SC, Inter",
+                "title": "48px/1.15 700",
+                "heading": "28px/1.2 700",
+                "body": "21px/1.4 400",
+                "caption": "16px/1.3 400",
+            },
+            "key_elements": ["assertion title", "three evidence blocks"],
+            "visual_hierarchy": ["title", "evidence", "source note"],
+        },
+    }
+
+
+def test_deck_schema_and_prompt_versions_match_the_three_stage_contract():
+    assert SCHEMA_VERSION == "deck-state.v6"
+    assert PROMPT_VERSION == "html-deck.v8"
+    assert RENDERER_VERSION == "chromium-html.v2"
+    assert (CANVAS_WIDTH, CANVAS_HEIGHT) == (1600, 900)
+
+
+def test_global_style_is_complete_hex_normalized_and_readable():
+    style = GlobalStyleSpec.model_validate(
+        {key: value.lower() for key, value in PALETTE.items()}
     )
 
+    assert style.model_dump(mode="json") == PALETTE
 
-def _brief(
-    *,
-    topic: str = "Workflow proposal",
-    goal: str = "Explain the product clearly.",
-    source_text: str = "",
-    slide_count: int = 2,
-    language: str = "en-US",
-) -> DeckBrief:
-    return DeckBrief(
-        topic=topic,
-        audience="general business audience",
-        goal=goal,
-        audience_outcome="understand the proposal and decide what to do next",
-        tone="clear and concise",
-        language=language,
-        slide_count=slide_count,
-        aspect_ratio="16:9",
-        communication_job=(
-            "By the end, the audience should understand the proposal and decide what to do next."
-        ),
-        content_requirements=[],
-        brand_preferences=[],
-        color_preferences=[],
-        style_preferences=[],
-        source_mode="general_knowledge",
-        source_text=source_text,
+    incomplete = dict(PALETTE)
+    incomplete.pop("success_color")
+    with pytest.raises(ValidationError, match="success_color"):
+        GlobalStyleSpec.model_validate(incomplete)
+
+    with pytest.raises(ValidationError, match="#RRGGBB"):
+        GlobalStyleSpec.model_validate({**PALETTE, "accent_color": "rgba(1,2,3,.5)"})
+
+    low_contrast = {
+        **PALETTE,
+        "background_color": "#FFFFFF",
+        "surface_color": "#FFFFFF",
+    }
+    with pytest.raises(ValidationError, match="contrast"):
+        GlobalStyleSpec.model_validate(low_contrast)
+
+
+@pytest.mark.parametrize("page_count", [1, 30])
+def test_deck_outline_accepts_the_full_supported_page_range(page_count):
+    outline = DeckOutlineSpec.model_validate(_outline_payload(page_count))
+
+    assert len(outline.slides) == page_count
+    assert outline.slides[0].id == "s01"
+    assert outline.slides[-1].id == f"s{page_count:02d}"
+
+
+@pytest.mark.parametrize("page_count", [0, 31])
+def test_deck_outline_rejects_page_counts_outside_one_to_thirty(page_count):
+    with pytest.raises(ValidationError):
+        DeckOutlineSpec.model_validate(_outline_payload(page_count))
+
+
+@pytest.mark.parametrize(
+    "identifiers",
+    [
+        ["s01", "s03", "s04"],
+        ["s01", "s01", "s03"],
+        ["s02", "s03", "s04"],
+    ],
+)
+def test_deck_outline_rejects_nonconsecutive_duplicate_or_non_one_based_ids(identifiers):
+    payload = _outline_payload(3)
+    for slide, identifier in zip(payload["slides"], identifiers):
+        slide["id"] = identifier
+
+    with pytest.raises(ValidationError, match="unique, consecutive, and ordered"):
+        DeckOutlineSpec.model_validate(payload)
+
+
+def test_renderer_deck_plan_preserves_outline_order_and_boundary_roles():
+    outline = DeckOutlineSpec.model_validate(_outline_payload(3))
+    plan = deck_plan_from_outline(outline)
+
+    assert [slide.index for slide in plan.slides] == [1, 2, 3]
+    assert [slide.slide_id for slide in plan.slides] == ["s01", "s02", "s03"]
+    assert plan.slides[0].role is SlideRole.COVER
+    assert plan.slides[-1].role is SlideRole.CLOSING
+
+    invalid = plan.model_dump(mode="json")
+    invalid["slides"][0]["role"] = SlideRole.CONTEXT.value
+    with pytest.raises(ValidationError, match="first slide must have role=cover"):
+        DeckPlan.model_validate(invalid)
+
+    invalid = plan.model_dump(mode="json")
+    invalid["slides"][-1]["role"] = SlideRole.DECISION.value
+    with pytest.raises(ValidationError, match="final slide must have role=closing"):
+        DeckPlan.model_validate(invalid)
+
+
+def test_design_plan_uses_auditable_rationale_and_exact_global_palette():
+    outline_slide = SlideOutlineSpec.model_validate(_slide_payload(2, 3))
+    global_style = GlobalStyleSpec.model_validate(PALETTE).model_dump(mode="json")
+    plan = SlideDesignPlan.model_validate(_design_plan_payload())
+
+    validated = _validate_design_plan(
+        plan,
+        outline_slide=outline_slide,
+        expected_layout=LayoutFamily.THREE_POINTS,
+        global_style=global_style,
+        approved_fonts=["Noto Sans CJK SC", "Inter"],
     )
+    assert validated.design_specifications.color_scheme.model_dump(mode="json") == global_style
+    assert "thinking_process" not in validated.model_dump(mode="json")
 
-
-def test_deck_plan_locks_order_ids_and_boundary_roles():
-    plan = DeckPlan(
-        deck_title="HTML deck",
-        core_message="HTML is the single authoring source.",
-        narrative_arc=["Open", "Resolve"],
-        slides=[
-            _slide(1, SlideRole.COVER, LayoutFamily.COVER_MINIMAL),
-            _slide(2, SlideRole.CLOSING, LayoutFamily.CLOSING_RESOLUTION),
-        ],
+    unapproved_font_payload = copy.deepcopy(_design_plan_payload())
+    unapproved_font_payload["design_specifications"]["typography"]["font_family"] = (
+        "Remote Sans"
     )
+    with pytest.raises(ValueError, match="approved local fonts"):
+        _validate_design_plan(
+            SlideDesignPlan.model_validate(unapproved_font_payload),
+            outline_slide=outline_slide,
+            expected_layout=LayoutFamily.THREE_POINTS,
+            global_style=global_style,
+            approved_fonts=["Noto Sans CJK SC", "Inter"],
+        )
 
-    assert plan.model_dump(mode="json")["slides"][0]["layout_family"] == "cover_minimal"
+    conflicting_payload = copy.deepcopy(_design_plan_payload())
+    conflicting_payload["design_specifications"]["color_scheme"]["accent_color"] = "#DC6803"
+    conflicting = SlideDesignPlan.model_validate(conflicting_payload)
+    with pytest.raises(ValueError, match="exactly equal GlobalStyleSpec"):
+        _validate_design_plan(
+            conflicting,
+            outline_slide=outline_slide,
+            expected_layout=LayoutFamily.THREE_POINTS,
+            global_style=global_style,
+        )
 
-    with pytest.raises(ValidationError, match="consecutive"):
-        DeckPlan(
-            deck_title="Invalid",
-            core_message="Invalid ordering",
-            narrative_arc=["One"],
-            slides=[
-                _slide(1, SlideRole.COVER, LayoutFamily.COVER_MINIMAL),
-                _slide(3, SlideRole.CLOSING, LayoutFamily.CLOSING_RESOLUTION),
-            ],
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        SlideDesignPlan.model_validate(
+            {**_design_plan_payload(), "thinking_process": {"hidden": "reasoning"}}
         )
 
 
-def test_schema_boundaries_forbid_extra_model_fields_and_full_documents():
+def test_html_slide_schema_keeps_fragment_and_strict_field_boundaries():
     valid = {
         "slide_id": "s01",
         "layout_family": "cover_minimal",
@@ -107,114 +246,12 @@ def test_schema_boundaries_forbid_extra_model_fields_and_full_documents():
         HtmlSlideSpec.model_validate({**valid, "body_html": "<html><body>bad</body></html>"})
     with pytest.raises(ValidationError, match="safe body fragment"):
         HtmlSlideSpec.model_validate({**valid, "body_html": "<script>alert(1)</script>"})
-
-    # Tag-boundary matching must not confuse the safe <header> element with
-    # the forbidden document-level <head> element.
-    assert "<header" in HtmlSlideSpec.model_validate(
-        {**valid, "body_html": '<section class="slide"><header>Safe</header></section>'}
-    ).body_html
-
-
-def test_nested_content_items_have_per_item_length_limits():
-    with pytest.raises(ValidationError, match="180 characters"):
-        SlideContentSpec(
-            slide_id="s01",
-            assertion_title="Bounded content",
-            takeaway="Keep every nested value bounded.",
-            content_blocks=[ContentBlock(type="bullet_list", items=["x" * 181])],
+    with pytest.raises(ValidationError, match="safe body fragment"):
+        HtmlSlideSpec.model_validate(
+            {**valid, "body_html": "<style>.leak{color:red}</style><section>Safe</section>"}
         )
 
-
-def test_catalog_provides_complete_themes_and_one_recipe_per_layout_family():
-    themes = list_html_themes()
-    recipes = recipe_catalog().recipes
-
-    assert len(themes) >= 4
-    assert len({theme.theme_id for theme in themes}) == len(themes)
-    assert {recipe.family for recipe in recipes} == set(LayoutFamily)
-    assert len(recipes) == len(LayoutFamily)
-    assert all(recipe.variants and recipe.slots for recipe in recipes)
-    assert all(theme.to_design_spec().canvas_width == 1600 for theme in themes)
-    assert all(theme.to_design_spec().canvas_height == 900 for theme in themes)
-
-
-def test_catalog_rejects_removed_or_unknown_theme_ids():
-    with pytest.raises(ValueError, match="unknown HTML deck theme"):
-        resolve_theme_id("removed-theme")
-
-    design = get_html_theme("executive_signal").to_design_spec()
-    assert design.theme_id == "executive_signal"
-    assert design.typography.page_title.size_px >= 46
-    assert design.typography.body.size_px >= 21
-
-
-@pytest.mark.parametrize("metric_value", ["35%", "复购"])
-def test_metric_block_survives_recipe_normalization_without_a_fact_ledger(metric_value):
-    brief = _brief(source_text=f"The approved measure is {metric_value}.")
-    slide = _slide(2, SlideRole.EVIDENCE, LayoutFamily.KEY_METRIC)
-    content = SlideContentSpec(
-        slide_id=slide.slide_id,
-        assertion_title=slide.assertion_title,
-        takeaway=slide.takeaway,
-        content_blocks=[
-            ContentBlock(type="metric", value=metric_value, label="Approved measure")
-        ],
+    safe = HtmlSlideSpec.model_validate(
+        {**valid, "body_html": '<section class="slide"><header>Safe</header></section>'}
     )
-
-    normalized = _normalize_content_for_recipe(content, brief, slide)
-
-    assert normalized.content_blocks[0].type.value == "metric"
-    assert normalized.content_blocks[0].value == metric_value
-
-
-def test_style_model_cannot_override_browser_tested_catalog_tokens():
-    baseline = get_html_theme("paper_editorial").to_design_spec()
-    typography = baseline.typography.model_copy(
-        update={
-            "cover_title": baseline.typography.cover_title.model_copy(
-                update={"size_px": 120, "line_height": 1.8}
-            ),
-            "page_title": baseline.typography.page_title.model_copy(
-                update={"size_px": 120, "line_height": 1.8}
-            ),
-            "body": baseline.typography.body.model_copy(update={"size_px": 120, "line_height": 1.8}),
-            "caption": baseline.typography.caption.model_copy(
-                update={"size_px": 120, "line_height": 1.8}
-            ),
-        }
-    )
-    proposed = baseline.model_copy(
-        update={
-            "theme_id": "midnight_product",
-            "palette": baseline.palette.model_copy(
-                update={
-                    "background": "#000000",
-                    "surface": "#FFFFFF",
-                    "text": "#767676",
-                    "muted": "#767676",
-                    "accent": "#FFFFFF",
-                    "secondary": "#FFFFFF",
-                }
-            ),
-            "typography": typography,
-            "spacing": baseline.spacing.model_copy(
-                update={"canvas_margin": 180, "base_unit": 16, "column_gap": 96}
-            ),
-            "shape_style": baseline.shape_style.model_copy(
-                update={"radius": 36, "line_width": 4, "shadow": "offset"}
-            ),
-            "icon_style": "an incompatible filled icon family",
-            "motif": "a source-aware descriptive refinement",
-        }
-    )
-
-    locked = _lock_approved_identity(proposed, baseline)
-
-    assert locked.theme_id == baseline.theme_id
-    assert locked.palette == baseline.palette
-    assert locked.typography == baseline.typography
-    assert locked.spacing == baseline.spacing
-    assert locked.shape_style == baseline.shape_style
-    assert locked.icon_style == baseline.icon_style
-    assert locked.motif == proposed.motif
-    assert _has_readable_contrast(locked)
+    assert "<header" in safe.body_html

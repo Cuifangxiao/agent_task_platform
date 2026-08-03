@@ -1,6 +1,7 @@
 import logging
 from types import SimpleNamespace
 
+import pytest
 from pydantic import BaseModel, ConfigDict
 
 import core.deck.pipeline.instrumentation as instrumentation
@@ -48,7 +49,19 @@ def test_actual_model_tokens_retries_and_fallbacks_are_collected():
     }
 
 
-def test_instrumented_node_logs_metrics_without_emitting_a_completion_event(caplog):
+@pytest.mark.parametrize(
+    ("stage", "model_key", "model_name"),
+    [
+        ("generate_slide_design", "style", "style-model"),
+        ("generate_slide_html", "designer", "designer-model"),
+    ],
+)
+def test_instrumented_model_nodes_use_role_metadata_and_log_metrics(
+    caplog,
+    stage,
+    model_key,
+    model_name,
+):
     caplog.set_level(logging.INFO, logger=instrumentation.__name__)
 
     class UsageLLM:
@@ -66,18 +79,22 @@ def test_instrumented_node_logs_metrics_without_emitting_a_completion_event(capl
         return {"value": 1}
 
     wrapped = instrumentation.instrument_node(
-        "generate_slide_content",
+        stage,
         node,
         {
             "__metadata__": {
-                "generate_slide_content": {"provider": "openai", "model": "gpt-test"}
+                model_key: {"provider": "openai", "model": model_name}
             }
         },
+        model_key=model_key,
     )
 
     assert wrapped({"task_id": "task-1"}) == {"value": 1}
+    assert "event=ppt_step_start" in caplog.text
     assert "event=ppt_step_end" in caplog.text
-    assert "stage=generate_slide_content" in caplog.text
+    assert f"stage={stage}" in caplog.text
+    assert "provider=openai" in caplog.text
+    assert f"model={model_name}" in caplog.text
     assert "model_call_count=1" in caplog.text
     assert "token_usage=17" in caplog.text
     assert "retry_count=0" in caplog.text

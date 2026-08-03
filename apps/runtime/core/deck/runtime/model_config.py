@@ -26,6 +26,10 @@ def build_ppt_llms(inp: GeneratePptInput) -> dict[str, Any]:
         capabilities[node_key] = {"supports_image_input": bool(config.supports_image_input)}
         metadata[node_key] = {"provider": config.provider, "model": config.model}
 
+    missing = sorted(MODEL_NODE_KEYS - clients.keys())
+    if missing:
+        raise ValueError(f"missing model config for node(s): {', '.join(missing)}")
+
     clients["__capabilities__"] = capabilities
     clients["__metadata__"] = metadata
     return clients

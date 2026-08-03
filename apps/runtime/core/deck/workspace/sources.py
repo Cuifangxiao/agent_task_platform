@@ -14,6 +14,13 @@ from core.tools.document_parser import parse_uploaded_document
 
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
 IMAGE_EXTENSIONS = frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
+IMAGE_MIME_TYPES = {
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
 
 
 def persist_normalized_source_bundle(
@@ -22,6 +29,7 @@ def persist_normalized_source_bundle(
     source_names: str,
     normalized_text: str,
     source_chunks: list[dict[str, Any]],
+    local_assets: list[dict[str, Any]] | None = None,
 ) -> None:
     """Persist the normalized content contract before strategy begins."""
 
@@ -42,12 +50,59 @@ def persist_normalized_source_bundle(
                 "source_names": source_names,
                 "normalized_markdown": "normalized-source.md" if normalized_text.strip() else "",
                 "chunks": len(source_chunks),
+                "local_assets": list(local_assets or []),
             },
             ensure_ascii=False,
             indent=2,
         ),
         encoding="utf-8",
     )
+
+
+def persist_uploaded_local_assets(
+    request_dir: Path,
+    inp: GeneratePptInput,
+) -> list[dict[str, Any]]:
+    """Persist image uploads as non-executable task-local evidence descriptors.
+
+    Raw bytes never enter LangGraph state or an LLM message.  The three model
+    stages receive only bounded metadata and a task-relative path.  The current
+    HTML contract does not permit model-authored ``src`` attributes, so these
+    assets can inform planning but are not directly embeddable.
+    """
+
+    project = DeckProjectPaths(Path(request_dir).resolve()).ensure()
+    descriptors: list[dict[str, Any]] = []
+    for source_file in collect_source_files(inp):
+        original_name = _safe_original_filename(source_file.name)
+        extension = Path(original_name).suffix.casefold()
+        if extension not in IMAGE_EXTENSIONS:
+            continue
+        content = _source_content(source_file)
+        asset_number = len(descriptors) + 1
+        destination = project.source_assets / f"asset-{asset_number:03d}{extension}"
+        temporary = destination.with_name(f".{destination.name}.tmp")
+        temporary.write_bytes(content)
+        temporary.replace(destination)
+        descriptors.append(
+            {
+                "asset_id": str(source_file.resource_id or f"asset-{asset_number:03d}")[:160],
+                "kind": "image",
+                "original_name": original_name,
+                "mime_type": (
+                    source_file.mime_type
+                    if str(source_file.mime_type or "").casefold().startswith("image/")
+                    else IMAGE_MIME_TYPES[extension]
+                ),
+                "relative_path": project.relative(destination),
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "trusted_local_only": True,
+                "visual_analysis_available": False,
+                "html_embedding_allowed": False,
+            }
+        )
+    return descriptors
 
 
 def parse_uploaded_files(
@@ -78,9 +133,10 @@ def parse_uploaded_files_with_provenance(
     for index, source_file in enumerate(source_files):
         filename = source_file.name.strip() or "uploaded-file"
 
-        # The current pipeline accepts uploads as textual evidence only. Binary
-        # images are excluded instead of being exposed to an authoring model.
+        # Image bytes are persisted separately as task-local assets. They never
+        # become text evidence or enter model/state payloads.
         if _is_image_filename(filename):
+            _source_content(source_file)
             continue
 
         if remaining is not None and remaining <= 0:
@@ -175,3 +231,8 @@ def join_source_file_names(source_files: list[InputResource], *, max_chars: int 
 
 def _is_image_filename(filename: str) -> bool:
     return Path(str(filename or "")).suffix.casefold() in IMAGE_EXTENSIONS
+
+
+def _safe_original_filename(filename: str) -> str:
+    value = Path(str(filename or "uploaded-image").replace("\\", "/")).name.strip()
+    return (value or "uploaded-image")[:240]

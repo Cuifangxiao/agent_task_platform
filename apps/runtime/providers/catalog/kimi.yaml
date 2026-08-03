@@ -5,6 +5,7 @@ manager: kimi
 sdk: langchain_openai
 default_base_url: https://api.moonshot.cn/v1
 supports_custom_base_url: true
+request_timeout_seconds: 180
 structured_output_method: json_schema
 credential_test:
   enabled: true

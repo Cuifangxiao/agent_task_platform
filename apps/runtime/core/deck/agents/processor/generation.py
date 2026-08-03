@@ -36,7 +36,7 @@ from core.deck.runtime.metrics import record_fallback
 from core.deck.domain.schemas import (
     ContentBlock,
     ContentBlockType,
-    DeckBrief,
+    DeckOutlineSpec,
     DeckPlan,
     DesignSpec,
     DiagnosticCategory,
@@ -48,6 +48,8 @@ from core.deck.domain.schemas import (
     RendererDiagnostic,
     SlideArtifactMetadata,
     SlideContentSpec,
+    SlideDesignPlan,
+    SlideOutlineSpec,
     SlidePlan,
 )
 from core.deck.pipeline.state import DeckGraphState
@@ -86,12 +88,13 @@ class GenerationNodes:
         self.browser_renderer = browser_renderer or HTMLBrowserRenderer()
         self.max_repairs = max(0, int(max_repairs))
         self.progress_tracker = SlideProgressTracker()
+        self._preview_emit_lock = threading.Lock()
 
     def prepare_slide(self, state: DeckGraphState) -> dict[str, Any]:
         return prepare_slide(state)
 
-    def generate_slide_content(self, state: DeckGraphState) -> dict[str, Any]:
-        return generate_slide_content(state, self.llm_registry)
+    def generate_slide_design(self, state: DeckGraphState) -> dict[str, Any]:
+        return generate_slide_design(state, self.output_dir, self.llm_registry)
 
     def generate_slide_html(self, state: DeckGraphState) -> dict[str, Any]:
         return generate_slide_html(state, self.output_dir, self.llm_registry)
@@ -124,23 +127,35 @@ class GenerationNodes:
 
     def emit_slide_preview(self, state: DeckGraphState) -> dict[str, Any]:
         slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
-        return emit_slide_preview(
-            state,
-            completed_count=self.progress_tracker.mark_completed(
-                str(state["request_id"]),
-                slide.slide_id,
-            ),
-        )
+        lock = getattr(self, "_preview_emit_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._preview_emit_lock = lock
+        with lock:
+            return emit_slide_preview(
+                state,
+                completed_count=self.progress_tracker.mark_completed(
+                    str(state["request_id"]),
+                    slide.slide_id,
+                ),
+            )
 
     def aggregate_slides(self, state: DeckGraphState) -> dict[str, Any]:
         return aggregate_slides(state, self.output_dir)
 
 def prepare_slide(state: DeckGraphState) -> dict[str, Any]:
+    outline = DeckOutlineSpec.model_validate(state.get("deck_outline") or {})
     plan = DeckPlan.model_validate(state.get("deck_plan") or {})
     offset = max(0, int(state.get("current_slide_index") or 0))
     if offset >= len(plan.slides):
         raise ValueError("prepare_slide called after the final planned page")
     slide = plan.slides[offset]
+    outline_slide = outline.slides[offset]
+    if outline_slide.id != slide.slide_id:
+        raise ValueError(
+            f"outline/renderer slide mismatch at page {offset + 1}: "
+            f"{outline_slide.id} != {slide.slide_id}"
+        )
     writer = get_stream_writer()
     writer(
         events.slide_started(
@@ -154,8 +169,13 @@ def prepare_slide(state: DeckGraphState) -> dict[str, Any]:
         )
     )
     return {
+        "current_slide_outline": outline_slide.model_dump(mode="json"),
         "current_slide_plan": slide.model_dump(mode="json"),
-        "current_slide_content_spec": {},
+        "current_slide_design_plan": {},
+        "current_slide_content_spec": _deterministic_content_spec(
+            outline_slide,
+            slide,
+        ).model_dump(mode="json"),
         "current_html_slide_spec": {},
         "current_assembled_html": "",
         "current_diagnostics": [],
@@ -171,63 +191,80 @@ def prepare_slide(state: DeckGraphState) -> dict[str, Any]:
     }
 
 
-def generate_slide_content(state: DeckGraphState, llm_registry: dict[str, Any]) -> dict[str, Any]:
-    brief = DeckBrief.model_validate(state.get("brief") or {})
+def generate_slide_design(
+    state: DeckGraphState,
+    output_dir: Path,
+    llm_registry: dict[str, Any],
+) -> dict[str, Any]:
+    outline = DeckOutlineSpec.model_validate(state.get("deck_outline") or {})
     plan = DeckPlan.model_validate(state.get("deck_plan") or {})
     slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
+    outline_slide = SlideOutlineSpec.model_validate(state.get("current_slide_outline") or {})
+    design = DesignSpec.model_validate(state.get("design_spec") or {})
     recipe = get_recipe(slide.layout_family)
-    icons = icon_registry().search(
-        " ".join([slide.assertion_title, slide.takeaway, slide.content_intent]), limit=12
-    )
-    fallback = _deterministic_content_spec(brief, slide)
-    content = fallback
-    try:
-        content = invoke_structured_with_retries(
-            llm_for_node(llm_registry, "writer"),
-            SlideContentSpec,
-            system=load_node_prompt("slide_content"),
-            user=json.dumps(
-                {
-                    "brief": brief.model_dump(mode="json", exclude={"source_text"}),
-                    "deck_plan": plan.model_dump(mode="json"),
-                    "current_slide": slide.model_dump(mode="json"),
-                    "neighbor_slides": _neighbor_plans(plan, slide.index),
-                    "recipe": recipe.prompt_manifest(),
-                    "relevant_sources": _relevant_sources(state, slide),
-                    "available_icon_keys": icons,
-                    "hard_constraints": {
-                        "slide_id": slide.slide_id,
-                        "assertion_title": slide.assertion_title,
-                        "takeaway": slide.takeaway,
-                        "no_invented_numbers": True,
-                    },
+    preference = dict(state.get("current_layout_preference") or {})
+    expected_layout = str(preference.get("layout_family") or slide.layout_family.value)
+    design_plan = invoke_structured_with_retries(
+        llm_for_node(llm_registry, "style"),
+        SlideDesignPlan,
+        system=load_node_prompt("slide_visual_planner"),
+        user=json.dumps(
+            {
+                "deck": {
+                    "title": outline.title,
+                    "subtitle": outline.subtitle,
+                    "metadata": outline.metadata.model_dump(
+                        mode="json",
+                        exclude={"global_style_spec"},
+                    ),
                 },
-                ensure_ascii=False,
-            ),
-            attempts=3,
-        )
-        content = content.model_copy(
-            update={
-                "slide_id": slide.slide_id,
-                "assertion_title": slide.assertion_title,
-                "takeaway": slide.takeaway,
-                "suggested_icon_keys": [key for key in content.suggested_icon_keys if key in icons][:8],
-            }
-        )
-        content = _normalize_content_for_recipe(content, brief, slide)
-    except StructuredOutputError as exc:
-        record_fallback()
-        get_stream_writer()(
-            events.stage_progress(
-                "generate_slide_content",
-                f"Page {slide.index} content schema failed; used deterministic fallback: {exc}",
-                {"status": "warning", "index": slide.index, "total": len(plan.slides)},
-            )
-        )
-        content = fallback
-    except ModelInvocationError:
-        raise
-    return {"current_slide_content_spec": content.model_dump(mode="json")}
+                "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
+                "current_slide": outline_slide.model_dump(mode="json"),
+                "slide_summaries": [
+                    {
+                        "slide_id": item.id,
+                        "title": item.title,
+                        "type": item.type.value,
+                        "layout_suggestion": item.layout_suggestion.value,
+                        "summary": truncate(item.content_note, 160),
+                    }
+                    for item in outline.slides
+                ],
+                "neighbor_slides": _neighbor_plans(plan, slide.index),
+                "locked_layout": preference,
+                "supported_layout_types": [item.value for item in LayoutFamily],
+                "recipe": recipe.prompt_manifest(),
+                "approved_fonts": [
+                    design.typography.chinese_font,
+                    design.typography.latin_font,
+                ],
+                "relevant_sources": _relevant_sources(state, slide),
+                "relevant_assets": _relevant_assets(state, slide),
+                "hard_constraints": {
+                    "slide_id": slide.slide_id,
+                    "layout_type": expected_layout,
+                    "inherit_global_style_exactly": True,
+                    "do_not_return_hidden_chain_of_thought": True,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        attempts=3,
+        output_validator=lambda value: _validate_design_plan(
+            SlideDesignPlan.model_validate(value),
+            outline_slide=outline_slide,
+            expected_layout=slide.layout_family,
+            global_style=outline.metadata.global_style_spec.model_dump(mode="json"),
+            approved_fonts=[
+                design.typography.chinese_font,
+                design.typography.latin_font,
+            ],
+        ),
+    )
+    design_plan = SlideDesignPlan.model_validate(design_plan)
+    project = DeckProjectPaths.for_request(output_dir, str(state["request_id"])).ensure()
+    _atomic_write_json(project.slide_design_spec(slide.index), design_plan.model_dump(mode="json"))
+    return {"current_slide_design_plan": design_plan.model_dump(mode="json")}
 
 
 def generate_slide_html(
@@ -235,10 +272,12 @@ def generate_slide_html(
     output_dir: Path,
     llm_registry: dict[str, Any],
 ) -> dict[str, Any]:
-    brief = DeckBrief.model_validate(state.get("brief") or {})
+    outline = DeckOutlineSpec.model_validate(state.get("deck_outline") or {})
     plan = DeckPlan.model_validate(state.get("deck_plan") or {})
     design = DesignSpec.model_validate(state.get("design_spec") or {})
     slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
+    outline_slide = SlideOutlineSpec.model_validate(state.get("current_slide_outline") or {})
+    design_plan = SlideDesignPlan.model_validate(state.get("current_slide_design_plan") or {})
     content = SlideContentSpec.model_validate(state.get("current_slide_content_spec") or {})
     recipe = get_recipe(slide.layout_family)
     allowed_icons = sorted(set(content.suggested_icon_keys + icon_registry().search(slide.takeaway, limit=8)))[:12]
@@ -249,16 +288,24 @@ def generate_slide_html(
         spec = invoke_structured_with_retries(
             llm_for_node(llm_registry, "designer"),
             HtmlSlideSpec,
-            system=load_node_prompt("html_slide_designer"),
+            system=load_node_prompt("slide_html_builder"),
             user=json.dumps(
                 {
-                    "brief": brief.model_dump(mode="json", exclude={"source_text"}),
-                    "deck_plan": plan.model_dump(mode="json"),
+                    "deck": {
+                        "title": outline.title,
+                        "subtitle": outline.subtitle,
+                        "language": outline.metadata.language,
+                        "source_summary": outline.metadata.source_summary,
+                    },
                     "design_spec": design.model_dump(mode="json"),
-                    "current_slide": slide.model_dump(mode="json"),
+                    "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
+                    "current_slide": outline_slide.model_dump(mode="json"),
+                    "slide_design_plan": design_plan.model_dump(mode="json"),
                     "slide_content": content.model_dump(mode="json"),
                     "neighbor_slides": _neighbor_plans(plan, slide.index),
                     "recipe": recipe.prompt_manifest(),
+                    "relevant_sources": _relevant_sources(state, slide),
+                    "relevant_assets": _relevant_assets(state, slide),
                     "available_icon_keys": allowed_icons,
                     "layout_preference": dict(state.get("current_layout_preference") or {}),
                     "previous_compositions": list(state.get("previous_compositions") or [])[-4:],
@@ -268,13 +315,22 @@ def generate_slide_html(
                         "semantic_boxes": "data-box",
                         "decorations": "data-decorative=true",
                         "external_resources": "forbidden",
+                        "javascript": "forbidden",
+                        "animations_and_transitions": "forbidden",
+                        "gradients": "forbidden",
+                        "output": "HtmlSlideSpec JSON with body fragment and .slide-scoped CSS",
                     },
                 },
                 ensure_ascii=False,
             ),
-            attempts=2,
+            attempts=3,
+            output_validator=lambda value: _validate_and_lock_html_spec(
+                HtmlSlideSpec.model_validate(value),
+                slide=slide,
+                allowed_icons=allowed_icons,
+            ),
         )
-        spec = _lock_html_spec(spec, slide, allowed_icons)
+        spec = HtmlSlideSpec.model_validate(spec)
     except StructuredOutputError as exc:
         record_fallback()
         fallback_used = True
@@ -299,13 +355,14 @@ def generate_slide_html(
 def sanitize_and_assemble_html(state: DeckGraphState, assembler: HTMLAssembler) -> dict[str, Any]:
     design = DesignSpec.model_validate(state.get("design_spec") or {})
     spec = HtmlSlideSpec.model_validate(state.get("current_html_slide_spec") or {})
-    brief = DeckBrief.model_validate(state.get("brief") or {})
+    outline = DeckOutlineSpec.model_validate(state.get("deck_outline") or {})
+    outline_slide = SlideOutlineSpec.model_validate(state.get("current_slide_outline") or {})
     try:
         result = assembler.assemble(
             body_html=spec.body_html,
             page_css=spec.page_css,
             design_spec=design,
-            language=brief.language,
+            language=outline.metadata.language,
             declared_icon_keys=spec.icon_keys,
             expected_layout=spec.layout_family.value,
         )
@@ -318,6 +375,15 @@ def sanitize_and_assemble_html(state: DeckGraphState, assembler: HTMLAssembler) 
                 slide,
                 content,
                 fallback_used=bool(state.get("current_fallback_used")),
+                approved_context=[
+                    outline_slide.title,
+                    *outline_slide.key_points,
+                    outline_slide.content_note,
+                    *[
+                        str(item.get("excerpt") or "")
+                        for item in _relevant_sources(state, slide)
+                    ],
+                ],
             )
         )
         sanitized_spec = spec.model_copy(
@@ -337,7 +403,7 @@ def sanitize_and_assemble_html(state: DeckGraphState, assembler: HTMLAssembler) 
             body_html='<section class="slide" data-layout="statement_focus"></section>',
             page_css="",
             design_spec=design,
-            language=brief.language,
+            language=outline.metadata.language,
             declared_icon_keys=[],
             expected_layout=spec.layout_family.value,
         )
@@ -433,7 +499,10 @@ def repair_slide_html(
     max_repairs: int,
 ) -> dict[str, Any]:
     design = DesignSpec.model_validate(state.get("design_spec") or {})
+    outline = DeckOutlineSpec.model_validate(state.get("deck_outline") or {})
     slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
+    outline_slide = SlideOutlineSpec.model_validate(state.get("current_slide_outline") or {})
+    design_plan = SlideDesignPlan.model_validate(state.get("current_slide_design_plan") or {})
     content = SlideContentSpec.model_validate(state.get("current_slide_content_spec") or {})
     current = HtmlSlideSpec.model_validate(state.get("current_html_slide_spec") or {})
     attempts = max(0, int(state.get("current_repair_attempts") or 0)) + 1
@@ -448,6 +517,9 @@ def repair_slide_html(
             user=json.dumps(
                 {
                     "design_spec": design.model_dump(mode="json"),
+                    "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
+                    "slide_outline": outline_slide.model_dump(mode="json"),
+                    "slide_design_plan": design_plan.model_dump(mode="json"),
                     "slide_plan": slide.model_dump(mode="json"),
                     "slide_content": content.model_dump(mode="json"),
                     "current_html_spec": current.model_dump(mode="json"),
@@ -460,8 +532,13 @@ def repair_slide_html(
                 ensure_ascii=False,
             ),
             attempts=2,
+            output_validator=lambda value: _validate_and_lock_html_spec(
+                HtmlSlideSpec.model_validate(value),
+                slide=slide,
+                allowed_icons=allowed_icons,
+            ),
         )
-        repaired = _lock_html_spec(repaired, slide, allowed_icons)
+        repaired = HtmlSlideSpec.model_validate(repaired)
         fallback_used = False
     except StructuredOutputError:
         record_fallback()
@@ -529,6 +606,7 @@ def persist_slide_artifacts(
     project = DeckProjectPaths.for_request(output_dir, request_id).ensure()
     design = DesignSpec.model_validate(state.get("design_spec") or {})
     slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
+    design_plan = SlideDesignPlan.model_validate(state.get("current_slide_design_plan") or {})
     content = SlideContentSpec.model_validate(state.get("current_slide_content_spec") or {})
     html_spec = HtmlSlideSpec.model_validate(state.get("current_html_slide_spec") or {})
     document = str(state.get("current_assembled_html") or "")
@@ -536,10 +614,12 @@ def persist_slide_artifacts(
 
     html_path = project.preview_html(slide.index)
     content_path = project.slide_content_spec(slide.index)
+    design_plan_path = project.slide_design_spec(slide.index)
     html_spec_path = project.html_slide_spec(slide.index)
     diagnostics_path = project.slide_diagnostics(slide.index)
     _atomic_write_text(html_path, document)
     _atomic_write_json(content_path, content.model_dump(mode="json"))
+    _atomic_write_json(design_plan_path, design_plan.model_dump(mode="json"))
     _atomic_write_json(html_spec_path, html_spec.model_dump(mode="json"))
     _atomic_write_json(diagnostics_path, {"slide_id": slide.slide_id, "diagnostics": diagnostics})
 
@@ -551,6 +631,7 @@ def persist_slide_artifacts(
         "html_hash": html_hash,
         "preview_hash": str(state.get("current_preview_hash") or ""),
         "design_spec": design.model_dump(mode="json"),
+        "slide_design_plan": design_plan.model_dump(mode="json"),
         "prompt_version": PROMPT_VERSION,
         "renderer_version": RENDERER_VERSION,
         "base_css_hash": assembler.base_css_hash,
@@ -566,6 +647,8 @@ def persist_slide_artifacts(
         layout_family=html_spec.layout_family,
         layout_variant=html_spec.layout_variant,
         composition_summary=html_spec.composition_summary,
+        design_plan_path=project.relative(design_plan_path),
+        html_spec_path=project.relative(html_spec_path),
         html_path=project.relative(html_path),
         preview_path=str(state.get("current_preview_path") or ""),
         content_hash=content_hash,
@@ -680,21 +763,76 @@ def emit_slide_preview(
     return {}
 
 
-def _lock_html_spec(spec: HtmlSlideSpec, slide: SlidePlan, allowed_icons: list[str]) -> HtmlSlideSpec:
+def _validate_design_plan(
+    plan: SlideDesignPlan,
+    *,
+    outline_slide: SlideOutlineSpec,
+    expected_layout: LayoutFamily,
+    global_style: dict[str, Any],
+    approved_fonts: list[str] | None = None,
+) -> SlideDesignPlan:
+    if plan.slide_id != outline_slide.id:
+        raise ValueError(
+            f"design slide_id {plan.slide_id!r} does not match outline {outline_slide.id!r}"
+        )
+    if plan.design_specifications.layout_type is not expected_layout:
+        raise ValueError(
+            "design layout_type does not match the deterministic page layout lock"
+        )
+    if plan.design_specifications.color_scheme.model_dump(mode="json") != global_style:
+        raise ValueError("design color_scheme must exactly equal GlobalStyleSpec")
+    if approved_fonts is not None:
+        declared_fonts = [
+            item.strip().strip("\"'")
+            for item in plan.design_specifications.typography.font_family.split(",")
+            if item.strip()
+        ]
+        allowed_fonts = {item.strip() for item in approved_fonts if item.strip()}
+        if not declared_fonts or any(item not in allowed_fonts for item in declared_fonts):
+            raise ValueError("design typography must use only approved local fonts")
+    return plan
+
+
+def _validate_and_lock_html_spec(
+    spec: HtmlSlideSpec,
+    *,
+    slide: SlidePlan,
+    allowed_icons: list[str],
+) -> HtmlSlideSpec:
+    if spec.slide_id != slide.slide_id:
+        raise ValueError(
+            f"HTML slide_id {spec.slide_id!r} does not match design page {slide.slide_id!r}"
+        )
+    if spec.layout_family is not slide.layout_family:
+        raise ValueError("HTML layout_family does not match the approved SlideDesignPlan")
     allowed = set(allowed_icons)
     return spec.model_copy(
         update={
-            "slide_id": slide.slide_id,
-            "layout_family": slide.layout_family,
             "icon_keys": [key for key in spec.icon_keys if key in allowed][:10],
         }
     )
 
 
-def _deterministic_content_spec(brief: DeckBrief, slide: SlidePlan) -> SlideContentSpec:
+def _deterministic_content_spec(
+    outline_slide: SlideOutlineSpec,
+    slide: SlidePlan,
+) -> SlideContentSpec:
+    """Derive the renderer's approved-copy guard without a writer model call."""
+
     blocks: list[ContentBlock] = []
+    points = [truncate(item, 180) for item in outline_slide.key_points]
     if slide.layout_family is LayoutFamily.KEY_METRIC:
-        metric_tokens = extract_number_tokens(f"{slide.assertion_title} {slide.takeaway}")
+        metric_tokens = extract_number_tokens(" ".join([*points, slide.takeaway]))
+        if not metric_tokens:
+            metric_tokens = extract_number_tokens(slide.assertion_title)
+        if not metric_tokens:
+            note_without_locators = re.sub(
+                r"(?i)\b(?:page|slide|section)\s*#?\s*\d+\b|"
+                r"第?\s*\d+\s*(?:页|頁|章|节|節)",
+                " ",
+                outline_slide.content_note,
+            )
+            metric_tokens = extract_number_tokens(note_without_locators)
         if metric_tokens:
             blocks.append(
                 ContentBlock(
@@ -704,10 +842,7 @@ def _deterministic_content_spec(brief: DeckBrief, slide: SlidePlan) -> SlideCont
                 )
             )
     elif slide.layout_family is LayoutFamily.COMPARISON:
-        values = [
-            truncate(brief.goal, 180),
-            truncate(brief.audience_outcome, 180),
-        ]
+        values = points or [truncate(slide.takeaway, 180)]
         midpoint = max(1, (len(values) + 1) // 2)
         blocks.extend(
             [
@@ -725,19 +860,27 @@ def _deterministic_content_spec(brief: DeckBrief, slide: SlidePlan) -> SlideCont
             if slide.layout_family is LayoutFamily.PROCESS
             else ContentBlockType.TIMELINE_ITEM
         )
-        values = [truncate(slide.takeaway, 180)]
+        values = points or [truncate(slide.takeaway, 180)]
         blocks.extend(
             ContentBlock(type=block_type, label=f"{index:02d}", text=value, ordinal=index)
             for index, value in enumerate(values[:5], start=1)
         )
     elif slide.layout_family is LayoutFamily.THREE_POINTS:
-        values = [truncate(slide.takeaway, 180)]
+        values = points or [truncate(slide.takeaway, 180)]
         blocks.extend(
             ContentBlock(type=ContentBlockType.ICON_LABEL, label=f"{index:02d}", text=value)
             for index, value in enumerate(values, start=1)
         )
     else:
-        blocks.append(ContentBlock(type=ContentBlockType.PARAGRAPH, text=slide.takeaway))
+        if len(points) > 1:
+            blocks.append(ContentBlock(type=ContentBlockType.BULLET_LIST, items=points))
+        else:
+            blocks.append(
+                ContentBlock(
+                    type=ContentBlockType.PARAGRAPH,
+                    text=points[0] if points else slide.takeaway,
+                )
+            )
     if not blocks:
         blocks.append(ContentBlock(type=ContentBlockType.CALLOUT, text=slide.takeaway))
     icons = icon_registry().search(" ".join([slide.assertion_title, slide.takeaway]), limit=3)
@@ -746,86 +889,8 @@ def _deterministic_content_spec(brief: DeckBrief, slide: SlidePlan) -> SlideCont
         assertion_title=slide.assertion_title,
         takeaway=slide.takeaway,
         content_blocks=blocks,
-        emphasis=[truncate(slide.takeaway, 180)],
+        emphasis=(points or [truncate(slide.takeaway, 180)])[:6],
         suggested_icon_keys=icons,
-    )
-
-
-def _normalize_content_for_recipe(
-    content: SlideContentSpec,
-    brief: DeckBrief,
-    slide: SlidePlan,
-) -> SlideContentSpec:
-    """Apply recipe capacity without rewriting model-approved content."""
-
-    capacity = get_recipe(slide.layout_family).capacity
-    remaining_chars = capacity.body_chars
-    remaining_items = capacity.items
-    normalized: list[ContentBlock] = []
-    item_blocks = {
-        ContentBlockType.ICON_LABEL,
-        ContentBlockType.PROCESS_STEP,
-        ContentBlockType.TIMELINE_ITEM,
-    }
-
-    def consume(value: str, maximum: int) -> str:
-        nonlocal remaining_chars
-        clean = str(value or "").strip()
-        if not clean or remaining_chars <= 0:
-            return ""
-        result = truncate(clean, min(maximum, remaining_chars))
-        remaining_chars = max(0, remaining_chars - len(result))
-        return result
-
-    for block in content.content_blocks:
-        if block.type is ContentBlockType.METRIC:
-            metric_value = consume(block.value, 80)
-            metric_label = consume(block.label, 120)
-            metric_text = consume(block.text, 700)
-            if metric_text or metric_value or metric_label:
-                normalized.append(
-                    ContentBlock(
-                        type=ContentBlockType.METRIC,
-                        text=metric_text,
-                        value=metric_value,
-                        label=metric_label,
-                    )
-                )
-            continue
-
-        if block.type in item_blocks:
-            if remaining_items <= 0:
-                continue
-            remaining_items -= 1
-        items: list[str] = []
-        for item in block.items:
-            if remaining_items <= 0:
-                break
-            rendered = consume(item, 180)
-            if rendered:
-                items.append(rendered)
-                remaining_items -= 1
-        payload = {
-            "type": block.type,
-            "text": consume(block.text, 700),
-            "items": items,
-            "label": consume(block.label, 120),
-            "value": consume(block.value, 80),
-            "side": block.side,
-            "ordinal": block.ordinal,
-        }
-        if payload["text"] or payload["items"] or payload["label"] or payload["value"]:
-            normalized.append(ContentBlock.model_validate(payload))
-        if remaining_chars <= 0:
-            break
-
-    if not normalized:
-        return _deterministic_content_spec(brief, slide)
-    return content.model_copy(
-        update={
-            "content_blocks": normalized[:10],
-            "emphasis": [truncate(item, 180) for item in content.emphasis[:6]],
-        }
     )
 
 
@@ -839,25 +904,159 @@ def _neighbor_plans(plan: DeckPlan, index: int) -> dict[str, Any]:
 
 def _relevant_sources(state: DeckGraphState, slide: SlidePlan, *, limit: int = 6) -> list[dict[str, Any]]:
     chunks = [item for item in state.get("source_chunks") or [] if isinstance(item, dict)]
-    terms = {
-        token.casefold()
-        for token in re.findall(r"[a-zA-Z0-9]{2,}|[\u3400-\u9fff]{2,4}", f"{slide.assertion_title} {slide.takeaway}")
-    }
+    terms = _slide_relevance_terms(state, slide)
     ranked = sorted(
-        chunks,
-        key=lambda item: -sum(
-            1 for term in terms if term in str(item.get("excerpt") or "").casefold()
+        (
+            (_source_relevance_score(item, terms), position, item)
+            for position, item in enumerate(chunks)
         ),
+        key=lambda value: (-value[0], value[1]),
     )
-    return [
+    result = [
         {
             "source_file": item.get("source_file", ""),
             "page": item.get("page", 0),
             "section": item.get("section", ""),
             "excerpt": str(item.get("excerpt") or "")[:1_200],
         }
-        for item in ranked[:limit]
+        for score, _position, item in ranked[:limit]
+        if score > 0
     ]
+    if result:
+        return result
+    source_text = str(state.get("source_text") or "").strip()
+    if not source_text:
+        return []
+    return [
+        {
+            "source_file": "normalized-source",
+            "page": 0,
+            "section": "",
+            "excerpt": source_text[:1_200],
+        }
+    ]
+
+
+def _relevant_assets(state: DeckGraphState, slide: SlidePlan, *, limit: int = 12) -> list[dict[str, Any]]:
+    """Expose only task-local source descriptors; never create remote asset URLs."""
+
+    result: list[dict[str, Any]] = []
+    for item in _relevant_sources(state, slide, limit=limit):
+        source_file = str(item.get("source_file") or "").strip()
+        section = str(item.get("section") or "").strip()
+        if not source_file:
+            continue
+        result.append(
+            {
+                "source_file": source_file,
+                "page": item.get("page", 0),
+                "section": section,
+                "trusted_local_only": True,
+            }
+        )
+    terms = _slide_relevance_terms(state, slide)
+    local_assets = [item for item in state.get("local_assets") or [] if isinstance(item, dict)]
+    ranked_assets = sorted(
+        (
+            (
+                sum(
+                    1
+                    for term in terms
+                    if term in " ".join(
+                        [
+                            str(item.get("original_name") or ""),
+                            str(item.get("asset_id") or ""),
+                            str(item.get("kind") or ""),
+                            str(item.get("relative_path") or ""),
+                        ]
+                    ).casefold()
+                ),
+                position,
+                item,
+            )
+            for position, item in enumerate(local_assets)
+        ),
+        key=lambda value: (-value[0], value[1]),
+    )
+    for score, _position, item in ranked_assets:
+        if score <= 0 or len(result) >= limit:
+            continue
+        result.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "asset_id",
+                    "kind",
+                    "original_name",
+                    "mime_type",
+                    "relative_path",
+                    "size_bytes",
+                    "sha256",
+                    "trusted_local_only",
+                    "visual_analysis_available",
+                    "html_embedding_allowed",
+                )
+            }
+        )
+    return result
+
+
+_RELEVANCE_STOPWORDS = {
+    "about",
+    "and",
+    "are",
+    "based",
+    "for",
+    "from",
+    "ground",
+    "in",
+    "into",
+    "of",
+    "on",
+    "page",
+    "section",
+    "show",
+    "slide",
+    "source",
+    "that",
+    "the",
+    "this",
+    "to",
+    "use",
+    "with",
+}
+
+
+def _slide_relevance_terms(state: DeckGraphState, slide: SlidePlan) -> set[str]:
+    outline = state.get("current_slide_outline") or {}
+    if not isinstance(outline, dict):
+        outline = {}
+    text = " ".join(
+        [
+            slide.assertion_title,
+            slide.takeaway,
+            slide.content_intent,
+            str(outline.get("content_note") or ""),
+            " ".join(str(item) for item in outline.get("key_points") or []),
+        ]
+    )
+    return {
+        normalized
+        for token in re.findall(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{1,}|[\u3400-\u9fff]{2,4}", text)
+        if (normalized := token.casefold()) not in _RELEVANCE_STOPWORDS
+    }
+
+
+def _source_relevance_score(item: dict[str, Any], terms: set[str]) -> int:
+    excerpt = str(item.get("excerpt") or "").casefold()
+    locator = " ".join(
+        [
+            str(item.get("source_file") or ""),
+            str(item.get("section") or ""),
+            str(item.get("page") or ""),
+        ]
+    ).casefold()
+    return sum((3 if term in locator else 0) + (1 if term in excerpt else 0) for term in terms)
 
 
 def _write_raw_debug(
@@ -897,6 +1096,7 @@ def _content_contract_diagnostics(
     content: SlideContentSpec,
     *,
     fallback_used: bool,
+    approved_context: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Reject visually plausible HTML that changes or drops page semantics.
 
@@ -956,12 +1156,62 @@ def _content_contract_diagnostics(
                     {"value": block.value},
                 )
             )
+
+    approved_number_text = " ".join(
+        [
+            content.assertion_title,
+            content.takeaway,
+            *content.emphasis,
+            *(approved_context or []),
+            *[
+                value
+                for block in content.content_blocks
+                for value in (block.text, *block.items, block.label, block.value)
+                if value
+            ],
+        ]
+    )
+    approved_numbers = {
+        _canonical_number_token(value)
+        for value in extract_number_tokens(approved_number_text)
+    }
+    approved_numbers.update(
+        {
+            _canonical_number_token(str(slide.index)),
+            _canonical_number_token(f"{slide.index:02d}"),
+        }
+    )
+    unapproved_numbers = sorted(
+        {
+            value
+            for token in extract_number_tokens(rendered)
+            if (value := _canonical_number_token(token)) not in approved_numbers
+        }
+    )
+    if unapproved_numbers:
+        diagnostics.append(
+            _content_diagnostic(
+                "UNAPPROVED_NUMBER",
+                "Rendered HTML introduces numeric evidence outside the approved page context.",
+                "Remove or replace numbers that are not present in the outline, content contract, or relevant sources.",
+                {"values": unapproved_numbers},
+            )
+        )
     return diagnostics
 
 
 def _canonical_visible_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     return re.sub(r"\s+", "", normalized)
+
+
+def _canonical_number_token(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).replace(",", "")
+    suffix = "%" if normalized.endswith("%") else ""
+    number = normalized[:-1] if suffix else normalized
+    if re.fullmatch(r"\d+", number):
+        number = str(int(number))
+    return number + suffix
 
 
 def _content_diagnostic(
@@ -1057,7 +1307,7 @@ __all__ = [
     "build_fallback_html",
     "capture_png",
     "emit_slide_preview",
-    "generate_slide_content",
+    "generate_slide_design",
     "generate_slide_html",
     "persist_slide_artifacts",
     "prepare_slide",

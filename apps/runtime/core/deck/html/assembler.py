@@ -183,6 +183,20 @@ def design_spec_css(design: DesignSpec | dict) -> str:
         "--radius": f"{shape.radius}px",
         "--line-width": f"{shape.line_width}px",
     }
+    if spec.global_style_spec is not None:
+        global_style = spec.global_style_spec
+        variables.update(
+            {
+                "--primary-color": global_style.primary_color,
+                "--secondary-color": global_style.secondary_color,
+                "--accent-color": global_style.accent_color,
+                "--background-color": global_style.background_color,
+                "--surface-color": global_style.surface_color,
+                "--text-secondary": global_style.text_secondary,
+                "--border-color": global_style.border_color,
+                "--success-color": global_style.success_color,
+            }
+        )
     return ":root{\n" + "\n".join(f"  {name}: {value};" for name, value in variables.items()) + "\n}"
 
 

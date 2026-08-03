@@ -3,7 +3,10 @@ import hashlib
 import pytest
 
 from core.deck.domain.contracts import GeneratePptInput, InputResource
-from core.deck.workspace.sources import parse_uploaded_files_with_provenance
+from core.deck.workspace.sources import (
+    parse_uploaded_files_with_provenance,
+    persist_uploaded_local_assets,
+)
 
 
 def _input(*resources: InputResource) -> GeneratePptInput:
@@ -39,6 +42,30 @@ def test_image_upload_is_listed_but_excluded_from_text_evidence():
     assert names == "photo.PNG"
     assert text == ""
     assert chunks == []
+
+
+def test_image_upload_is_persisted_as_bounded_task_local_metadata(tmp_path):
+    content = b"\x89PNG\r\n\x1a\nlocal-image-evidence"
+    assets = persist_uploaded_local_assets(
+        tmp_path,
+        _input(
+            InputResource(
+                resource_id="photo",
+                name="../photo.PNG",
+                mime_type="image/png",
+                content=content,
+                sha256=hashlib.sha256(content).hexdigest(),
+            )
+        ),
+    )
+
+    assert len(assets) == 1
+    assert assets[0]["original_name"] == "photo.PNG"
+    assert assets[0]["relative_path"] == "sources/assets/asset-001.png"
+    assert assets[0]["trusted_local_only"] is True
+    assert assets[0]["visual_analysis_available"] is False
+    assert assets[0]["html_embedding_allowed"] is False
+    assert (tmp_path / assets[0]["relative_path"]).read_bytes() == content
 
 
 def test_source_checksum_is_verified_before_parsing():

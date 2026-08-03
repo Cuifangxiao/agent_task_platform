@@ -80,6 +80,7 @@ def test_kimi_catalog_exposes_k3_and_k2_6_with_model_specific_thinking():
 
     assert provider.name == "kimi"
     assert provider.default_base_url == "https://api.moonshot.cn/v1"
+    assert provider.request_timeout_seconds == 180
     assert provider.credential_test.model == "kimi-k2.6"
     assert k3 is not None
     assert k3.type == "multimodal"
@@ -357,6 +358,7 @@ def test_kimi_uses_compatible_endpoint_and_model_specific_thinking(monkeypatch):
     )
 
     assert k3_client.kwargs["base_url"] == "https://api.moonshot.cn/v1"
+    assert k3_client.kwargs["timeout"] == 180
     assert k3_client.kwargs["metadata"]["structured_output_method"] == "json_schema"
     assert k3_client.kwargs["reasoning_effort"] == "high"
     assert "temperature" not in k3_client.kwargs

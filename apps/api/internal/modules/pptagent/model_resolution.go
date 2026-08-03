@@ -11,7 +11,7 @@ import (
 	"agent-task-platform/apps/api/internal/modules/modelconfig"
 )
 
-var pptModelNodes = [...]string{"brief", "outline", "style", "writer", "designer"}
+var pptModelNodes = [...]string{"outline", "style", "designer"}
 
 func (s *Service) resolveRuntimeModelConfigs(ctx context.Context, userID, agentConfigID int64) ([]RuntimeModelConfig, int64, error) {
 	config, err := s.resolvePPTAgentConfig(ctx, userID, agentConfigID)

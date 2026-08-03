@@ -29,8 +29,8 @@ apps/runtime/
 │   ├── deck/                #   PPT HTML-first 领域模块
 │   │   ├── service.py       #   应用入口与终态事件
 │   │   ├── agents/          #   三阶段 agent（各自持有 graph.py）
-│   │   │   ├── preprocessor/   # 需求解析、逻辑大纲、资产 A 分页
-│   │   │   ├── processor/      # layout、design、HTML、DOM QA、repair、PNG
+│   │   │   ├── preprocessor/   # 一次性整套大纲、页面规划与全局色板
+│   │   │   ├── processor/      # 逐页视觉规划、HTML、DOM QA、repair、PNG
 │   │   │   └── postprocessor/  # manifest、质量报告、PPTX 导出校验
 │   │   ├── domain/          #   contracts、Pydantic schemas、错误与事实规则
 │   │   ├── pipeline/        #   三阶段根图、共享 state、events 与 instrumentation
@@ -39,7 +39,7 @@ apps/runtime/
 │   │   ├── design_system/   #   catalog、主题、recipes、base CSS 与本地图标
 │   │   ├── html/            #   sanitizer、assembler、Chromium DOM QA 与 fallback
 │   │   ├── export/          #   image-only PPTX 导出
-│   │   └── prompts/         #   前处理与 HTML 生成节点提示词
+│   │   └── prompts/         #   outline、逐页视觉规划、HTML 与 repair 提示词
 └── utils/
     └── logger.py            # dictConfig 日志初始化
 ```
@@ -83,30 +83,38 @@ cp .env.example .env                 # 按需填密钥
 
 PPT 使用独立的 gRPC 服务端流。Go 发送一次 `GeneratePpt` 请求，Runtime 为每个
 run 创建独立的 `core/deck/pipeline/graph.py::PptGraph`，通过 custom stream 持续返回 `AgentEvent`。
-当前 HTML-first 流水线在 DesignSpec 锁定后使用 LangGraph `Send` 做页面级 map-reduce：
+核心 LLM 链路只有三个模型角色：`outline`、`style`、`designer`。`outline` 每个任务只调用一次，
+产出整套 `DeckOutlineSpec` 和唯一的 `GlobalStyleSpec`；随后 Runtime 使用 LangGraph `Send` 做页面级
+map-reduce，每页严格先执行 `style` 视觉规划，再执行 `designer` HTML 生成：
 
 ```text
-preprocessor_phase
-  -> parse_requirements -> create_logical_outline -> map_outline_to_pages
-processor_phase
-  -> prepare_processor_input -> select_template -> create_design_spec
+START
+  -> generate_deck_outline                         # outline，一次
+  -> fan_out_slides
   -> Send(generate_slide, slide_1 .. slide_n)
-     -> prepare_slide -> generate_slide_content -> generate_slide_html
+     -> prepare_slide
+     -> generate_slide_design                      # style，每页一次
+     -> generate_slide_html                        # designer，每页一次
      -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
-        -> [repair_slide_html -> sanitize...] | [build_fallback_html -> sanitize...] | capture_png
+        -> valid: capture_png
+        -> repair: repair_slide_html -> sanitize... # designer，最多两轮
+        -> fallback: build_fallback_html -> sanitize...
      -> persist_slide_artifacts -> emit_slide_preview
   -> aggregate_slides
-postprocessor_phase
   -> assemble_image_pptx -> finalize_deck
+  -> END
 ```
 
-前处理边界使用 `GlobalMeta`、`LogicalOutline`、`SceneNarrativeTemplate` 和 `PagePlan`；其中
-`PagePlan` 单页只允许 `page_no + page_category + topic`，不读取或保存 layout。Processor 在前处理完成后生成
-layout-aware `DeckBrief`/`DeckPlan`，并继续使用 `DesignSpec`、`SlideContentSpec` 和
-`HtmlSlideSpec` 等严格 Pydantic schema；LangGraph state 只保存可序列化字典、诊断和相对产物信息。
-planner 会预分配 recipe variant，避免 designer 依赖前一分支的实际构图结果；`completed_slides`、
-`layout_history` 和 `validation_issues` 通过 reducer 在 fan-in 时确定性归并。每个请求从头执行，当前没有
-LangGraph checkpointer、人工 review 或 pause/resume。
+阶段一直接接收用户要求、标准化来源、资产摘要和页数约束，输出 `DeckOutlineSpec`。它包含连续的
+`SlideOutlineSpec` 页面清单、全局 metadata 和完整 `GlobalStyleSpec`；页数保持 `1..30`，页面 ID 必须从
+`s01` 连续排列。Runtime 再确定性派生兼容现有 renderer 的 `DeckPlan`、`DesignSpec`、recipe variant 和
+`SlideContentSpec`，这一步不再调用 `brief` 或 `writer` 模型。
+
+每个页面分支中的 `SlideDesignPlan` 必须继承同一个 `GlobalStyleSpec`，并记录简短、可审计的
+`design_rationale`，而不是隐藏思维链。`HtmlSlideSpec` 接收对应页的 outline、完整 design plan、相关来源切片
+和本地资产约束。LangGraph state 只保存可序列化字典、诊断和相对产物信息；`completed_slides`、
+`layout_history` 和 `validation_issues` 通过 reducer 在 fan-in 时确定性归并，最终按 `slide_id`/页索引恢复顺序。
+每个请求从头执行，当前没有 LangGraph checkpointer、人工 review 或 pause/resume。
 
 默认页面并发数为 6、Chromium session pool 并发数为 3；可分别通过
 `DECK_SLIDE_CONCURRENCY` 和 `DECK_BROWSER_CONCURRENCY` 调整。预览按完成顺序发送，调用方按
@@ -114,18 +122,26 @@ LangGraph checkpointer、人工 review 或 pause/resume。
 
 设计系统位于 `core/deck/design_system/`，提供 4 套完整主题（`paper_editorial`、
 `executive_signal`、`midnight_product`、`alpine_research`）、10 个 layout recipe 和 24 个本地 Lucide 图标。
+catalog 继续提供经过浏览器验证的几何、字体、间距、shape 和图标合同；页面颜色只来自阶段一的
+`GlobalStyleSpec`，确定性映射为 renderer `DesignSpec.palette`，逐页视觉规划不能发明冲突色板。
 模型生成的 HTML/CSS 会经过 parser-backed allowlist 清洗，再装入含 CSP、全局 DesignSpec token 和
 trusted base CSS 的文档壳。Chromium 对每页执行越界、溢出、重叠、最小字号、节点预算和字体可用性检查；
-内容错误最多修复两次，然后进入确定性 recipe fallback。数字、人物、实质性引语、客户案例和已实现结果
-还会经过来源守卫；有效但无关的 `source_ref` 不能授权新事实。
+内容错误最多修复两次，然后进入确定性 recipe fallback。确定性内容守卫要求 HTML 保留批准的标题、
+至少一个正文内容块和 key metric 原值；prompt 同时要求模型只使用本页 outline 与相关来源切片。
+当前实现不会对全部自由文本事实逐项执行来源蕴含校验。
 
 渲染画布为 `1600×900` CSS px，`deviceScaleFactor=2`，每页输出 `3200×1800` PNG。生产预览事件
 只发布 `PAGE_PREVIEW` PNG，使用稳定的 `sXX-preview` resource ID；已清洗 HTML 会持久化供审计，
 但不通过页预览事件暴露。每条页预览事件还携带以 `artifact_hash` 为值的必填 `revision`，
 用于客户端精确识别已持久化页面版本。最终 PPTX 每页只含一张全出血 PNG，因此视觉稳定但页内元素不可编辑。
 
-模型角色仍固定为 `brief`、`outline`、`style`、`writer`、`designer`，配置由 Go 请求注入。
-上传文件当前只用于文本/provenance；上传图片不会进入生成节点，当前没有多模态视觉分析。
+模型角色固定为 `outline`、`style`、`designer`，配置由 Go 请求注入。MySQL migration
+`014_refactor_ppt_agent_model_nodes.sql` 更新 Agent 节点定义，保留这三个既有绑定并清理旧的
+`brief`/`writer` 绑定。当前 state schema 为 `deck-state.v6`，prompt 版本为 `html-deck.v8`；
+renderer 协议未改变，仍为 `chromium-html.v2`。
+文本附件以正文/provenance 进入 outline 和逐页相关来源上下文。图片会持久化到任务本地
+`sources/assets/`，其有界元数据可参与 outline 和逐页资源筛选；当前仍不做多模态视觉分析，
+也不允许模型把上传图片直接编排进 HTML。
 
 安装 Python 依赖后，还需要 Playwright Chromium：
 

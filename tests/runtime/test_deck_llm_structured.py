@@ -61,6 +61,19 @@ def test_exhausted_structured_parser_failures_remain_non_transport_errors():
         )
 
 
+def test_plain_value_error_from_structured_wrapper_is_schema_failure():
+    llm = _StructuredLLM([ValueError("invalid structured value")])
+
+    with pytest.raises(StructuredOutputError, match="invalid structured value"):
+        invoke_structured_with_retries(
+            llm,
+            _Payload,
+            system="Return a payload.",
+            user="A value is required.",
+            attempts=1,
+        )
+
+
 def test_structured_output_uses_method_from_managed_model_metadata():
     llm = _StructuredLLM(
         [{"value": 7}],

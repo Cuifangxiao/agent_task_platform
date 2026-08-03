@@ -84,21 +84,21 @@ class DeckInputState(TypedDict, total=False):
     user_description: str
     uploaded_file_text: str
     source_chunks: list[dict[str, Any]]
+    local_assets: list[dict[str, Any]]
 
 
 class DeckPreprocessorState(TypedDict, total=False):
-    """Canonical outputs of the preprocessor phase."""
+    """Canonical output of the one-shot deck-outline phase."""
 
-    global_meta: dict[str, Any]
-    logical_outline: dict[str, Any]
-    narrative_template: dict[str, Any]
-    page_plan: dict[str, Any]
+    deck_outline: dict[str, Any]
+    global_style_spec: dict[str, Any]
+    source_text: str
+    requested_page_count: int
 
 
 class DeckProcessorPlanningState(TypedDict, total=False):
-    """Layout-aware contracts created inside the processor phase."""
+    """Deterministic renderer adapters derived from ``deck_outline``."""
 
-    brief: dict[str, Any]
     deck_plan: dict[str, Any]
     # Deterministic recipe variants are allocated with the plan so parallel
     # slide branches do not need another branch's model output for diversity.
@@ -112,7 +112,9 @@ class DeckProcessorDesignState(TypedDict, total=False):
 
 class DeckProcessorSlideState(TypedDict, total=False):
     current_slide_index: int
+    current_slide_outline: dict[str, Any]
     current_slide_plan: dict[str, Any]
+    current_slide_design_plan: dict[str, Any]
     current_slide_content_spec: dict[str, Any]
     current_html_slide_spec: dict[str, Any]
     current_assembled_html: str

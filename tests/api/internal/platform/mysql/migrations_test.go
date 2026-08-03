@@ -138,3 +138,45 @@ func TestPptAgentDefinitionMigrationRestoresCurrentModelNodes(t *testing.T) {
 		}
 	}
 }
+
+func TestPptAgentThreeStageMigrationIsRepeatableAndPreservesSurvivingBindings(t *testing.T) {
+	dir, err := resolveMySQLMigrationDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(filepath.Join(dir, "014_refactor_ppt_agent_model_nodes.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(payload)
+	statements := splitSQLStatements(script)
+	if len(statements) != 2 {
+		t.Fatalf("migration statement count = %d, want 2", len(statements))
+	}
+	for _, required := range []string{
+		"INSERT INTO agents",
+		"'ppt_agent'",
+		"ON DUPLICATE KEY UPDATE",
+		"node_schema = VALUES(node_schema)",
+		"status = VALUES(status)",
+		"'key', 'outline'",
+		"'key', 'style'",
+		"'key', 'designer'",
+		"binding.node_key NOT IN ('outline', 'style', 'designer')",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("migration is missing %q", required)
+		}
+	}
+	if got := strings.Count(script, "'key', '"); got != 3 {
+		t.Errorf("migration defines %d model nodes, want exactly 3", got)
+	}
+	for _, removed := range []string{"'key', 'brief'", "'key', 'writer'"} {
+		if strings.Contains(script, removed) {
+			t.Errorf("migration must not define legacy model node %q", removed)
+		}
+	}
+	if strings.Contains(strings.ToUpper(script), "UPDATE AGENT_CONFIG_NODE_BINDINGS") {
+		t.Fatal("migration must preserve the settings of surviving node bindings")
+	}
+}

@@ -1,7 +1,0 @@
-{
-  "scene": "teaching",
-  "mandatory_page_types": ["cover", "summary"],
-  "suggest_page_order": ["cover", "content", "content", "content", "summary"],
-  "page_min": 4,
-  "page_max": 16
-}

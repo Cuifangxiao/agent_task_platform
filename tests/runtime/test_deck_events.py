@@ -69,15 +69,26 @@ def test_out_of_order_preview_uses_completed_count_instead_of_page_index():
     assert event.progress.percent == 20.0
 
 
-def test_stage_progress_maps_done_to_step_completed():
+def test_slide_design_progress_maps_done_to_step_completed():
     event = events.stage_progress(
-        "generate_slide_content", "content completed", {"status": "done"}
+        "generate_slide_design", "visual plan completed", {"status": "done"}
     )
 
     assert event.type is EventType.STEP_COMPLETED
     assert event.stage is PptStage.GENERATING_PAGES
 
 
-def test_removed_or_unknown_stage_names_are_rejected():
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "brief",
+        "writer",
+        "parse_requirements",
+        "create_logical_outline",
+        "map_outline_to_pages",
+        "generate_slide_content",
+    ],
+)
+def test_removed_or_unknown_stage_names_are_rejected(stage):
     with pytest.raises(ValueError, match="unknown deck pipeline stage"):
-        events.stage_for("writer")
+        events.stage_for(stage)

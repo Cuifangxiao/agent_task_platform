@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any
 
 
-MODEL_NODE_KEYS = frozenset({"brief", "outline", "style", "writer", "designer"})
+MODEL_NODE_KEYS = frozenset({"outline", "style", "designer"})
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,0 @@
-{
-  "scene": "thesis_defense",
-  "mandatory_page_types": ["cover", "catalog", "thanks"],
-  "suggest_page_order": ["cover", "catalog", "content", "content", "chart", "summary", "thanks"],
-  "page_min": 10,
-  "page_max": 16
-}

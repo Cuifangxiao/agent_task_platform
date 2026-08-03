@@ -42,7 +42,8 @@ def test_css_sanitizer_keeps_scoped_layout_and_drops_network_global_and_fixed_ru
 
     assert ".slide .safe" in result.css
     assert "position:absolute" in result.css
-    assert "linear-gradient" in result.css
+    assert "linear-gradient" not in result.css
+    assert any("gradient" in item.message.lower() for item in result.diagnostics)
     assert "@import" not in result.css
     assert "body{" not in result.css
     assert "position:fixed" not in result.css
@@ -148,7 +149,37 @@ def test_html_content_contract_rejects_drift():
         "APPROVED_CONTENT_MISSING",
         "ASSERTION_TITLE_MISSING",
         "METRIC_VALUE_MISSING",
+        "UNAPPROVED_NUMBER",
     }
+
+
+def test_html_content_contract_rejects_extra_numeric_claim_even_with_approved_copy():
+    slide = SlidePlan(
+        slide_id="s02",
+        index=2,
+        role="evidence",
+        assertion_title="Retention improved",
+        takeaway="Approved retention reached 35%",
+        content_intent="Use only approved evidence.",
+        layout_family="key_metric",
+        rhythm="anchor",
+    )
+    content = SlideContentSpec(
+        slide_id="s02",
+        assertion_title=slide.assertion_title,
+        takeaway=slide.takeaway,
+        content_blocks=[ContentBlock(type="metric", value="35%", label="Retention")],
+    )
+
+    diagnostics = _content_contract_diagnostics(
+        '<section class="slide"><h1>Retention improved</h1>'
+        '<div>Approved retention reached 35%; fabricated revenue grew 999%.</div></section>',
+        slide,
+        content,
+        fallback_used=False,
+    )
+
+    assert "UNAPPROVED_NUMBER" in {item["code"] for item in diagnostics}
 
 
 def test_trusted_icon_injection_is_local_allowlisted_and_deterministic():

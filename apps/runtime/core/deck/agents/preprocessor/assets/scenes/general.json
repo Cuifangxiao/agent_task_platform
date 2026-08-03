@@ -1,7 +1,0 @@
-{
-  "scene": "general",
-  "mandatory_page_types": ["cover"],
-  "suggest_page_order": ["cover", "content", "content", "summary"],
-  "page_min": 1,
-  "page_max": 30
-}

@@ -16,16 +16,12 @@ from core.deck.domain.contracts import (
 
 
 _STAGES = {
-    "parse_requirements": PptStage.PREPARING,
-    "create_logical_outline": PptStage.PLANNING,
-    "map_outline_to_pages": PptStage.PLANNING,
-    "prepare_processor_input": PptStage.PLANNING,
-    "select_template": PptStage.PLANNING,
-    "create_design_spec": PptStage.GENERATING_ASSETS,
+    "generate_deck_outline": PptStage.PLANNING,
+    "fan_out_slides": PptStage.PLANNING,
     # Once a page starts, keep the externally visible stage monotonic through
-    # its content, HTML, repair, and preview work.
+    # its visual plan, HTML, repair, and preview work.
     "prepare_slide": PptStage.GENERATING_PAGES,
-    "generate_slide_content": PptStage.GENERATING_PAGES,
+    "generate_slide_design": PptStage.GENERATING_PAGES,
     "generate_slide_html": PptStage.GENERATING_PAGES,
     "sanitize_and_assemble_html": PptStage.GENERATING_PAGES,
     "repair_slide_html": PptStage.GENERATING_PAGES,
@@ -35,6 +31,7 @@ _STAGES = {
     "capture_png": PptStage.RENDERING,
     "persist_slide_artifacts": PptStage.RENDERING,
     "emit_slide_preview": PptStage.RENDERING,
+    "aggregate_slides": PptStage.RENDERING,
     "assemble_image_pptx": PptStage.ASSEMBLING_PPT,
     # FINISHED remains owned by the service's terminal TASK_COMPLETED event.
     "finalize_deck": PptStage.ASSEMBLING_PPT,

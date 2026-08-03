@@ -1,27 +1,8 @@
-"""Public entrypoint for the deck preprocessor phase."""
+"""Public entrypoint for the one-shot deck-outline phase."""
 
-from core.deck.agents.preprocessor.graph import Preprocessor
-from core.deck.agents.preprocessor.schema import (
-    GlobalMeta,
-    GlobalMetaInterpretation,
-    LogicalOutline,
-    OutlineSection,
-    OutlineTopic,
-    PageCategory,
-    PagePlan,
-    PagePlanItem,
-    SceneNarrativeTemplate,
-)
+from core.deck.agents.preprocessor.graph import PREPROCESSOR_NODE_SEQUENCE, Preprocessor
 
 __all__ = [
-    "GlobalMeta",
-    "GlobalMetaInterpretation",
-    "LogicalOutline",
-    "OutlineSection",
-    "OutlineTopic",
-    "PageCategory",
-    "PagePlan",
-    "PagePlanItem",
+    "PREPROCESSOR_NODE_SEQUENCE",
     "Preprocessor",
-    "SceneNarrativeTemplate",
 ]

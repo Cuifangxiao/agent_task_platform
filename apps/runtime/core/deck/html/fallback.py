@@ -55,7 +55,7 @@ def _cover(content: SlideContentSpec, plan: SlidePlan) -> tuple[str, str, list[s
   <div class="page-number" data-box="footer">01</div>
 </section>""".strip()
     css = """
-.slide.recipe-cover{background:linear-gradient(112deg,var(--slide-bg) 0 72%,var(--surface) 72%);}
+.slide.recipe-cover{background:var(--slide-bg);}
 .slide.recipe-cover .cover-copy{position:absolute;left:var(--canvas-margin);top:154px;width:1010px;}
 .slide.recipe-cover .cover-title{margin-top:30px;width:1010px;padding-bottom:16px;}
 .slide.recipe-cover h1{font-size:var(--font-cover-title-size);font-weight:var(--font-cover-title-weight);line-height:var(--font-cover-title-line-height);letter-spacing:-0.04em;}
@@ -105,7 +105,7 @@ def _statement(content: SlideContentSpec, plan: SlidePlan) -> tuple[str, str, li
   <div class="page-number" data-box="footer">{plan.index:02d}</div>
 </section>""".strip()
     css = """
-.slide.recipe-statement{background:radial-gradient(circle at 78% 18%,var(--surface) 0 16%,transparent 42%),var(--slide-bg);}
+.slide.recipe-statement{background:var(--slide-bg);}
 .slide.recipe-statement .statement-mark{position:absolute;left:112px;top:128px;width:12px;height:560px;background:var(--secondary);}
 .slide.recipe-statement .statement-title{position:absolute;left:174px;top:158px;width:1160px;padding-bottom:14px;}
 .slide.recipe-statement h1{font-size:72px;line-height:1.08;}
@@ -223,7 +223,7 @@ def _process(content: SlideContentSpec, plan: SlidePlan) -> tuple[str, str, list
   <div class="page-number" data-box="caption">{plan.index:02d}</div>
 </section>""".strip()
     css = """
-.slide.recipe-process .process-track{position:absolute;left:var(--canvas-margin);right:var(--canvas-margin);top:286px;display:grid;grid-template-columns:repeat(5,1fr);gap:24px;background-image:linear-gradient(var(--divider),var(--divider));background-position:left 34px;background-repeat:no-repeat;background-size:100% 2px;}
+.slide.recipe-process .process-track{position:absolute;left:var(--canvas-margin);right:var(--canvas-margin);top:286px;display:grid;grid-template-columns:repeat(5,1fr);gap:24px;}
 .slide.recipe-process .process-step{position:relative;padding-top:82px;}
 .slide.recipe-process .process-step>span{position:absolute;left:0;top:0;display:flex;width:68px;height:68px;align-items:center;justify-content:center;border-radius:50%;background:var(--accent);color:var(--slide-bg);font-size:21px;font-weight:800;}
 .slide.recipe-process .process-step h2{font-size:27px;line-height:1.2;}
@@ -305,7 +305,7 @@ def _closing(content: SlideContentSpec, plan: SlidePlan) -> tuple[str, str, list
   <div class="page-number" data-box="caption">{plan.index:02d}</div>
 </section>""".strip()
     css = """
-.slide.recipe-closing{background:linear-gradient(128deg,var(--slide-bg) 0 66%,var(--accent) 66%);}
+.slide.recipe-closing{background:var(--slide-bg);}
 .slide.recipe-closing .closing-field{position:absolute;right:160px;top:118px;width:330px;height:590px;border:3px solid var(--slide-bg);opacity:.34;transform:rotate(8deg);}
 .slide.recipe-closing .closing-copy{position:absolute;left:var(--canvas-margin);top:172px;width:970px;}
 .slide.recipe-closing .closing-title{margin-top:30px;width:970px;padding-bottom:14px;}
@@ -438,7 +438,7 @@ TITLE_DISPLAY_WIDTH_BUDGET = {
     # Browser-tested conservative widths. East Asian wide/full-width glyphs
     # consume two units, while Latin glyphs consume one. This keeps the same
     # fallback safe for Chinese, English, and mixed-script titles.
-    LayoutFamily.COVER_MINIMAL: 44,
+    LayoutFamily.COVER_MINIMAL: 38,
     LayoutFamily.SECTION_BREAK: 48,
     LayoutFamily.STATEMENT_FOCUS: 84,
     LayoutFamily.EDITORIAL_SPLIT: 80,
@@ -488,6 +488,11 @@ def _truncate_display_width(value: str, limit: int) -> str:
             return 0.0
         if character.isspace():
             return 0.55
+        # Color-emoji/system-symbol fallback fonts are measurably wider than
+        # ordinary CJK glyphs in Chromium on Windows.  Keep terminal fallback
+        # titles conservative across host font stacks.
+        if unicodedata.category(character) == "So":
+            return 3.0
         if unicodedata.east_asian_width(character) in {"W", "F"}:
             return 2.0
         # Latin titles should not be shortened as aggressively as CJK.  The
