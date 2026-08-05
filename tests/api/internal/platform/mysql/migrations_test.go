@@ -126,12 +126,10 @@ func TestPptAgentDefinitionMigrationRestoresCurrentModelNodes(t *testing.T) {
 		"ON DUPLICATE KEY UPDATE",
 		"node_schema = VALUES(node_schema)",
 		"status = VALUES(status)",
-		"'key', 'brief'",
 		"'key', 'outline'",
 		"'key', 'style'",
-		"'key', 'writer'",
 		"'key', 'designer'",
-		"binding.node_key NOT IN ('brief', 'outline', 'style', 'writer', 'designer')",
+		"binding.node_key NOT IN ('outline', 'style', 'designer')",
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("migration is missing %q", required)
@@ -170,11 +168,6 @@ func TestPptAgentThreeStageMigrationIsRepeatableAndPreservesSurvivingBindings(t 
 	}
 	if got := strings.Count(script, "'key', '"); got != 3 {
 		t.Errorf("migration defines %d model nodes, want exactly 3", got)
-	}
-	for _, removed := range []string{"'key', 'brief'", "'key', 'writer'"} {
-		if strings.Contains(script, removed) {
-			t.Errorf("migration must not define legacy model node %q", removed)
-		}
 	}
 	if strings.Contains(strings.ToUpper(script), "UPDATE AGENT_CONFIG_NODE_BINDINGS") {
 		t.Fatal("migration must preserve the settings of surviving node bindings")

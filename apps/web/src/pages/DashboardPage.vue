@@ -50,13 +50,14 @@ const previewProviders = [
   { id: 'preview-openai', provider: 'openai', label: 'OpenAI (GPT-4o)' },
   { id: 'preview-deepseek', provider: 'deepseek', label: 'DeepSeek (V3)' },
   { id: 'preview-qwen', provider: 'qwen', label: 'Qwen (Qwen2.5)' },
+  { id: 'preview-gemini', provider: 'gemini', label: 'Google Gemini (2.5 Flash)' },
 ]
 
 const activeModels = computed(() => props.models.filter((item) => item.status === 'active'))
 const activeAgents = computed(() => props.agents.filter((item) => item.status === 'active'))
 const activeAgentConfigs = computed(() => props.agentConfigs.filter((item) => item.status === 'active'))
 const currentConfig = computed(() => props.pptConfigs.find((item) => item.is_default) ?? props.pptConfigs[0] ?? null)
-const modelCount = computed(() => props.preview ? 3 : activeModels.value.length)
+const modelCount = computed(() => props.preview ? previewProviders.length : activeModels.value.length)
 const agentCount = computed(() => props.preview ? 5 : activeAgents.value.length)
 const agentConfigCount = computed(() => props.preview ? 5 : activeAgentConfigs.value.length)
 const dashboardHealth = computed(() => props.preview ? 'ok' : props.apiHealth)
@@ -64,7 +65,7 @@ const isReady = computed(() => dashboardHealth.value === 'ok' && modelCount.valu
 
 const providerRows = computed(() => {
   if (props.preview) return previewProviders
-  return activeModels.value.slice(0, 3).map((model) => ({
+  return activeModels.value.slice(0, 4).map((model) => ({
     id: model.id,
     provider: model.provider,
     label: `${providerName(model.provider)} (${model.model_name})`,

@@ -43,7 +43,7 @@ MySQL 是 run 快照和完整事件日志的真源：
 - TaskHub 仅负责当前进程的取消控制、有界热缓存和 WebSocket fan-out；
 - API 重启后可继续查询历史 run 并重放已持久化事件，但不会恢复正在运行的 LangGraph。启动恢复会将遗留的 running run 以 `SERVER_RESTARTED` 持久化为失败终态。
 
-Go 在创建任务前解析 `outline`、`style`、`designer` 三个模型节点。绑定缺失、模型停用或类型错误会在 worker 启动前拒绝请求；`brief` 和 `writer` 不再是 PPT Agent 的模型配置节点。
+Go 在创建任务前解析 `outline`、`style`、`designer` 三个模型节点。绑定缺失、模型停用或类型错误会在 worker 启动前拒绝请求。
 
 ## 2. Send map-reduce LangGraph
 
@@ -90,7 +90,7 @@ LLM 边界使用 `core/deck/domain/schemas.py` 中的严格 Pydantic schema，�
 | `SlideDesignPlan` | `style` 的逐页输出：可审计 design rationale、layout、继承色板、字体、关键元素与视觉层级 |
 | `DeckPlan` / `SlidePlan` | 从 outline 确定性派生的 renderer/事件兼容合同；不产生额外模型调用 |
 | `DesignSpec` | 从 `GlobalStyleSpec` 和受信 catalog 派生的可执行主题、字体、字号、间距、形状与图标合同 |
-| `SlideContentSpec` | 从页面 outline 与相关来源确定性整理的 QA/fallback 内容合同，不再由 `writer` 模型生成 |
+| `SlideContentSpec` | 从页面 outline 与相关来源确定性整理的 QA/fallback 内容合同 |
 | `HtmlSlideSpec` | `designer` 的逐页输出：layout family/variant、构图摘要、HTML body fragment、scoped CSS 和图标 key |
 | `RendererDiagnostic` | `security` / `content` / `environment` 分类，严重度、selector、几何信息与修复建议 |
 | `SlideArtifactMetadata` | 每页 HTML/PNG 路径、内容哈希、渲染环境、模型元数据、repair/fallback 结果 |
@@ -251,7 +251,7 @@ fc-list : family | rg -i 'Noto Sans CJK SC|Inter'
 
 Runtime 不下载 Web font，字体合约不满足会被当作渲染环境错误，不会悄然换字体。生产镜像以非 root 用户运行，并显式要求 Chromium sandbox；不应通过 `--no-sandbox` 规避部署问题。
 
-MySQL migration 会在 Go API 启动时自动执行：`migrations/mysql/011_create_ppt_run_store.sql` 创建 PPT run/event 表，`012_widen_ppt_event_ids.sql` 将生产者稳定事件 ID 列扩为 `VARCHAR(160)` 并保留唯一约束，`014_refactor_ppt_agent_model_nodes.sql` 将 PPT Agent 定义更新为 `outline`、`style`、`designer` 三个必需节点。014 使用 upsert 更新 Agent schema，只删除不再支持的节点绑定，因此已有三个保留节点的 model、temperature 和 max-token override 不变；旧 `brief` / `writer` 绑定会被清理。脚本遵循仓库 migration runner 的重复执行约定。本地联调时先启动 MySQL、Redis 和 Runtime，再启动 Go API 与 Web。
+MySQL migration 会在 Go API 启动时自动执行：`migrations/mysql/011_create_ppt_run_store.sql` 创建 PPT run/event 表，`012_widen_ppt_event_ids.sql` 将生产者稳定事件 ID 列扩为 `VARCHAR(160)` 并保留唯一约束，`014_refactor_ppt_agent_model_nodes.sql` 将 PPT Agent 定义更新为 `outline`、`style`、`designer` 三个必需节点。014 使用 upsert 更新 Agent schema，只删除不受支持的节点绑定，因此已有三个保留节点的 model、temperature 和 max-token override 不变。脚本遵循仓库 migration runner 的重复执行约定。本地联调时先启动 MySQL、Redis 和 Runtime，再启动 Go API 与 Web。
 
 ## 9. 验证
 

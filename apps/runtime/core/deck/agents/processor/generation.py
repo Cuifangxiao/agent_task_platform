@@ -156,8 +156,8 @@ def prepare_slide(state: DeckGraphState) -> dict[str, Any]:
             f"outline/renderer slide mismatch at page {offset + 1}: "
             f"{outline_slide.id} != {slide.slide_id}"
         )
-    writer = get_stream_writer()
-    writer(
+    emit_event = get_stream_writer()
+    emit_event(
         events.slide_started(
             f"Generating page {slide.index}/{len(plan.slides)}: {slide.assertion_title}",
             {
@@ -817,7 +817,7 @@ def _deterministic_content_spec(
     outline_slide: SlideOutlineSpec,
     slide: SlidePlan,
 ) -> SlideContentSpec:
-    """Derive the renderer's approved-copy guard without a writer model call."""
+    """Derive the renderer's approved-copy guard from the slide outline."""
 
     blocks: list[ContentBlock] = []
     points = [truncate(item, 180) for item in outline_slide.key_points]

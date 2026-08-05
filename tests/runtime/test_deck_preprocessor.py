@@ -260,11 +260,11 @@ def test_outline_business_validation_enforces_boundary_roles_and_layout_diversit
         )
 
 
-def test_outline_phase_requires_outline_model_not_retired_nodes(monkeypatch):
+def test_outline_phase_requires_outline_model(monkeypatch):
     monkeypatch.setattr(preprocessor_graph, "get_stream_writer", lambda: lambda _event: None)
 
     with pytest.raises(ValueError, match="missing llm for deck node 'outline'"):
         preprocessor_graph.generate_deck_outline(
             _initial_state("missing-outline"),
-            {"brief": object(), "writer": object()},
+            {"unsupported": object()},
         )

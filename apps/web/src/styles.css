@@ -307,6 +307,17 @@ label {
   padding: 14px 22px 18px;
 }
 
+.main:has(.presentation-page) {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.page-stage:has(.presentation-page) {
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px 22px 20px;
+}
+
 .topbar {
   position: relative;
   z-index: 30;
@@ -3132,7 +3143,17 @@ label {
     overflow: visible;
   }
 
+  .main:has(.presentation-page) {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .page-stage:has(.chat-page) {
+    overflow: visible;
+  }
+
+  .page-stage:has(.presentation-page) {
     overflow: visible;
   }
 

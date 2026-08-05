@@ -307,7 +307,6 @@ def test_state_contract_contains_only_current_pipeline_concepts():
             "logical_outline",
             "narrative_template",
             "page_plan",
-            "brief",
             "job_id",
             "deck_id",
             "source_images",

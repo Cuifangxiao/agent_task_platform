@@ -49,9 +49,9 @@ def test_normalized_sources_are_archived_before_strategy(tmp_path):
 
     persist_normalized_source_bundle(
         project.root,
-        source_names="brief.md",
-        normalized_text="### brief.md\n\nRevenue grew 35%.",
-        source_chunks=[{"source_file": "brief.md", "page": 1, "excerpt": "Revenue grew 35%."}],
+        source_names="source.md",
+        normalized_text="### source.md\n\nRevenue grew 35%.",
+        source_chunks=[{"source_file": "source.md", "page": 1, "excerpt": "Revenue grew 35%."}],
     )
 
     assert "Revenue grew 35%" in (project.sources / "normalized-source.md").read_text(encoding="utf-8")

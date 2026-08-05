@@ -14,33 +14,21 @@ INSERT INTO agents (
     'HTML-first PPT deck generation agent.',
     JSON_ARRAY(
         JSON_OBJECT(
-            'key', 'brief',
-            'display_name', 'Brief Research',
-            'description', 'Normalize the request and extract the audience, goal, language, and source facts.',
-            'requires_model', true
-        ),
-        JSON_OBJECT(
             'key', 'outline',
-            'display_name', 'Outline Planning',
-            'description', 'Plan the presentation storyline, section order, and slide-level intent.',
+            'display_name', 'Deck Outline Planning',
+            'description', 'Create the deck-wide outline, global style palette, and slide-level content plan.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'style',
-            'display_name', 'Art Direction',
-            'description', 'Select the visual template and create the deck-wide design specification.',
-            'requires_model', true
-        ),
-        JSON_OBJECT(
-            'key', 'writer',
-            'display_name', 'Slide Writer',
-            'description', 'Generate structured content for each planned slide.',
+            'display_name', 'Slide Visual Planning',
+            'description', 'Create an auditable visual design plan for each slide using the deck-wide style.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'designer',
-            'display_name', 'HTML Slide Designer',
-            'description', 'Generate and repair slide HTML before rendering previews and the final PPTX.',
+            'display_name', 'HTML Slide Generation',
+            'description', 'Generate and repair safe local slide HTML from the corresponding visual design plan.',
             'requires_model', true
         )
     ),
@@ -60,4 +48,4 @@ INNER JOIN agent_configs AS config
 INNER JOIN agents AS agent
     ON agent.id = config.agent_id
 WHERE agent.agent_key = 'ppt_agent'
-  AND binding.node_key NOT IN ('brief', 'outline', 'style', 'writer', 'designer');
+  AND binding.node_key NOT IN ('outline', 'style', 'designer');

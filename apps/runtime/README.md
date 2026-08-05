@@ -108,7 +108,7 @@ START
 阶段一直接接收用户要求、标准化来源、资产摘要和页数约束，输出 `DeckOutlineSpec`。它包含连续的
 `SlideOutlineSpec` 页面清单、全局 metadata 和完整 `GlobalStyleSpec`；页数保持 `1..30`，页面 ID 必须从
 `s01` 连续排列。Runtime 再确定性派生兼容现有 renderer 的 `DeckPlan`、`DesignSpec`、recipe variant 和
-`SlideContentSpec`，这一步不再调用 `brief` 或 `writer` 模型。
+`SlideContentSpec`，这一步不产生额外模型调用。
 
 每个页面分支中的 `SlideDesignPlan` 必须继承同一个 `GlobalStyleSpec`，并记录简短、可审计的
 `design_rationale`，而不是隐藏思维链。`HtmlSlideSpec` 接收对应页的 outline、完整 design plan、相关来源切片
@@ -136,8 +136,8 @@ trusted base CSS 的文档壳。Chromium 对每页执行越界、溢出、重叠
 用于客户端精确识别已持久化页面版本。最终 PPTX 每页只含一张全出血 PNG，因此视觉稳定但页内元素不可编辑。
 
 模型角色固定为 `outline`、`style`、`designer`，配置由 Go 请求注入。MySQL migration
-`014_refactor_ppt_agent_model_nodes.sql` 更新 Agent 节点定义，保留这三个既有绑定并清理旧的
-`brief`/`writer` 绑定。当前 state schema 为 `deck-state.v6`，prompt 版本为 `html-deck.v8`；
+`014_refactor_ppt_agent_model_nodes.sql` 更新 Agent 节点定义，保留这三个既有绑定并清理其他节点绑定。
+当前 state schema 为 `deck-state.v6`，prompt 版本为 `html-deck.v8`；
 renderer 协议未改变，仍为 `chromium-html.v2`。
 文本附件以正文/provenance 进入 outline 和逐页相关来源上下文。图片会持久化到任务本地
 `sources/assets/`，其有界元数据可参与 outline 和逐页资源筛选；当前仍不做多模态视觉分析，

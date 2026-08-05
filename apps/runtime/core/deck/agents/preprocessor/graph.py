@@ -85,8 +85,8 @@ def generate_deck_outline(
 ) -> dict[str, Any]:
     """Call the outline model exactly once on the successful path."""
 
-    writer = get_stream_writer()
-    writer(events.stage_started("generate_deck_outline", "Planning the complete deck outline"))
+    emit_event = get_stream_writer()
+    emit_event(events.stage_started("generate_deck_outline", "Planning the complete deck outline"))
     incoming_schema = str(state.get("schema_version") or "").strip()
     if incoming_schema != SCHEMA_VERSION:
         raise ValueError(
@@ -151,9 +151,9 @@ def generate_deck_outline(
             layout_preferences=layout_preferences,
         )
 
-    writer(events.outline_ready(_outline_markdown(outline)))
-    writer(events.template_selected(theme.name, theme.theme_id))
-    writer(
+    emit_event(events.outline_ready(_outline_markdown(outline)))
+    emit_event(events.template_selected(theme.name, theme.theme_id))
+    emit_event(
         events.stage_progress(
             "generate_deck_outline",
             "Deck outline, global palette, and renderer lock ready",

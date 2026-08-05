@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Expand, Images, Loader2 } from '@lucide/vue'
+import { Expand, ImageOff, Images, Loader2 } from '@lucide/vue'
+import { ref } from 'vue'
 
 import type { PptPagePreview, PreviewLightbox } from '../types'
 
@@ -9,6 +10,7 @@ const props = defineProps<{
   compact?: boolean
 }>()
 const emit = defineEmits<{ open: [preview: PreviewLightbox] }>()
+const failedPreviewIds = ref<Set<string>>(new Set())
 
 function title(preview: PptPagePreview, index: number) {
   return preview.page?.title || preview.resource.name || `第 ${preview.page?.page_index ?? index + 1} 页`
@@ -20,6 +22,15 @@ function open(preview: PptPagePreview, index: number) {
     title: title(preview, index),
     subtitle: preview.page?.page_index ? `第 ${preview.page.page_index} 页` : '页面预览',
   })
+}
+
+function previewAvailable(preview: PptPagePreview) {
+  return Boolean(props.sources[preview.resource.resource_id])
+    && !failedPreviewIds.value.has(preview.resource.resource_id)
+}
+
+function markPreviewFailed(preview: PptPagePreview) {
+  failedPreviewIds.value = new Set(failedPreviewIds.value).add(preview.resource.resource_id)
 }
 </script>
 
@@ -45,17 +56,19 @@ function open(preview: PptPagePreview, index: number) {
         <button
           class="slide-preview-frame"
           type="button"
-          :disabled="!props.sources[preview.resource.resource_id]"
+          :disabled="!previewAvailable(preview)"
           @click="open(preview, index)"
         >
           <img
-            v-if="props.sources[preview.resource.resource_id]"
+            v-if="previewAvailable(preview)"
             class="slide-preview-thumb"
             :src="props.sources[preview.resource.resource_id]"
             :alt="title(preview, index)"
+            @error="markPreviewFailed(preview)"
           />
-          <span v-else class="slide-preview-placeholder"><Loader2 class="spin" :size="18" />正在读取预览</span>
-          <span v-if="props.sources[preview.resource.resource_id]" class="slide-preview-action"><Expand :size="14" />查看大图</span>
+          <span v-else-if="!props.sources[preview.resource.resource_id]" class="slide-preview-placeholder"><Loader2 class="spin" :size="18" />正在读取预览</span>
+          <span v-else class="slide-preview-placeholder"><ImageOff :size="18" />预览暂不可用</span>
+          <span v-if="previewAvailable(preview)" class="slide-preview-action"><Expand :size="14" />查看大图</span>
         </button>
         <div>
           <strong>{{ title(preview, index) }}</strong>

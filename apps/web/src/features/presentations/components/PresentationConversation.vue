@@ -44,6 +44,7 @@ const emit = defineEmits<{
 
 const conversationBody = ref<HTMLElement | null>(null)
 const shouldFollowLatest = ref(true)
+const failedPreviewIds = ref<Set<string>>(new Set())
 
 const conversation = computed(() => projectPresentationConversation({
   ...props.task,
@@ -132,6 +133,14 @@ function previewTitle(preview: PptPagePreview, index: number) {
 function previewSource(preview: PptPagePreview) {
   return props.sources[preview.resource.resource_id]
     || (preview.resource.url ? resolveResourceUrl(preview.resource.url) : '')
+}
+
+function previewAvailable(preview: PptPagePreview) {
+  return Boolean(previewSource(preview)) && !failedPreviewIds.value.has(preview.resource.resource_id)
+}
+
+function markPreviewFailed(preview: PptPagePreview) {
+  failedPreviewIds.value = new Set(failedPreviewIds.value).add(preview.resource.resource_id)
 }
 
 function eventTone(event: PptAgentEvent) {
@@ -244,14 +253,15 @@ function eventTone(event: PptAgentEvent) {
                   :key="preview.resource.resource_id"
                   class="message-preview"
                   type="button"
-                  :disabled="!previewSource(preview)"
+                  :disabled="!previewAvailable(preview)"
                   :aria-label="`查看${previewTitle(preview, index)}`"
                   @click="emit('open-preview', preview)"
                 >
                   <img
-                    v-if="previewSource(preview)"
+                    v-if="previewAvailable(preview)"
                     :src="previewSource(preview)"
                     :alt="previewTitle(preview, index)"
+                    @error="markPreviewFailed(preview)"
                   />
                   <span v-else class="message-preview-placeholder" aria-hidden="true">
                     <FileImage :size="22" />

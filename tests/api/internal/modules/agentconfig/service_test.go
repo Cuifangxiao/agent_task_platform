@@ -134,30 +134,26 @@ func TestCreateRejectsMissingRequiredNode(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsLegacyPPTModelNodes(t *testing.T) {
-	for _, legacyNode := range []string{"brief", "writer"} {
-		t.Run(legacyNode, func(t *testing.T) {
-			service := NewService(
-				&stubRepo{agents: map[int64]*AgentDefinition{1: testPPTAgent()}},
-				&stubModelConfigRepo{byID: map[int64]*modelconfig.ModelConfig{
-					1: {ID: 1, Status: modelconfig.StatusActive},
-				}},
-			)
+func TestCreateRejectsUnsupportedPPTModelNode(t *testing.T) {
+	service := NewService(
+		&stubRepo{agents: map[int64]*AgentDefinition{1: testPPTAgent()}},
+		&stubModelConfigRepo{byID: map[int64]*modelconfig.ModelConfig{
+			1: {ID: 1, Status: modelconfig.StatusActive},
+		}},
+	)
 
-			_, err := service.CreateConfig(context.Background(), testUser(), CreateConfigRequest{
-				AgentID: 1,
-				Name:    "legacy node",
-				NodeBindings: []NodeBindingRequest{
-					{NodeKey: "outline", ModelConfigID: 1},
-					{NodeKey: "style", ModelConfigID: 1},
-					{NodeKey: "designer", ModelConfigID: 1},
-					{NodeKey: legacyNode, ModelConfigID: 1},
-				},
-			})
-			if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "is not configurable") {
-				t.Fatalf("expected legacy node %q to be rejected, got %v", legacyNode, err)
-			}
-		})
+	_, err := service.CreateConfig(context.Background(), testUser(), CreateConfigRequest{
+		AgentID: 1,
+		Name:    "unsupported node",
+		NodeBindings: []NodeBindingRequest{
+			{NodeKey: "outline", ModelConfigID: 1},
+			{NodeKey: "style", ModelConfigID: 1},
+			{NodeKey: "designer", ModelConfigID: 1},
+			{NodeKey: "unsupported", ModelConfigID: 1},
+		},
+	})
+	if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "is not configurable") {
+		t.Fatalf("expected unsupported node to be rejected, got %v", err)
 	}
 }
 

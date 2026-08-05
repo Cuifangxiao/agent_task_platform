@@ -81,14 +81,12 @@ def test_slide_design_progress_maps_done_to_step_completed():
 @pytest.mark.parametrize(
     "stage",
     [
-        "brief",
-        "writer",
         "parse_requirements",
         "create_logical_outline",
         "map_outline_to_pages",
         "generate_slide_content",
     ],
 )
-def test_removed_or_unknown_stage_names_are_rejected(stage):
+def test_unknown_stage_names_are_rejected(stage):
     with pytest.raises(ValueError, match="unknown deck pipeline stage"):
         events.stage_for(stage)

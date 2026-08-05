@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   Download,
-  FilePlus2,
   Loader2,
   MessageSquarePlus,
   MessagesSquare,
@@ -96,6 +95,7 @@ const uploadState = ref('')
 const submitting = ref(false)
 const restoring = ref(false)
 const previewLightbox = ref<PreviewLightbox | null>(null)
+const revisionComposerOpen = ref(false)
 
 watch(
   () => props.configs,
@@ -148,6 +148,20 @@ const composerPlaceholder = computed(() => isRevisionComposer.value
   ? '例如：沿用当前主题，把内容压缩到 6 页，并增加一页商业模式。'
   : '例如：制作一份 AI Agent 平台 MVP 汇报，面向投资人，风格简洁专业，控制在 10 页左右。')
 const composerSubmitLabel = computed(() => isRevisionComposer.value ? '复制需求并生成' : '开始生成')
+const conversationExamples = [
+  {
+    label: '融资路演',
+    prompt: '制作一份面向投资人的 AI Agent 平台融资路演，突出市场机会、产品价值、商业模式和融资计划，控制在 10 页，风格简洁专业。',
+  },
+  {
+    label: '项目汇报',
+    prompt: '制作一份项目阶段汇报，包含目标、已完成工作、关键数据、当前风险和下一步计划，控制在 8 页，适合管理层快速阅读。',
+  },
+  {
+    label: '培训课件',
+    prompt: '制作一份面向初级工程师的技术培训课件，从背景、核心概念、工作原理到实践案例逐步展开，控制在 12 页，风格清晰易懂。',
+  },
+]
 
 watch(
   previews,
@@ -243,6 +257,7 @@ async function startGeneration() {
     const run = upsertTask(snapshot, { prepend: true, submittedDescription: description })
     composerDrafts.delete(submittedDraftKey)
     selectedTaskId.value = run.task.task_id
+    revisionComposerOpen.value = false
     previewLightbox.value = null
     composer.text = ''
     composer.files = []
@@ -425,6 +440,7 @@ function selectTask(taskId: string) {
   if (!runs[taskId] || selectedTaskId.value === taskId) return
   saveComposerDraft()
   selectedTaskId.value = taskId
+  revisionComposerOpen.value = false
   restoreComposerDraft(taskId)
   previewLightbox.value = null
   const runtime = runtimeFor(taskId)
@@ -437,8 +453,14 @@ function startNewConversation() {
   if (selectedTaskId.value) saveComposerDraft()
   failedCreateAttempt = null
   selectedTaskId.value = ''
+  revisionComposerOpen.value = false
   previewLightbox.value = null
   restoreComposerDraft(NEW_CONVERSATION_DRAFT_KEY)
+  void focusComposer()
+}
+
+function openRevisionComposer() {
+  revisionComposerOpen.value = true
   void focusComposer()
 }
 
@@ -653,6 +675,12 @@ function removeFile(index: number) {
   composer.files = composer.files.filter((_, currentIndex) => currentIndex !== index)
 }
 
+function useConversationExample(prompt: string) {
+  if (submitting.value) return
+  composer.text = prompt
+  composerError.value = ''
+}
+
 function statusClass(taskSnapshot: PptTask | null | undefined) {
   if (taskSnapshot?.status === 'succeeded') return 'is-done'
   if (taskSnapshot?.status === 'failed') return 'is-error'
@@ -738,7 +766,12 @@ function isNonRetryableSubscribeError(cause: unknown) {
       text="请先到 Agent 管理里创建一个启用的 PPTAgent 配置，再回来发起生成。"
     />
 
-    <div v-else class="conversation-workspace" aria-label="PPT 对话生成工作区">
+    <div
+      v-else
+      class="conversation-workspace"
+      :class="{ 'has-preview': task }"
+      aria-label="PPT 对话生成工作区"
+    >
       <aside class="task-rail conversation-sidebar" aria-labelledby="tracked-ppt-runs">
         <div class="task-rail-head conversation-sidebar-head">
           <div>
@@ -816,6 +849,15 @@ function isNonRetryableSubscribeError(cause: unknown) {
           </div>
           <div class="conversation-toolbar-actions">
             <button
+              class="btn ghost"
+              type="button"
+              :aria-expanded="revisionComposerOpen"
+              @click="openRevisionComposer"
+            >
+              <MessageSquarePlus :size="16" />
+              创建新版本
+            </button>
+            <button
               v-if="isRunningTask(task)"
               class="btn ghost"
               type="button"
@@ -856,13 +898,19 @@ function isNonRetryableSubscribeError(cause: unknown) {
           <h3>{{ restoring ? '正在恢复最近会话' : '从一个清晰的演示目标开始' }}</h3>
           <p>描述受众、内容、页数和视觉风格。任务创建后可以离开页面，PPTAgent 会在后台继续生成。</p>
           <div class="conversation-examples" aria-label="需求示例">
-            <span>融资路演</span>
-            <span>项目汇报</span>
-            <span>培训课件</span>
+            <button
+              v-for="example in conversationExamples"
+              :key="example.label"
+              type="button"
+              :disabled="submitting"
+              @click="useConversationExample(example.prompt)"
+            >
+              {{ example.label }}
+            </button>
           </div>
         </section>
 
-        <div class="composer-dock">
+        <div v-if="!task || revisionComposerOpen" class="composer-dock">
           <PresentationComposer
             mode="conversation"
             :can-submit="canSubmit"
@@ -886,7 +934,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
         </div>
       </section>
 
-      <aside class="preview-rail" aria-label="当前会话页面预览">
+      <aside v-if="task" class="preview-rail" aria-label="当前会话页面预览">
         <div v-if="task" class="preview-progress-card">
           <div class="preview-progress-head">
             <div>
@@ -923,11 +971,6 @@ function isNonRetryableSubscribeError(cause: unknown) {
           @open="previewLightbox = $event"
         />
 
-        <div v-else class="preview-conversation-empty">
-          <FilePlus2 :size="25" />
-          <strong>页面预览区</strong>
-          <p>选择已有会话或开始生成后，页面缩略图会持续出现在这里。</p>
-        </div>
       </aside>
     </div>
 
@@ -938,13 +981,16 @@ function isNonRetryableSubscribeError(cause: unknown) {
 <style scoped>
 .presentation-page {
   min-width: 0;
-  gap: 22px;
-  padding-bottom: 40px;
-  overflow-x: clip;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  padding-bottom: 0;
+  overflow: hidden;
 }
 
 .presentation-page-head {
-  align-items: end;
+  align-items: center;
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -952,6 +998,15 @@ function isNonRetryableSubscribeError(cause: unknown) {
 .presentation-page-head .page-title-block {
   flex: 1 1 520px;
   min-width: 0;
+}
+
+.presentation-page-head .page-title-block h2 {
+  font-size: 25px;
+}
+
+.presentation-page-head .page-title-block p {
+  max-width: 720px;
+  line-height: 1.55;
 }
 
 .presentation-meta {
@@ -962,7 +1017,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
 }
 
 .presentation-meta .page-meta-card {
-  min-width: 176px;
+  min-width: 168px;
   max-width: 250px;
   border-radius: 8px;
   background: var(--panel);
@@ -1048,7 +1103,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
   border-radius: 7px;
   background: var(--panel-soft);
   color: inherit;
-  padding: 11px;
+  padding: 12px;
   text-align: left;
   transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
@@ -1082,11 +1137,13 @@ function isNonRetryableSubscribeError(cause: unknown) {
 .task-rail-title strong {
   min-width: 0;
   flex: 1 1 auto;
+  display: -webkit-box;
   overflow: hidden;
   color: var(--text);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .task-status-dot {
@@ -1280,11 +1337,16 @@ function isNonRetryableSubscribeError(cause: unknown) {
 
 .conversation-workspace {
   min-width: 0;
-  min-height: 620px;
+  min-height: 0;
+  height: 100%;
   display: grid;
-  grid-template-columns: 220px minmax(390px, 1fr) minmax(260px, 310px);
+  grid-template-columns: 230px minmax(520px, 1fr) minmax(280px, 310px);
   gap: 14px;
   align-items: stretch;
+}
+
+.conversation-workspace:not(.has-preview) {
+  grid-template-columns: 230px minmax(0, 1fr);
 }
 
 .conversation-sidebar {
@@ -1370,12 +1432,14 @@ function isNonRetryableSubscribeError(cause: unknown) {
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel-soft);
+  background: #f6f8f8;
   padding: 12px;
 }
 
 .conversation-main.is-empty {
-  grid-template-rows: minmax(220px, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-content: center;
+  padding: 18px;
 }
 
 .conversation-main > .presentation-conversation {
@@ -1451,13 +1515,13 @@ function isNonRetryableSubscribeError(cause: unknown) {
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
   background: var(--panel);
-  padding: 32px;
+  padding: 24px 28px;
   text-align: center;
 }
 
 .conversation-welcome-icon {
-  width: 54px;
-  height: 54px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
   border-radius: 12px;
@@ -1467,7 +1531,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
 
 .conversation-welcome h3 {
   color: var(--text);
-  font-size: 20px;
+  font-size: 19px;
 }
 
 .conversation-welcome p {
@@ -1485,7 +1549,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
   margin-top: 4px;
 }
 
-.conversation-examples span {
+.conversation-examples button {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel-soft);
@@ -1494,8 +1558,24 @@ function isNonRetryableSubscribeError(cause: unknown) {
   font-size: 10px;
 }
 
+.conversation-examples button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.conversation-examples button:focus-visible {
+  outline: 3px solid rgba(18, 124, 112, 0.18);
+  outline-offset: 2px;
+}
+
 .composer-dock {
   min-width: 0;
+}
+
+.conversation-main.is-empty .composer-dock {
+  width: min(760px, 100%);
+  margin-inline: auto;
 }
 
 .preview-rail {
@@ -1578,8 +1658,18 @@ function isNonRetryableSubscribeError(cause: unknown) {
 
 @media (min-width: 1101px) and (min-height: 760px) {
   .conversation-workspace {
-    height: calc(100dvh - 248px);
-    max-height: 900px;
+    height: 100%;
+    max-height: none;
+  }
+}
+
+@media (max-width: 1480px) and (min-width: 1181px) {
+  .conversation-workspace.has-preview {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+
+  .preview-rail {
+    display: none;
   }
 }
 

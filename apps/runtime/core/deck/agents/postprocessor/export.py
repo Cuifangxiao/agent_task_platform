@@ -70,8 +70,8 @@ def assemble_image_pptx(
         raise ValueError(
             f"cannot export an incomplete deck: {len(completed)} of {len(planned_slides)} slides completed"
         )
-    writer = get_stream_writer()
-    writer(events.stage_started("assemble_image_pptx", "Assembling image-only PPTX"))
+    emit_event = get_stream_writer()
+    emit_event(events.stage_started("assemble_image_pptx", "Assembling image-only PPTX"))
 
     result = exporter.export(request_id, completed)
     ordered_slides = _ordered_completed_slides(completed)
@@ -110,14 +110,14 @@ def assemble_image_pptx(
         "quality_report": project.relative(project.quality_report),
     }
     for warning in result.warnings:
-        writer(
+        emit_event(
             events.stage_progress(
                 "assemble_image_pptx",
                 warning,
                 {"status": "warning", "warning": warning},
             )
         )
-    writer(
+    emit_event(
         events.artifact(
             "assemble_image_pptx",
             "Image-only PPTX ready",

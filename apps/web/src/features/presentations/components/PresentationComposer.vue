@@ -203,35 +203,39 @@ function onTextareaKeydown(event: KeyboardEvent) {
 }
 
 .composer-panel.is-conversation {
-  gap: 10px;
+  gap: 8px;
   border-radius: 10px;
-  padding: 13px;
+  padding: 11px;
   box-shadow: 0 12px 34px rgba(15, 35, 42, 0.07);
 }
 
+.composer-panel.is-conversation .composer-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 .composer-panel.is-conversation .composer-heading-icon {
-  width: 34px;
-  height: 34px;
+  display: none;
 }
 
 .composer-panel.is-conversation .composer-heading p {
-  font-size: 11px;
+  display: none;
 }
 
 .composer-panel.is-conversation textarea {
-  min-height: 76px;
-  max-height: 180px;
-  padding: 12px 13px;
+  min-height: 64px;
+  max-height: 132px;
+  padding: 10px 12px;
 }
 
 .composer-panel.is-conversation .composer-footer {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: end;
-  padding-top: 10px;
+  padding-top: 8px;
 }
 
 .composer-panel.is-conversation .composer-controls {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .composer-panel.is-conversation .config-picker {

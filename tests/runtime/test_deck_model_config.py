@@ -66,16 +66,15 @@ def test_ppt_model_nodes_are_exactly_outline_style_and_designer(monkeypatch):
     }
 
 
-@pytest.mark.parametrize("retired_node", ["brief", "writer"])
-def test_build_ppt_llms_rejects_retired_model_nodes(monkeypatch, retired_node):
+def test_build_ppt_llms_rejects_unsupported_model_nodes(monkeypatch):
     monkeypatch.setattr(
         deck_model_config,
         "build_chat_client_from_node",
         lambda config: object(),
     )
-    models = [_model("outline"), _model("style"), _model("designer"), _model(retired_node)]
+    models = [_model("outline"), _model("style"), _model("designer"), _model("unsupported")]
 
-    with pytest.raises(ValueError, match=f"unsupported model node '{retired_node}'"):
+    with pytest.raises(ValueError, match="unsupported model node 'unsupported'"):
         deck_model_config.build_ppt_llms(_input(models))
 
 

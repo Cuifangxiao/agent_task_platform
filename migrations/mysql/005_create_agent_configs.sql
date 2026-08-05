@@ -23,33 +23,21 @@ INSERT IGNORE INTO agents (
     'Python PPT deck generation agent.',
     JSON_ARRAY(
         JSON_OBJECT(
-            'key', 'brief',
-            'display_name', 'Brief Research',
-            'description', 'Extract the audience, goal, language, and fact sheet used by downstream nodes.',
-            'requires_model', true
-        ),
-        JSON_OBJECT(
             'key', 'outline',
-            'display_name', 'Outline Planning',
-            'description', 'Build the presentation storyline, section order, and slide-level key points.',
+            'display_name', 'Deck Outline Planning',
+            'description', 'Create the deck-wide outline, global style palette, and slide-level content plan.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'style',
-            'display_name', 'Art Direction',
-            'description', 'Prepare visual theme tokens and style samples.',
-            'requires_model', true
-        ),
-        JSON_OBJECT(
-            'key', 'writer',
-            'display_name', 'Slide Writer',
-            'description', 'Expand each outline item into structured slide content.',
+            'display_name', 'Slide Visual Planning',
+            'description', 'Create an auditable visual design plan for each slide using the deck-wide style.',
             'requires_model', true
         ),
         JSON_OBJECT(
             'key', 'designer',
-            'display_name', 'Slide Designer',
-            'description', 'Render slide content into local SVG, HTML previews, and PPT assets.',
+            'display_name', 'HTML Slide Generation',
+            'description', 'Generate and repair safe local slide HTML from the corresponding visual design plan.',
             'requires_model', true
         )
     ),

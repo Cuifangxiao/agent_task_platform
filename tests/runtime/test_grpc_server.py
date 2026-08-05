@@ -179,7 +179,7 @@ def test_ppt_handler_uses_provider_options_dict_and_stops_on_cancelled_context()
         description="Demo",
         models=[
             ppt_agent_pb2.ModelConfig(
-                node_key="writer",
+                node_key="designer",
                 provider="openai",
                 model="gpt-test",
                 provider_options={"timeout": 30, "reasoning": {"effort": "low"}},

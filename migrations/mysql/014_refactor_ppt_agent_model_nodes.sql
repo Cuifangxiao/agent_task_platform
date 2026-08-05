@@ -40,9 +40,8 @@ ON DUPLICATE KEY UPDATE
     status = VALUES(status),
     updated_at = CURRENT_TIMESTAMP;
 
--- Keep the surviving bindings untouched, including their model, temperature,
--- and max-token overrides. This removes legacy brief/writer bindings as well as
--- any other node that the current PPT Agent no longer exposes.
+-- Keep the supported bindings untouched, including their model, temperature,
+-- and max-token overrides, while removing any unsupported node binding.
 DELETE binding
 FROM agent_config_node_bindings AS binding
 INNER JOIN agent_configs AS config
