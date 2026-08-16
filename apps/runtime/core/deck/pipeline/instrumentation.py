@@ -47,8 +47,19 @@ def instrument_node(
             model_meta.get("provider", ""),
             model_meta.get("model", ""),
         )
+        slide_plan = state.get("current_slide_plan")
+        slide_index = (
+            int(slide_plan.get("index") or 0)
+            if isinstance(slide_plan, dict) and slide_plan.get("index") is not None
+            else None
+        )
         try:
-            with llm_log_context(request_id=task_id, stage=stage):
+            with llm_log_context(
+                request_id=task_id,
+                stage=stage,
+                slide_index=slide_index,
+                operation=stage,
+            ):
                 result = node(state) or {}
         except GraphBubbleUp:
             # Interrupts and other LangGraph control-flow signals are not node failures.

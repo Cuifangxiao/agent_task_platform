@@ -131,6 +131,8 @@ class StyleLLM:
 
         assert payload["deck"]["title"] == "八页三阶段集成测试演示"
         assert payload["global_style_spec"] == GLOBAL_STYLE
+        assert payload["source_markdown"].startswith("生成8页演示")
+        assert payload["content_density_contract"]["standard_page"].startswith("2-4")
         assert [item["slide_id"] for item in payload["slide_summaries"]] == [
             f"s{page:02d}" for page in range(1, 9)
         ]
@@ -220,7 +222,11 @@ class DesignerLLM:
                 self.repair_calls.append((slide_id, attempt))
                 self.repair_icon_shortlists.append(payload["available_icon_keys"])
                 self.repair_diagnostics.append(payload["diagnostics"])
-            marker = "repair-success" if slide_id == "s03" else "always-invalid"
+            marker = (
+                "repair-success"
+                if slide_id == "s03" or (slide_id == "s05" and attempt >= 2)
+                else "always-invalid"
+            )
             return _html_spec(
                 slide_id=slide_id,
                 index=int(slide["index"]),
@@ -241,6 +247,8 @@ class DesignerLLM:
         assert payload["html_contract"]["canvas"] == "1600x900"
         assert payload["html_contract"]["javascript"] == "forbidden"
         assert payload["html_contract"]["external_resources"] == "forbidden"
+        assert payload["source_markdown"].startswith("生成8页演示")
+        assert payload["content_density_contract"]["data_page"].startswith("2-4")
         with self._lock:
             self.initial_calls.append(slide_id)
             self.layout_preferences[slide_id] = preference
@@ -301,7 +309,7 @@ class DeterministicBrowserRenderer:
                 )
                 if candidate in document
             ),
-            "program-fallback",
+            "unknown-output",
         )
         diagnostics = ()
         if marker in {"repair-once", "always-invalid"}:
@@ -406,7 +414,7 @@ def _initial_state(output_root: Path, request_id: str) -> dict:
     }
 
 
-def test_three_model_html_graph_repairs_falls_back_streams_and_exports_eight_pages(tmp_path):
+def test_three_model_html_graph_repairs_streams_and_exports_eight_pages(tmp_path):
     outline = OutlineLLM()
     style = StyleLLM(concurrent_wave=4)
     designer = DesignerLLM(style)
@@ -515,12 +523,10 @@ def test_three_model_html_graph_repairs_falls_back_streams_and_exports_eight_pag
         item["artifact_hash"] for item in completed
     ]
     assert completed[2]["repair_attempts"] == 1
-    assert completed[2]["fallback_used"] is False
     assert completed[4]["repair_attempts"] == 2
-    assert completed[4]["fallback_used"] is True
     assert all(len(item["preview_hash"]) == 64 for item in completed)
     assert Counter(browser.rendered_pages) == Counter(
-        {1: 1, 2: 1, 3: 2, 4: 1, 5: 4, 6: 1, 7: 1, 8: 1}
+        {1: 1, 2: 1, 3: 2, 4: 1, 5: 3, 6: 1, 7: 1, 8: 1}
     )
     assert Counter(browser.captured_pages) == Counter(range(1, 9))
 

@@ -25,7 +25,6 @@ _STAGES = {
     "generate_slide_html": PptStage.GENERATING_PAGES,
     "sanitize_and_assemble_html": PptStage.GENERATING_PAGES,
     "repair_slide_html": PptStage.GENERATING_PAGES,
-    "build_fallback_html": PptStage.GENERATING_PAGES,
     "render_html_and_measure_dom": PptStage.RENDERING,
     "validate_dom": PptStage.RENDERING,
     "capture_png": PptStage.RENDERING,
@@ -61,15 +60,6 @@ def stage_progress(stage: str, message: str, payload: dict[str, Any] | None = No
 def outline_ready(outline_markdown: str) -> PipelineEvent:
     del outline_markdown
     return PipelineEvent(EventType.STEP_COMPLETED, PptStage.PLANNING, "Outline ready")
-
-
-def template_selected(name: str, template_id: str) -> PipelineEvent:
-    label = str(name or template_id or "").strip()
-    return PipelineEvent(
-        EventType.STEP_COMPLETED,
-        PptStage.PLANNING,
-        f"Template selected: {label}" if label else "Template selected",
-    )
 
 
 def slide_started(message: str, payload: dict[str, Any]) -> PipelineEvent:
@@ -179,5 +169,4 @@ __all__ = [
     "stage_for",
     "stage_progress",
     "stage_started",
-    "template_selected",
 ]

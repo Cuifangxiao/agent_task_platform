@@ -40,6 +40,7 @@ type taskService interface {
 	ListTasks(context.Context, int64, string, int) ([]*Task, error)
 	SubscribeTask(context.Context, int64, string, uint64) (*Subscription, error)
 	CancelTask(context.Context, int64, string) (*Task, error)
+	DeleteTask(context.Context, int64, string) error
 	OpenArtifact(context.Context, int64, string, string) (*os.File, error)
 }
 
@@ -117,6 +118,20 @@ func (h *Handler) CancelTask(c *gin.Context) {
 	response.OK(c, task)
 }
 
+func (h *Handler) DeleteTask(c *gin.Context) {
+	claims, ok := httpctx.Claims(c)
+	if !ok {
+		response.Internal(c, "missing auth claims")
+		return
+	}
+	taskID := c.Param("task_id")
+	if err := h.service.DeleteTask(c.Request.Context(), claims.UserID, taskID); err != nil {
+		h.respondError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"task_id": normalizeTaskID(taskID)})
+}
+
 func (h *Handler) DownloadFile(c *gin.Context) {
 	claims, ok := httpctx.Claims(c)
 	if !ok {
@@ -124,13 +139,18 @@ func (h *Handler) DownloadFile(c *gin.Context) {
 		return
 	}
 	taskID := c.Param("task_id")
+	task, err := h.service.GetTask(c.Request.Context(), claims.UserID, taskID)
+	if err != nil {
+		h.respondError(c, err)
+		return
+	}
 	file, err := h.service.OpenArtifact(c.Request.Context(), claims.UserID, taskID, "")
 	if err != nil {
 		h.respondError(c, err)
 		return
 	}
 	defer file.Close()
-	serveArtifact(c, file, "deck-"+taskID+".pptx", true)
+	serveArtifact(c, file, presentationDownloadName(task.Name, task.Description), true)
 }
 
 func (h *Handler) DownloadArtifact(c *gin.Context) {
@@ -175,6 +195,7 @@ func bindCreateTask(c *gin.Context) (CreateTaskRequest, error) {
 		ThreadID        string `json:"thread_id"`
 		ClientRequestID string `json:"client_request_id"`
 		AgentConfigID   int64  `json:"agent_config_id"`
+		Name            string `json:"name"`
 		Description     string `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -184,6 +205,7 @@ func bindCreateTask(c *gin.Context) (CreateTaskRequest, error) {
 		ThreadID:        body.ThreadID,
 		ClientRequestID: body.ClientRequestID,
 		AgentConfigID:   body.AgentConfigID,
+		Name:            body.Name,
 		Description:     body.Description,
 	}, nil
 }
@@ -208,6 +230,7 @@ func bindMultipartTask(c *gin.Context) (CreateTaskRequest, error) {
 		ThreadID:        c.PostForm("thread_id"),
 		ClientRequestID: c.PostForm("client_request_id"),
 		AgentConfigID:   agentConfigID,
+		Name:            c.PostForm("name"),
 		Description:     c.PostForm("description"),
 		Attachments:     attachments,
 	}, nil
@@ -335,6 +358,8 @@ func (h *Handler) respondError(c *gin.Context, err error) {
 		response.ConflictCode(c, "run_not_ready", err.Error())
 	case errors.Is(err, ErrTaskAlreadyFinished):
 		response.Conflict(c, err.Error())
+	case errors.Is(err, ErrTaskStillRunning):
+		response.ConflictCode(c, "run_still_running", err.Error())
 	default:
 		response.InternalServerError(c)
 	}

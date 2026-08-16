@@ -14,6 +14,26 @@ import (
 
 var taskIDPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
+func (s *Service) removeTaskArtifacts(taskID string) error {
+	taskID = normalizeTaskID(taskID)
+	if !taskIDPattern.MatchString(taskID) {
+		return nil
+	}
+	rootPath, err := filepath.Abs(s.artifactDir)
+	if err != nil {
+		return fmt.Errorf("resolve artifact root: %w", err)
+	}
+	taskPath := filepath.Join(rootPath, taskID)
+	relative, err := filepath.Rel(rootPath, taskPath)
+	if err != nil || relative != taskID {
+		return fmt.Errorf("resolve task artifact directory")
+	}
+	if err := os.RemoveAll(taskPath); err != nil {
+		return fmt.Errorf("remove task artifact directory: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) OpenArtifact(ctx context.Context, ownerID int64, taskID, relativePath string) (*os.File, error) {
 	taskID = strings.ToLower(strings.TrimSpace(taskID))
 	if !taskIDPattern.MatchString(taskID) {

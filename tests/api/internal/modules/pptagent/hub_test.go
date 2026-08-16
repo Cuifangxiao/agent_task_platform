@@ -271,7 +271,7 @@ func assertSubscriptionClosed(t *testing.T, events <-chan AgentEvent) {
 func TestTaskHubFillsThreadRunAndChannelEnvelope(t *testing.T) {
 	hub := NewTaskHub(time.Hour)
 	task, existing, err := hub.CreateRunWithDetails(
-		"run-1", "thread-1", "request-1", "fingerprint-1", "Architecture deck", 42, 7, time.Now().UTC(),
+		"run-1", "thread-1", "request-1", "fingerprint-1", "Platform Architecture", "Architecture deck", 42, 7, time.Now().UTC(),
 	)
 	if err != nil || existing {
 		t.Fatalf("CreateRunWithDetails returned task=%#v existing=%v err=%v", task, existing, err)
@@ -279,7 +279,7 @@ func TestTaskHubFillsThreadRunAndChannelEnvelope(t *testing.T) {
 	if task.SchemaVersion != CurrentSchemaVersion || task.EventID != "" || task.RunID != "run-1" || task.TaskID != task.RunID || task.ThreadID != "thread-1" {
 		t.Fatalf("unexpected creation envelope: %#v", task)
 	}
-	if task.Description != "Architecture deck" || task.AgentConfigID != 42 {
+	if task.Name != "Platform Architecture" || task.Description != "Architecture deck" || task.AgentConfigID != 42 {
 		t.Fatalf("task request metadata was not retained: %#v", task)
 	}
 
@@ -455,5 +455,37 @@ func TestTaskHubListIsOwnerSafeFilteredAndReverseChronological(t *testing.T) {
 	}
 	if len(allOwnerTasks) != 3 || allOwnerTasks[0].RunID != "run-other-thread" {
 		t.Fatalf("unexpected owner list: %#v", allOwnerTasks)
+	}
+}
+
+func TestTaskHubDeletesOnlyOwnedStoppedTerminalTasks(t *testing.T) {
+	hub := NewTaskHub(time.Hour)
+	if _, err := hub.Create("run-delete", 7, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.Delete(8, "run-delete"); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("wrong-owner delete error = %v", err)
+	}
+	if err := hub.Delete(7, "run-delete"); !errors.Is(err, ErrTaskStillRunning) {
+		t.Fatalf("running delete error = %v", err)
+	}
+	if err := hub.Publish("run-delete", AgentEvent{
+		Sequence: 1,
+		Type:     EventTaskFailed,
+		Stage:    StagePreparing,
+		Message:  "failed",
+		Error:    &ErrorDetail{Code: "FAILED", Message: "failed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.Delete(7, "run-delete"); !errors.Is(err, ErrTaskStillRunning) {
+		t.Fatalf("live-worker delete error = %v", err)
+	}
+	hub.WorkerDone("run-delete")
+	if err := hub.Delete(7, "run-delete"); err != nil {
+		t.Fatalf("terminal delete error = %v", err)
+	}
+	if _, err := hub.Get(7, "run-delete"); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted task lookup error = %v", err)
 	}
 }

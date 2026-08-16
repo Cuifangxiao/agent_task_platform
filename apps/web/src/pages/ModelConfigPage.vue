@@ -18,6 +18,7 @@ import {
 import EmptyState from '@/components/EmptyState.vue'
 import ModelTypeBadge from '@/components/ModelTypeBadge.vue'
 import ProviderIcon from '@/components/ProviderIcon.vue'
+import SearchableModelSelect from '@/components/SearchableModelSelect.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { MODEL_TYPE_OPTIONS, inferModelType, normalizeModelType } from '@/features/models/modelPresentation'
 import type { ModelConfig, ModelConfigPayload, ModelType, Provider, ProviderParameter, Status } from '@/types'
@@ -66,6 +67,13 @@ const selectedProvider = computed(() => props.providers.find((item) => item.name
 const selectedModel = computed(
   () => selectedProvider.value?.models.find((item) => item.model_name === draft.model_name) ?? null,
 )
+const providerModelOptions = computed(() => (selectedProvider.value?.models ?? []).map((model) => ({
+  value: model.model_name,
+  label: model.display_name || model.model_name,
+  description: model.model_name,
+  provider: draft.provider,
+  modelType: inferModelType(model),
+})))
 const dynamicParameters = computed(() =>
   (selectedModel.value?.parameters ?? []).filter((item) => !['temperature', 'max_tokens'].includes(item.name)),
 )
@@ -263,6 +271,10 @@ function closeEditor() {
 
 function submit() {
   clearFormFeedback()
+  if (!draft.model_name) {
+    showFormError('请选择模型。')
+    return
+  }
   const payload: ModelConfigPayload = {
     name: draft.name.trim(),
     provider: draft.provider,
@@ -518,14 +530,14 @@ function modelTypeIcon(modelType: ModelType) {
                   </select>
                 </div>
               </label>
-              <label>
-                Model
-                <select v-model="draft.model_name" required>
-                  <option v-for="model in selectedProvider?.models ?? []" :key="model.id" :value="model.model_name">
-                    {{ model.display_name || model.model_name }}
-                  </option>
-                </select>
-              </label>
+              <div class="model-picker-field">
+                <span>Model</span>
+                <SearchableModelSelect
+                  v-model="draft.model_name"
+                  :options="providerModelOptions"
+                  placeholder="请选择模型"
+                />
+              </div>
             </div>
 
             <fieldset class="model-type-fieldset" aria-describedby="model-type-help">

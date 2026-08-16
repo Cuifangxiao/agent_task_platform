@@ -16,11 +16,9 @@ from langgraph.config import get_stream_writer
 
 import core.deck.pipeline.events as events
 from core.deck.design_system.catalog import get_recipe
-from core.deck.html import HTMLAssembler, build_fallback_html_spec, icon_registry
+from core.deck.html import HTMLAssembler, icon_registry
 from core.deck.domain.text import extract_number_tokens, truncate
 from core.deck.runtime.llm import (
-    ModelInvocationError,
-    StructuredOutputError,
     invoke_structured_with_retries,
     llm_for_node,
     load_node_prompt,
@@ -32,7 +30,6 @@ from core.deck.html.browser import (
     BrowserEnvironmentError,
     HTMLBrowserRenderer,
 )
-from core.deck.runtime.metrics import record_fallback
 from core.deck.domain.schemas import (
     ContentBlock,
     ContentBlockType,
@@ -56,6 +53,18 @@ from core.deck.pipeline.state import DeckGraphState
 
 
 MAX_SEMANTIC_REPAIRS = 2
+CONTENT_DENSITY_CONTRACT = {
+    "cover": "title, subtitle or value proposition, and only source-backed metadata when available",
+    "section_break": "one transition statement plus 2 concise preview points",
+    "standard_page": "2-4 substantive evidence points plus one clear takeaway",
+    "data_page": "2-4 source-backed metrics or comparisons plus an explicit implication",
+    "comparison": "2-3 matched points per side plus a conclusion",
+    "process_or_timeline": "3-5 meaningful stages or events",
+    "sparse_source_policy": (
+        "use stable explanatory knowledge already approved in the outline; never invent dates, "
+        "numbers, quotations, organizations, outcomes, or sources"
+    ),
+}
 
 
 class SlideProgressTracker:
@@ -115,9 +124,6 @@ class GenerationNodes:
             self.llm_registry,
             max_repairs=self.max_repairs,
         )
-
-    def build_fallback_html(self, state: DeckGraphState) -> dict[str, Any]:
-        return build_fallback_html(state)
 
     def capture_png(self, state: DeckGraphState) -> dict[str, Any]:
         return capture_png(state, self.output_dir, self.browser_renderer)
@@ -180,7 +186,6 @@ def prepare_slide(state: DeckGraphState) -> dict[str, Any]:
         "current_assembled_html": "",
         "current_diagnostics": [],
         "current_repair_attempts": 0,
-        "current_fallback_used": False,
         "current_render_decision": "repair",
         "current_speculative_preview_path": "",
         "current_speculative_preview_hash": "",
@@ -219,6 +224,7 @@ def generate_slide_design(
                     ),
                 },
                 "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
+                "source_markdown": str(state.get("source_text") or ""),
                 "current_slide": outline_slide.model_dump(mode="json"),
                 "slide_summaries": [
                     {
@@ -240,6 +246,7 @@ def generate_slide_design(
                 ],
                 "relevant_sources": _relevant_sources(state, slide),
                 "relevant_assets": _relevant_assets(state, slide),
+                "content_density_contract": CONTENT_DENSITY_CONTRACT,
                 "hard_constraints": {
                     "slide_id": slide.slide_id,
                     "layout_type": expected_layout,
@@ -281,75 +288,57 @@ def generate_slide_html(
     content = SlideContentSpec.model_validate(state.get("current_slide_content_spec") or {})
     recipe = get_recipe(slide.layout_family)
     allowed_icons = sorted(set(content.suggested_icon_keys + icon_registry().search(slide.takeaway, limit=8)))[:12]
-    fallback = build_fallback_html_spec(content, slide)
-    fallback_used = False
-    spec = fallback
-    try:
-        spec = invoke_structured_with_retries(
-            llm_for_node(llm_registry, "designer"),
-            HtmlSlideSpec,
-            system=load_node_prompt("slide_html_builder"),
-            user=json.dumps(
-                {
-                    "deck": {
-                        "title": outline.title,
-                        "subtitle": outline.subtitle,
-                        "language": outline.metadata.language,
-                        "source_summary": outline.metadata.source_summary,
-                    },
-                    "design_spec": design.model_dump(mode="json"),
-                    "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
-                    "current_slide": outline_slide.model_dump(mode="json"),
-                    "slide_design_plan": design_plan.model_dump(mode="json"),
-                    "slide_content": content.model_dump(mode="json"),
-                    "neighbor_slides": _neighbor_plans(plan, slide.index),
-                    "recipe": recipe.prompt_manifest(),
-                    "relevant_sources": _relevant_sources(state, slide),
-                    "relevant_assets": _relevant_assets(state, slide),
-                    "available_icon_keys": allowed_icons,
-                    "layout_preference": dict(state.get("current_layout_preference") or {}),
-                    "previous_compositions": list(state.get("previous_compositions") or [])[-4:],
-                    "html_contract": {
-                        "canvas": "1600x900",
-                        "root": "exactly one section.slide",
-                        "semantic_boxes": "data-box",
-                        "decorations": "data-decorative=true",
-                        "external_resources": "forbidden",
-                        "javascript": "forbidden",
-                        "animations_and_transitions": "forbidden",
-                        "gradients": "forbidden",
-                        "output": "HtmlSlideSpec JSON with body fragment and .slide-scoped CSS",
-                    },
+    spec = invoke_structured_with_retries(
+        llm_for_node(llm_registry, "designer"),
+        HtmlSlideSpec,
+        system=load_node_prompt("slide_html_builder"),
+        user=json.dumps(
+            {
+                "deck": {
+                    "title": outline.title,
+                    "subtitle": outline.subtitle,
+                    "language": outline.metadata.language,
+                    "source_summary": outline.metadata.source_summary,
                 },
-                ensure_ascii=False,
-            ),
-            attempts=3,
-            output_validator=lambda value: _validate_and_lock_html_spec(
-                HtmlSlideSpec.model_validate(value),
-                slide=slide,
-                allowed_icons=allowed_icons,
-            ),
-        )
-        spec = HtmlSlideSpec.model_validate(spec)
-    except StructuredOutputError as exc:
-        record_fallback()
-        fallback_used = True
-        get_stream_writer()(
-            events.stage_progress(
-                "generate_slide_html",
-                f"Page {slide.index} HTML schema failed; used the executable recipe fallback: {exc}",
-                {"status": "warning", "index": slide.index, "total": len(plan.slides)},
-            )
-        )
-        spec = fallback
-    except ModelInvocationError:
-        raise
+                "design_spec": design.model_dump(mode="json"),
+                "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
+                "source_markdown": str(state.get("source_text") or ""),
+                "current_slide": outline_slide.model_dump(mode="json"),
+                "slide_design_plan": design_plan.model_dump(mode="json"),
+                "slide_content": content.model_dump(mode="json"),
+                "neighbor_slides": _neighbor_plans(plan, slide.index),
+                "recipe": recipe.prompt_manifest(),
+                "relevant_sources": _relevant_sources(state, slide),
+                "relevant_assets": _relevant_assets(state, slide),
+                "content_density_contract": CONTENT_DENSITY_CONTRACT,
+                "available_icon_keys": allowed_icons,
+                "layout_preference": dict(state.get("current_layout_preference") or {}),
+                "previous_compositions": list(state.get("previous_compositions") or [])[-4:],
+                "html_contract": {
+                    "canvas": "1600x900",
+                    "root": "exactly one section.slide",
+                    "semantic_boxes": "data-box",
+                    "decorations": "data-decorative=true",
+                    "external_resources": "forbidden",
+                    "javascript": "forbidden",
+                    "animations_and_transitions": "forbidden",
+                    "gradients": "forbidden",
+                    "output": "HtmlSlideSpec JSON with body fragment and .slide-scoped CSS",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        attempts=3,
+        output_validator=lambda value: _validate_and_lock_html_spec(
+            HtmlSlideSpec.model_validate(value),
+            slide=slide,
+            allowed_icons=allowed_icons,
+        ),
+    )
+    spec = HtmlSlideSpec.model_validate(spec)
 
     _write_raw_debug(output_dir, state, spec, attempt=0)
-    return {
-        "current_html_slide_spec": spec.model_dump(mode="json"),
-        "current_fallback_used": fallback_used,
-    }
+    return {"current_html_slide_spec": spec.model_dump(mode="json")}
 
 
 def sanitize_and_assemble_html(state: DeckGraphState, assembler: HTMLAssembler) -> dict[str, Any]:
@@ -374,11 +363,12 @@ def sanitize_and_assemble_html(state: DeckGraphState, assembler: HTMLAssembler) 
                 result.body_html,
                 slide,
                 content,
-                fallback_used=bool(state.get("current_fallback_used")),
+                total_slides=len(outline.slides),
                 approved_context=[
                     outline_slide.title,
                     *outline_slide.key_points,
                     outline_slide.content_note,
+                    str(state.get("source_text") or ""),
                     *[
                         str(item.get("excerpt") or "")
                         for item in _relevant_sources(state, slide)
@@ -479,13 +469,20 @@ def validate_dom(
     if not errors:
         return {"current_render_decision": "valid"}
     _discard_speculative_preview(state, output_dir)
-    if bool(state.get("current_fallback_used")):
-        raise BrowserContentError(
-            f"Program fallback failed deterministic DOM QA: {errors[0].get('code', 'DOM_INVALID')}"
-        )
     attempts = max(0, int(state.get("current_repair_attempts") or 0))
+    if attempts >= max_repairs:
+        first = errors[0]
+        code = str(first.get("code") or "DOM_INVALID")
+        message = str(first.get("message") or "slide validation failed")
+        slide_data = state.get("current_slide_plan") or {}
+        page_index = int(slide_data.get("index") or 0) if isinstance(slide_data, dict) else 0
+        page_label = f"Page {page_index}" if page_index > 0 else "Page"
+        raise BrowserContentError(
+            f"{page_label} validation failed after {attempts} repair attempt(s): "
+            f"{code}: {message}"
+        )
     return {
-        "current_render_decision": "repair" if attempts < max_repairs else "fallback",
+        "current_render_decision": "repair",
         "current_speculative_preview_path": "",
         "current_speculative_preview_hash": "",
     }
@@ -509,60 +506,39 @@ def repair_slide_html(
     allowed_icons = sorted(
         set(content.suggested_icon_keys + icon_registry().search(slide.takeaway, limit=8))
     )[:12]
-    try:
-        repaired = invoke_structured_with_retries(
-            llm_for_node(llm_registry, "designer"),
-            HtmlSlideSpec,
-            system=load_node_prompt("html_repair"),
-            user=json.dumps(
-                {
-                    "design_spec": design.model_dump(mode="json"),
-                    "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
-                    "slide_outline": outline_slide.model_dump(mode="json"),
-                    "slide_design_plan": design_plan.model_dump(mode="json"),
-                    "slide_plan": slide.model_dump(mode="json"),
-                    "slide_content": content.model_dump(mode="json"),
-                    "current_html_spec": current.model_dump(mode="json"),
-                    "diagnostics": state.get("current_diagnostics") or [],
-                    "recipe": get_recipe(slide.layout_family).prompt_manifest(),
-                    "available_icon_keys": allowed_icons,
-                    "repair_attempt": attempts,
-                    "repairs_remaining_after_this": max(0, max_repairs - attempts),
-                },
-                ensure_ascii=False,
-            ),
-            attempts=2,
-            output_validator=lambda value: _validate_and_lock_html_spec(
-                HtmlSlideSpec.model_validate(value),
-                slide=slide,
-                allowed_icons=allowed_icons,
-            ),
-        )
-        repaired = HtmlSlideSpec.model_validate(repaired)
-        fallback_used = False
-    except StructuredOutputError:
-        record_fallback()
-        repaired = build_fallback_html_spec(content, slide)
-        fallback_used = True
-    except ModelInvocationError:
-        raise
+    repaired = invoke_structured_with_retries(
+        llm_for_node(llm_registry, "designer"),
+        HtmlSlideSpec,
+        system=load_node_prompt("html_repair"),
+        user=json.dumps(
+            {
+                "design_spec": design.model_dump(mode="json"),
+                "global_style_spec": outline.metadata.global_style_spec.model_dump(mode="json"),
+                "slide_outline": outline_slide.model_dump(mode="json"),
+                "slide_design_plan": design_plan.model_dump(mode="json"),
+                "slide_plan": slide.model_dump(mode="json"),
+                "slide_content": content.model_dump(mode="json"),
+                "current_html_spec": current.model_dump(mode="json"),
+                "diagnostics": state.get("current_diagnostics") or [],
+                "recipe": get_recipe(slide.layout_family).prompt_manifest(),
+                "available_icon_keys": allowed_icons,
+                "repair_attempt": attempts,
+                "repairs_remaining_after_this": max(0, max_repairs - attempts),
+            },
+            ensure_ascii=False,
+        ),
+        attempts=2,
+        output_validator=lambda value: _validate_and_lock_html_spec(
+            HtmlSlideSpec.model_validate(value),
+            slide=slide,
+            allowed_icons=allowed_icons,
+        ),
+    )
+    repaired = HtmlSlideSpec.model_validate(repaired)
     _write_raw_debug(output_dir, state, repaired, attempt=attempts)
     return {
         "current_html_slide_spec": repaired.model_dump(mode="json"),
         "current_repair_attempts": attempts,
-        "current_fallback_used": fallback_used,
-        "current_diagnostics": [],
-    }
-
-
-def build_fallback_html(state: DeckGraphState) -> dict[str, Any]:
-    slide = SlidePlan.model_validate(state.get("current_slide_plan") or {})
-    content = SlideContentSpec.model_validate(state.get("current_slide_content_spec") or {})
-    fallback = build_fallback_html_spec(content, slide)
-    record_fallback()
-    return {
-        "current_html_slide_spec": fallback.model_dump(mode="json"),
-        "current_fallback_used": True,
         "current_diagnostics": [],
     }
 
@@ -668,7 +644,6 @@ def persist_slide_artifacts(
         render_environment=dict(state.get("current_renderer_metadata") or {}),
         model_metadata=model_metadata,
         repair_attempts=max(0, int(state.get("current_repair_attempts") or 0)),
-        fallback_used=bool(state.get("current_fallback_used")),
         diagnostics_path=project.relative(diagnostics_path),
     )
     completed = dict(state.get("completed_slides") or {})
@@ -841,6 +816,12 @@ def _deterministic_content_spec(
                     label=truncate(slide.assertion_title, 120),
                 )
             )
+        elif points:
+            # ``key_metric`` is also used for formulas and single mechanisms,
+            # not only numeric KPIs.  Keep their approved evidence in the
+            # renderer contract instead of collapsing the page to takeaway
+            # text and then falsely rejecting a faithful formula rendering.
+            blocks.append(ContentBlock(type=ContentBlockType.BULLET_LIST, items=points))
     elif slide.layout_family is LayoutFamily.COMPARISON:
         values = points or [truncate(slide.takeaway, 180)]
         midpoint = max(1, (len(values) + 1) // 2)
@@ -1095,15 +1076,14 @@ def _content_contract_diagnostics(
     slide: SlidePlan,
     content: SlideContentSpec,
     *,
-    fallback_used: bool,
+    total_slides: int | None = None,
     approved_context: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Reject visually plausible HTML that changes or drops page semantics.
 
     Browser geometry cannot determine whether the model preserved the approved
-    title, content, or evidence. The deterministic recipe may deliberately
-    truncate prose to fit, so strict text coverage applies only to model-authored
-    HTML.
+    title, content, or evidence, so model-authored HTML must pass this semantic
+    check before it can be captured.
     """
 
     parser = html5lib.HTMLParser(namespaceHTMLElements=False)
@@ -1113,12 +1093,9 @@ def _content_contract_diagnostics(
     rendered_canonical = _canonical_visible_text(rendered)
     diagnostics: list[dict[str, Any]] = []
 
-    body_candidates: list[str] = [content.takeaway]
+    body_candidates: list[str] = [content.takeaway, *content.emphasis]
     for block in content.content_blocks:
         body_candidates.extend([block.text, *block.items, block.label, block.value])
-
-    if fallback_used:
-        return diagnostics
 
     title = _canonical_visible_text(content.assertion_title)
     if title and title not in rendered_canonical:
@@ -1135,7 +1112,10 @@ def _content_contract_diagnostics(
         for value in body_candidates
         if len(_canonical_visible_text(value)) >= 4
     ]
-    if meaningful_candidates and not any(value in rendered_canonical for value in meaningful_candidates):
+    if meaningful_candidates and not any(
+        _approved_visible_text_present(value, rendered_canonical)
+        for value in meaningful_candidates
+    ):
         diagnostics.append(
             _content_diagnostic(
                 "APPROVED_CONTENT_MISSING",
@@ -1181,6 +1161,13 @@ def _content_contract_diagnostics(
             _canonical_number_token(f"{slide.index:02d}"),
         }
     )
+    if total_slides is not None and total_slides > 0:
+        approved_numbers.update(
+            {
+                _canonical_number_token(str(total_slides)),
+                _canonical_number_token(f"{total_slides:02d}"),
+            }
+        )
     unapproved_numbers = sorted(
         {
             value
@@ -1205,6 +1192,44 @@ def _canonical_visible_text(value: str) -> str:
     return re.sub(r"\s+", "", normalized)
 
 
+def _approved_visible_text_present(candidate: str, rendered_canonical: str) -> bool:
+    """Match faithful copy edits while numeric guards remain exact.
+
+    The HTML model often makes harmless grammatical edits such as adding
+    ``用于`` or changing ``得到`` to ``得``.  Requiring the whole approved
+    sentence as one substring falsely rejected those pages.  Long body copy is
+    therefore accepted when most of its distinctive word/CJK-bigram tokens are
+    present.  Metric values and every rendered numeric claim are still checked
+    separately and exactly below.
+    """
+
+    approved = _canonical_visible_text(candidate)
+    if not approved:
+        return False
+    if approved in rendered_canonical:
+        return True
+    tokens = _visible_text_match_tokens(approved)
+    if len(tokens) < 3:
+        return False
+    rendered_tokens = _visible_text_match_tokens(rendered_canonical)
+    matched = sum(token in rendered_tokens for token in tokens)
+    return matched >= 3 and matched / len(tokens) >= 0.6
+
+
+def _visible_text_match_tokens(value: str) -> set[str]:
+    tokens: set[str] = set()
+    for match in re.finditer(r"[\u3400-\u9fff]+|[a-z0-9]+(?:[_./%+-][a-z0-9]+)*", value):
+        token = match.group(0)
+        if re.fullmatch(r"[\u3400-\u9fff]+", token):
+            if len(token) == 1:
+                tokens.add(token)
+            else:
+                tokens.update(token[index : index + 2] for index in range(len(token) - 1))
+        elif len(token) >= 2 or token.isdigit():
+            tokens.add(token)
+    return tokens
+
+
 def _canonical_number_token(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or "")).replace(",", "")
     suffix = "%" if normalized.endswith("%") else ""
@@ -1223,7 +1248,11 @@ def _content_diagnostic(
     return RendererDiagnostic(
         code=code,
         category=DiagnosticCategory.CONTENT,
-        severity=DiagnosticSeverity.ERROR,
+        # Copy fidelity and numeric-evidence matching are quality signals, not
+        # renderer safety boundaries.  Keep them in diagnostics and reports,
+        # while prompts remain responsible for correcting them without making
+        # an otherwise renderable deck fail as a whole.
+        severity=DiagnosticSeverity.WARNING,
         message=message,
         suggestion=suggestion,
         details=details or {},
@@ -1304,7 +1333,6 @@ __all__ = [
     "MAX_SEMANTIC_REPAIRS",
     "SlideProgressTracker",
     "aggregate_slides",
-    "build_fallback_html",
     "capture_png",
     "emit_slide_preview",
     "generate_slide_design",

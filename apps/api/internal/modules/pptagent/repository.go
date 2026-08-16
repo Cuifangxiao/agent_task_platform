@@ -16,7 +16,7 @@ import (
 const selectRunColumns = `
 	SELECT
 		run_id, owner_id, thread_id, client_request_id, request_fingerprint,
-		agent_config_id, description, schema_version, event_id, status, stage,
+		agent_config_id, presentation_name, description, schema_version, event_id, status, stage,
 		message, last_event_sequence, result_json, error_json, file_url,
 		worker_active, heartbeat_at, created_at, updated_at, finished_at,
 		worker_finished_at
@@ -26,11 +26,11 @@ const selectRunColumns = `
 const insertRunQuery = `
 	INSERT INTO ppt_runs (
 		run_id, owner_id, thread_id, client_request_id, request_fingerprint,
-		agent_config_id, description, options_json, schema_version, event_id,
+		agent_config_id, presentation_name, description, options_json, schema_version, event_id,
 		status, stage, message, last_event_sequence, result_json, error_json,
 		file_url, worker_active, heartbeat_at, created_at, updated_at, finished_at
 	)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
 `
 
 const insertRunEventQuery = `
@@ -67,6 +67,7 @@ type RunRepository interface {
 	CreateOrGet(context.Context, Task, string) (*Task, bool, error)
 	Get(context.Context, int64, string) (*Task, error)
 	List(context.Context, int64, string, int) ([]*Task, error)
+	Delete(context.Context, int64, string) error
 	AppendEvent(context.Context, AgentEvent, time.Time) (*Task, *AgentEvent, error)
 	ListEventsAfter(context.Context, int64, string, uint64) ([]AgentEvent, error)
 	MarkWorkerDone(context.Context, string, time.Time) error
@@ -155,6 +156,7 @@ func (r *mysqlRunRepository) CreateOrGet(ctx context.Context, task Task, fingerp
 		nullableString(task.ClientRequestID),
 		nullableString(fingerprint),
 		nullablePositiveInt64(task.AgentConfigID),
+		task.Name,
 		task.Description,
 		optionsJSON,
 		task.SchemaVersion,
@@ -255,6 +257,46 @@ func (r *mysqlRunRepository) List(ctx context.Context, ownerID int64, threadID s
 		return nil, fmt.Errorf("iterate ppt runs: %w", err)
 	}
 	return tasks, nil
+}
+
+func (r *mysqlRunRepository) Delete(ctx context.Context, ownerID int64, runID string) error {
+	if r == nil || r.db == nil || ownerID <= 0 {
+		return ErrTaskNotFound
+	}
+	runID = normalizeTaskID(runID)
+	if runID == "" {
+		return ErrTaskNotFound
+	}
+	result, err := r.db.ExecContext(
+		ctx,
+		`DELETE FROM ppt_runs WHERE owner_id = ? AND run_id = ? AND status IN ('succeeded', 'failed', 'cancelled') AND worker_active = 0`,
+		ownerID,
+		runID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete ppt run: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read deleted ppt run rows: %w", err)
+	}
+	if affected > 0 {
+		return nil
+	}
+
+	var found int
+	if err := r.db.QueryRowContext(
+		ctx,
+		`SELECT 1 FROM ppt_runs WHERE owner_id = ? AND run_id = ? LIMIT 1`,
+		ownerID,
+		runID,
+	).Scan(&found); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return fmt.Errorf("check deletable ppt run: %w", err)
+	}
+	return ErrTaskStillRunning
 }
 
 // AppendEvent locks the run, reduces one canonical state transition, and
@@ -580,6 +622,7 @@ func prepareRunForCreate(task Task, fingerprint string) (persistedRun, error) {
 	task.TaskID = runID
 	task.ThreadID = strings.TrimSpace(task.ThreadID)
 	task.ClientRequestID = strings.TrimSpace(task.ClientRequestID)
+	task.Name = strings.TrimSpace(task.Name)
 	task.Description = strings.TrimSpace(task.Description)
 	fingerprint = strings.TrimSpace(fingerprint)
 	if task.ownerID <= 0 || task.RunID == "" || task.ThreadID == "" || task.Description == "" {
@@ -633,6 +676,7 @@ func scanPersistedRun(scanner runScanner) (persistedRun, error) {
 		&clientRequestID,
 		&requestFingerprint,
 		&agentConfigID,
+		&stored.task.Name,
 		&stored.task.Description,
 		&stored.task.SchemaVersion,
 		&eventID,
@@ -657,6 +701,9 @@ func scanPersistedRun(scanner runScanner) (persistedRun, error) {
 	stored.task.ClientRequestID = clientRequestID.String
 	stored.requestFingerprint = requestFingerprint.String
 	stored.task.AgentConfigID = agentConfigID.Int64
+	if stored.task.Name == "" {
+		stored.task.Name, _ = normalizePresentationName("", stored.task.Description)
+	}
 	stored.task.EventID = eventID.String
 	stored.task.Status = TaskStatus(status)
 	stored.task.Stage = Stage(stage)

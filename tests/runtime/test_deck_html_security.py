@@ -1,4 +1,4 @@
-from core.deck.design_system.catalog import get_html_theme
+from core.deck.agents.processor.design import default_design_spec
 from core.deck.agents.processor.generation import _content_contract_diagnostics
 from core.deck.domain.text import extract_number_tokens
 from core.deck.html.assembler import HTMLAssembler
@@ -91,6 +91,45 @@ def test_css_sanitizer_enforces_locked_theme_colors_fonts_and_no_pseudo_elements
     assert {"CSS_SELECTOR_REMOVED", "CSS_VALUE_REMOVED"}.issubset(_codes(result))
 
 
+def test_css_sanitizer_normalizes_exact_locked_colors_and_keeps_body_named_classes():
+    result = sanitize_css(
+        """
+        .slide { --page-accent:#0057B8; }
+        .slide .step-body { color:var(--page-accent); background:#F5F5F5; border:1px solid #C7C7C7; }
+        .slide .rogue { color:#123456; }
+        .slide body { color:var(--text-primary); }
+        """,
+        locked_color_aliases={
+            "#0057B8": "--accent",
+            "#F5F5F5": "--surface",
+            "#C7C7C7": "--divider",
+        },
+    )
+
+    assert ".slide .step-body" in result.css
+    assert "color:var(--accent)" in result.css
+    assert "background:var(--surface)" in result.css
+    assert "border:1px solid var(--divider)" in result.css
+    assert "#123456" not in result.css
+    assert ".slide body" not in result.css
+    assert {"CSS_SELECTOR_REMOVED", "CSS_VALUE_REMOVED"}.issubset(_codes(result))
+
+
+def test_css_sanitizer_scopes_safe_model_selectors_instead_of_dropping_layout():
+    result = sanitize_css(
+        ".content-area{position:absolute;left:80px}.subtitle{font-size:28px}"
+        "section.slide[data-layout='cover_minimal']{overflow:hidden}"
+        "body{background:red}:root{color:red}",
+    )
+
+    assert ".slide .content-area{position:absolute;left:80px}" in result.css
+    assert ".slide .subtitle{font-size:28px}" in result.css
+    assert ".slide[data-layout=\"cover_minimal\"]{overflow:hidden}" in result.css
+    assert "body{" not in result.css and ":root" not in result.css
+    assert "CSS_SELECTOR_SCOPED" in _codes(result)
+    assert "CSS_SELECTOR_REMOVED" in _codes(result)
+
+
 def test_svg_attribute_budget_removes_extreme_coordinates():
     result = sanitize_html_fragment(
         '<section class="slide"><svg data-box="visual" viewBox="0 0 24 24">'
@@ -135,13 +174,11 @@ def test_html_content_contract_rejects_drift():
         '<div>激活步骤从5步缩短到3步后，留存率达到35%</div></section>',
         slide,
         content,
-        fallback_used=False,
     )
     drifted = _content_contract_diagnostics(
         '<section class="slide"><h1>漂亮的数据看板</h1><div>留存率达到99%</div></section>',
         slide,
         content,
-        fallback_used=False,
     )
 
     assert faithful == []
@@ -151,6 +188,7 @@ def test_html_content_contract_rejects_drift():
         "METRIC_VALUE_MISSING",
         "UNAPPROVED_NUMBER",
     }
+    assert {item["severity"] for item in drifted} == {"warning"}
 
 
 def test_html_content_contract_rejects_extra_numeric_claim_even_with_approved_copy():
@@ -176,15 +214,84 @@ def test_html_content_contract_rejects_extra_numeric_claim_even_with_approved_co
         '<div>Approved retention reached 35%; fabricated revenue grew 999%.</div></section>',
         slide,
         content,
-        fallback_used=False,
     )
 
     assert "UNAPPROVED_NUMBER" in {item["code"] for item in diagnostics}
 
 
+def test_html_content_contract_accepts_exact_approved_emphasis_when_takeaway_is_rephrased():
+    slide = SlidePlan(
+        slide_id="s04",
+        index=4,
+        role="insight",
+        assertion_title="Self-Attention",
+        takeaway="Q、K、V 由输入线性变换得到",
+        content_intent="Explain the formula.",
+        layout_family="key_metric",
+        rhythm="dense",
+    )
+    content = SlideContentSpec(
+        slide_id="s04",
+        assertion_title=slide.assertion_title,
+        takeaway=slide.takeaway,
+        content_blocks=[ContentBlock(type="paragraph", text="已批准的公式解释")],
+        emphasis=["缩放因子 √d_k 控制点积方差，避免 softmax 饱和，而非防梯度消失。"],
+    )
+
+    diagnostics = _content_contract_diagnostics(
+        '<section class="slide"><h1>Self-Attention</h1>'
+        '<div>输入线性变换得 Q、K、V</div>'
+        '<div>缩放因子 √d_k 用于控制点积方差，避免 softmax 饱和，而非防止梯度消失。</div></section>',
+        slide,
+        content,
+    )
+
+    assert "APPROVED_CONTENT_MISSING" not in {item["code"] for item in diagnostics}
+
+
+def test_html_content_contract_allows_expected_total_page_number_only():
+    slide = SlidePlan(
+        slide_id="s04",
+        index=4,
+        role="insight",
+        assertion_title="Attention flow",
+        takeaway="Projection produces query key and value vectors",
+        content_intent="Explain the flow.",
+        layout_family="process",
+        rhythm="dense",
+    )
+    content = SlideContentSpec(
+        slide_id="s04",
+        assertion_title=slide.assertion_title,
+        takeaway=slide.takeaway,
+        content_blocks=[ContentBlock(type="paragraph", text=slide.takeaway)],
+    )
+
+    valid = _content_contract_diagnostics(
+        '<section class="slide"><h1>Attention flow</h1>'
+        '<div>Projection produces query key and value vectors</div><div>04 / 08</div></section>',
+        slide,
+        content,
+        total_slides=8,
+    )
+    invalid = _content_contract_diagnostics(
+        '<section class="slide"><h1>Attention flow</h1>'
+        '<div>Projection produces query key and value vectors</div><div>04 / 09</div></section>',
+        slide,
+        content,
+        total_slides=8,
+    )
+
+    assert "UNAPPROVED_NUMBER" not in {item["code"] for item in valid}
+    assert "UNAPPROVED_NUMBER" in {item["code"] for item in invalid}
+
+
 def test_trusted_icon_injection_is_local_allowlisted_and_deterministic():
     registry = icon_registry()
-    fragment = '<span data-icon="rocket"></span><span data-icon="not-in-registry"></span>'
+    fragment = (
+        '<span data-icon="rocket"></span><span data-icon="rocket"></span>'
+        '<span data-icon="not-in-registry"></span><span data-icon="not-in-registry"></span>'
+    )
 
     first, resolved, missing = registry.inject(fragment)
     second, resolved_again, missing_again = registry.inject(fragment)
@@ -192,6 +299,7 @@ def test_trusted_icon_injection_is_local_allowlisted_and_deterministic():
     assert first == second
     assert resolved == resolved_again == ["rocket"]
     assert missing == missing_again == ["not-in-registry"]
+    assert first.count('data-icon-key="rocket"') == 2
     assert 'data-resolved-icon="true"' in first
     assert '<svg viewBox="0 0 24 24"' in first
     assert "not-in-registry" not in first
@@ -199,9 +307,20 @@ def test_trusted_icon_injection_is_local_allowlisted_and_deterministic():
     assert "href=" not in first
 
 
+def test_trusted_icon_injection_preserves_safe_placeholder_classes_for_sizing():
+    fragment = '<span class="takeaway-icon accent" data-icon="arrow-up-right"></span>'
+
+    rendered, resolved, missing = icon_registry().inject(fragment)
+
+    assert 'class="icon takeaway-icon accent"' in rendered
+    assert 'data-icon-key="arrow-up-right"' in rendered
+    assert resolved == ["arrow-up-right"]
+    assert missing == []
+
+
 def test_assembler_owns_document_shell_csp_and_icon_resolution():
     assembler = HTMLAssembler()
-    design = get_html_theme("executive_signal").to_design_spec()
+    design = default_design_spec()
     result = assembler.assemble(
         body_html=(
             '<section class="slide" data-layout="statement_focus">'
@@ -217,7 +336,7 @@ def test_assembler_owns_document_shell_csp_and_icon_resolution():
     assert result.document.startswith("<!doctype html>")
     assert "Content-Security-Policy" in result.document
     assert "default-src &#x27;none&#x27;" in result.document
-    assert '<style id="theme-style">' in result.document
+    assert '<style id="design-style">' in result.document
     assert '<style id="base-style">' in result.document
     assert '<style id="page-style">' in result.document
     assert result.resolved_icon_keys == ("rocket",)

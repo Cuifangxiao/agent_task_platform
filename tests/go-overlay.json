@@ -1,10 +1,12 @@
 {
   "Replace": {
     "apps/api/internal/config/config_test.go": "tests/api/internal/config/config_test.go",
+    "apps/api/internal/modules/agentconfig/repository_test.go": "tests/api/internal/modules/agentconfig/repository_test.go",
     "apps/api/internal/modules/agentconfig/service_test.go": "tests/api/internal/modules/agentconfig/service_test.go",
     "apps/api/internal/modules/modelconfig/repository_test.go": "tests/api/internal/modules/modelconfig/repository_test.go",
     "apps/api/internal/modules/modelconfig/service_test.go": "tests/api/internal/modules/modelconfig/service_test.go",
     "apps/api/internal/modules/pptagent/handler_test.go": "tests/api/internal/modules/pptagent/handler_test.go",
+    "apps/api/internal/modules/pptagent/naming_test.go": "tests/api/internal/modules/pptagent/naming_test.go",
     "apps/api/internal/modules/pptagent/hub_test.go": "tests/api/internal/modules/pptagent/hub_test.go",
     "apps/api/internal/modules/pptagent/repository_test.go": "tests/api/internal/modules/pptagent/repository_test.go",
     "apps/api/internal/modules/pptagent/service_persistence_test.go": "tests/api/internal/modules/pptagent/service_persistence_test.go",

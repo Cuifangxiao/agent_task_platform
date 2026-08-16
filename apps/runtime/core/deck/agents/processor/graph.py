@@ -23,7 +23,7 @@ from core.deck.pipeline.state import DeckGraphState, SlideGenerationOutput
 from core.deck.runtime.llm import normalize_llm_registry
 
 
-DEFAULT_SLIDE_CONCURRENCY = 6
+DEFAULT_SLIDE_CONCURRENCY = 4
 
 PROCESSOR_NODE_SEQUENCE = (
     "fan_out_slides",
@@ -39,7 +39,6 @@ SLIDE_NODE_SEQUENCE = (
     "render_html_and_measure_dom",
     "validate_dom",
     "repair_slide_html",
-    "build_fallback_html",
     "capture_png",
     "persist_slide_artifacts",
     "emit_slide_preview",
@@ -97,7 +96,6 @@ class Processor:
             "render_html_and_measure_dom": (self.generation.render_html_and_measure_dom, ""),
             "validate_dom": (self.generation.validate_dom, ""),
             "repair_slide_html": (self.generation.repair_slide_html, "designer"),
-            "build_fallback_html": (self.generation.build_fallback_html, ""),
             "capture_png": (self.generation.capture_png, ""),
             "persist_slide_artifacts": (self.generation.persist_slide_artifacts, ""),
             "emit_slide_preview": (self.generation.emit_slide_preview, ""),
@@ -121,11 +119,9 @@ class Processor:
             {
                 "valid": "capture_png",
                 "repair": "repair_slide_html",
-                "fallback": "build_fallback_html",
             },
         )
         builder.add_edge("repair_slide_html", "sanitize_and_assemble_html")
-        builder.add_edge("build_fallback_html", "sanitize_and_assemble_html")
         builder.add_edge("capture_png", "persist_slide_artifacts")
         builder.add_edge("persist_slide_artifacts", "emit_slide_preview")
         builder.add_edge("emit_slide_preview", END)
@@ -163,9 +159,9 @@ class Processor:
             self.browser_session.close()
 
 
-def route_after_validation(state: DeckGraphState) -> Literal["valid", "repair", "fallback"]:
+def route_after_validation(state: DeckGraphState) -> Literal["valid", "repair"]:
     decision = str(state.get("current_render_decision") or "")
-    if decision not in {"valid", "repair", "fallback"}:
+    if decision not in {"valid", "repair"}:
         raise ValueError(f"unexpected render decision: {decision or '<empty>'}")
     return decision  # type: ignore[return-value]
 

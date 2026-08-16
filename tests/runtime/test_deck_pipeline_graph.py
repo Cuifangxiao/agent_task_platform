@@ -1,6 +1,8 @@
 import inspect
 from pathlib import Path
 
+import pytest
+
 import core.deck.agents.postprocessor.graph as postprocessor_graph
 import core.deck.agents.processor.graph as processor_graph
 from core.deck.agents.postprocessor.graph import POSTPROCESSOR_NODE_SEQUENCE
@@ -54,9 +56,7 @@ SLIDE_EDGES = {
     ("render_html_and_measure_dom", "validate_dom"),
     ("validate_dom", "capture_png"),
     ("validate_dom", "repair_slide_html"),
-    ("validate_dom", "build_fallback_html"),
     ("repair_slide_html", "sanitize_and_assemble_html"),
-    ("build_fallback_html", "sanitize_and_assemble_html"),
     ("capture_png", "persist_slide_artifacts"),
     ("persist_slide_artifacts", "emit_slide_preview"),
     ("emit_slide_preview", "__end__"),
@@ -144,10 +144,11 @@ def test_every_request_gets_fresh_pipeline_dependencies(tmp_path):
     assert second.postprocessor.output_dir == (tmp_path / "second").resolve()
 
 
-def test_validation_router_has_only_bounded_repair_outcomes():
+def test_validation_router_has_only_valid_or_model_repair_outcomes():
     assert route_after_validation({"current_render_decision": "valid"}) == "valid"
     assert route_after_validation({"current_render_decision": "repair"}) == "repair"
-    assert route_after_validation({"current_render_decision": "fallback"}) == "fallback"
+    with pytest.raises(ValueError, match="unexpected render decision"):
+        route_after_validation({"current_render_decision": "fallback"})
 
 
 def test_send_fanout_assigns_independent_state_and_planned_composition_history():
@@ -314,6 +315,8 @@ def test_state_contract_contains_only_current_pipeline_concepts():
             "plan",
             "design_contract",
             "theme",
+            "selected_template_id",
+            "template_id",
             "art_direction",
             "slides",
             "raw_slides",

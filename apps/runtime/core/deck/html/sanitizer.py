@@ -376,12 +376,18 @@ def sanitize_html_fragment(fragment: str) -> SanitizedFragment:
     return SanitizedFragment(sanitized, tuple(diagnostics))
 
 
-def sanitize_css(css: str) -> SanitizedCSS:
+def sanitize_css(
+    css: str,
+    *,
+    locked_color_aliases: dict[str, str] | None = None,
+) -> SanitizedCSS:
     raw = str(css or "")
     if len(raw) > MAX_CSS_CHARS:
         raise ValueError(f"page_css exceeds {MAX_CSS_CHARS} characters")
 
     diagnostics: list[SanitizationDiagnostic] = []
+    if locked_color_aliases:
+        raw = _normalize_locked_color_references(raw, locked_color_aliases)
     rules = tinycss2.parse_stylesheet(raw, skip_comments=True, skip_whitespace=True)
     safe_rules: list[str] = []
     declaration_count = 0
@@ -417,16 +423,25 @@ def sanitize_css(css: str) -> SanitizedCSS:
             )
             break
 
-        selector = tinycss2.serialize(rule.prelude).strip()
+        raw_selector = tinycss2.serialize(rule.prelude).strip()
+        selector = _scope_page_selector(raw_selector)
         if not _safe_selector(selector):
             diagnostics.append(
                 SanitizationDiagnostic(
                     code="CSS_SELECTOR_REMOVED",
                     message="Removed a selector that escaped the .slide scope.",
-                    details={"selector": selector[:240]},
+                    details={"selector": raw_selector[:240]},
                 )
             )
             continue
+        if selector != raw_selector:
+            diagnostics.append(
+                SanitizationDiagnostic(
+                    code="CSS_SELECTOR_SCOPED",
+                    message="Scoped a page selector to the current slide.",
+                    details={"selector": raw_selector[:240], "scoped_selector": selector[:240]},
+                )
+            )
 
         declarations = tinycss2.parse_declaration_list(rule.content, skip_comments=True, skip_whitespace=True)
         safe_declarations: list[str] = []
@@ -613,7 +628,11 @@ def _safe_selector(selector: str) -> bool:
     if not selector or len(selector) > 500:
         return False
     lowered = selector.casefold()
-    if any(token in lowered for token in ("html", "body", ":root", ":has(", "@", "\\")):
+    if any(token in lowered for token in (":root", ":has(", "@", "\\")):
+        return False
+    # Reject actual html/body type selectors without rejecting harmless class
+    # names such as ``.step-body`` or ``.html-preview``.
+    if re.search(r"(?:^|[\s>+~,(])(?:html|body)(?=$|[\s>+~,.#:\[\]()])", lowered):
         return False
     # Generated pseudo-elements are not represented by elementsFromPoint and
     # can paint an opaque full-slide veil while every real DOM node appears
@@ -626,6 +645,40 @@ def _safe_selector(selector: str) -> bool:
     if not re.fullmatch(r"[a-zA-Z0-9\s>+~.,:#*_=\-\[\]()\"']+", selector):
         return False
     return all(part.strip().startswith(".slide") for part in selector.split(","))
+
+
+def _scope_page_selector(selector: str) -> str:
+    """Safely recover common model selectors that omitted ``.slide``.
+
+    The generated CSS is injected into a single isolated slide document, so a
+    simple class/tag selector can be deterministically scoped instead of being
+    discarded.  The normal selector allowlist still runs afterwards and
+    rejects html/body, :root, pseudo-elements, and unsupported syntax.
+    """
+
+    raw = str(selector or "").strip()
+    if not raw or len(raw) > 500:
+        return raw
+    # Keep selector lists simple and deterministic. A comma inside a pseudo
+    # function is outside the supported selector subset and remains rejected.
+    if re.search(r"\([^)]*,[^)]*\)", raw):
+        return raw
+    scoped: list[str] = []
+    for item in raw.split(","):
+        part = item.strip()
+        if not part:
+            return raw
+        if part.startswith(".slide"):
+            scoped.append(part)
+            continue
+        if re.match(r"^section\.slide(?=$|[.#:\[])" , part, flags=re.IGNORECASE):
+            scoped.append(re.sub(r"^section\.slide", ".slide", part, count=1, flags=re.IGNORECASE))
+            continue
+        if part.startswith("[data-layout") or part.startswith("#s"):
+            scoped.append(f".slide{part}")
+            continue
+        scoped.append(f".slide {part}")
+    return ",".join(scoped)
 
 
 def _allowed_property(name: str) -> bool:
@@ -811,6 +864,78 @@ def _contains_unsafe_css_token(tokens: Iterable[Any]) -> bool:
             if _contains_unsafe_css_token(getattr(token, "arguments", ())):
                 return True
     return False
+
+
+def _normalize_locked_color_references(css: str, aliases: dict[str, str]) -> str:
+    """Convert exact DesignSpec colors and their simple aliases to CSS tokens.
+
+    A model may repeat an exact palette hex value or assign it to a local CSS
+    variable. Both are safe, immutable values, but removing them used to erase
+    page backgrounds and borders. Unknown literals are deliberately left
+    untouched so the normal theme guard still rejects them.
+    """
+
+    normalized_aliases = {
+        canonical: variable
+        for raw, variable in aliases.items()
+        if (canonical := _canonical_hex_color(raw))
+        and variable in DESIGN_COLOR_VARIABLES
+    }
+    if not normalized_aliases:
+        return css
+
+    def replace_literal(match: re.Match[str]) -> str:
+        variable = normalized_aliases.get(_canonical_hex_color(match.group(0)))
+        return f"var({variable})" if variable else match.group(0)
+
+    rewritten = re.sub(r"#[0-9a-fA-F]{3,8}(?![0-9a-fA-F])", replace_literal, css)
+    local_aliases = _collect_simple_color_variable_aliases(rewritten)
+    if not local_aliases:
+        return rewritten
+
+    def replace_variable(match: re.Match[str]) -> str:
+        variable = match.group(1).casefold()
+        return f"var({local_aliases.get(variable, variable)})"
+
+    return re.sub(
+        r"var\(\s*(--[a-zA-Z0-9_-]+)\s*\)",
+        replace_variable,
+        rewritten,
+        flags=re.IGNORECASE,
+    )
+
+
+def _collect_simple_color_variable_aliases(css: str) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    rules = tinycss2.parse_stylesheet(css, skip_comments=True, skip_whitespace=True)
+    for rule in rules:
+        if rule.type != "qualified-rule":
+            continue
+        declarations = tinycss2.parse_declaration_list(
+            rule.content,
+            skip_comments=True,
+            skip_whitespace=True,
+        )
+        for declaration in declarations:
+            if declaration.type != "declaration":
+                continue
+            name = str(getattr(declaration, "lower_name", declaration.name)).casefold()
+            if not name.startswith("--"):
+                continue
+            value = tinycss2.serialize(declaration.value).strip().casefold()
+            match = re.fullmatch(r"var\(\s*(--[a-z0-9_-]+)\s*\)", value)
+            if match and match.group(1) in DESIGN_COLOR_VARIABLES:
+                aliases[name] = match.group(1)
+    return aliases
+
+
+def _canonical_hex_color(value: str) -> str:
+    raw = str(value or "").strip().lstrip("#").casefold()
+    if len(raw) in {3, 4} and re.fullmatch(r"[0-9a-f]+", raw):
+        raw = "".join(character * 2 for character in raw)
+    if len(raw) not in {6, 8} or not re.fullmatch(r"[0-9a-f]+", raw):
+        return ""
+    return f"#{raw}"
 
 
 def _css_token_count(tokens: Iterable[Any]) -> int:

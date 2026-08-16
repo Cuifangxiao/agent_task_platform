@@ -70,13 +70,22 @@ class IconRegistry:
         matching = [key for score, key in scored if score > 0]
         return (matching or list(self.keys()))[: max(1, limit)]
 
-    def render(self, key: str, *, fallback: str = "circle-check") -> str:
+    def render(
+        self,
+        key: str,
+        *,
+        fallback: str = "circle-check",
+        extra_classes: tuple[str, ...] = (),
+    ) -> str:
         icon = self._icons.get(str(key or "").strip()) or self._icons.get(fallback)
         if icon is None:
             return ""
+        class_names = tuple(dict.fromkeys(("icon", *extra_classes)))
+        class_attribute = html.escape(" ".join(class_names), quote=True)
         nodes = "".join(_render_node(node) for node in icon.nodes)
         return (
-            f'<span class="icon" data-resolved-icon="true" data-icon-key="{html.escape(icon.key, quote=True)}">'
+            f'<span class="{class_attribute}" data-resolved-icon="true" '
+            f'data-icon-key="{html.escape(icon.key, quote=True)}">'
             f'<svg viewBox="{html.escape(icon.view_box, quote=True)}" aria-hidden="true" '
             'focusable="false" fill="none" stroke="currentColor" stroke-width="2">'
             f"{nodes}</svg></span>"
@@ -89,10 +98,16 @@ class IconRegistry:
         def replace(match: re.Match[str]) -> str:
             key = match.group("key").casefold()
             if key not in self._icons:
-                missing.append(key)
+                if key not in missing:
+                    missing.append(key)
                 return ""
-            resolved.append(key)
-            return self.render(key)
+            # The renderer contract records the distinct icon keys used on a
+            # page, not every repeated occurrence.  Keeping occurrences here
+            # used to overflow HtmlSlideSpec's 10-key limit on diagrams that
+            # intentionally reused one icon across many nodes.
+            if key not in resolved:
+                resolved.append(key)
+            return self.render(key, extra_classes=_placeholder_classes(match))
 
         return ICON_PLACEHOLDER_RE.sub(replace, fragment), resolved, missing
 
@@ -122,6 +137,26 @@ def _render_node(node: dict[str, Any]) -> str:
         for name, value in sorted(attributes.items())
     )
     return f"<{tag} {rendered}/>"
+
+
+def _placeholder_classes(match: re.Match[str]) -> tuple[str, ...]:
+    """Keep safe presentation classes attached to a model icon placeholder.
+
+    The trusted SVG still replaces the entire placeholder.  Retaining only its
+    class list lets page CSS size and align the resolved icon without carrying
+    arbitrary model-authored attributes into the trusted fragment.
+    """
+
+    attributes = f'{match.group("before")} {match.group("after")}'
+    class_match = re.search(
+        r"\bclass\s*=\s*([\"'])(?P<classes>[^\"']*)\1",
+        attributes,
+        flags=re.IGNORECASE,
+    )
+    if class_match is None:
+        return ()
+    names = re.findall(r"[a-zA-Z_][a-zA-Z0-9_-]{0,63}", html.unescape(class_match.group("classes")))
+    return tuple(dict.fromkeys(name for name in names if name != "icon"))
 
 
 __all__ = ["IconRegistry", "TrustedIcon", "icon_registry"]

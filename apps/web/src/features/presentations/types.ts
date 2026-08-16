@@ -1,5 +1,6 @@
 export interface PptCreateTaskPayload {
   agent_config_id: number
+  name?: string
   description: string
   source_files?: File[]
   thread_id?: string
@@ -104,6 +105,7 @@ export interface PptTask {
   run_id?: string
   task_id: string
   client_request_id?: string
+  name?: string
   description?: string
   agent_config_id?: number
   status: PptTaskStatus

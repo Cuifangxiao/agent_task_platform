@@ -152,7 +152,7 @@ export function projectPresentationConversation(
     taskId: task.task_id,
     ...(task.run_id ? { runId: task.run_id } : {}),
     ...(task.thread_id ? { threadId: task.thread_id } : {}),
-    title: conversationTitle(task.description),
+    title: conversationTitle(task.name || task.description),
     status: task.status,
     messages,
     ...(task.updated_at || task.finished_at || orderedEvents.at(-1)?.created_at

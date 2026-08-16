@@ -21,7 +21,7 @@ const (
 
 var persistedRunColumns = []string{
 	"run_id", "owner_id", "thread_id", "client_request_id", "request_fingerprint",
-	"agent_config_id", "description", "schema_version", "event_id", "status", "stage",
+	"agent_config_id", "presentation_name", "description", "schema_version", "event_id", "status", "stage",
 	"message", "last_event_sequence", "result_json", "error_json", "file_url",
 	"worker_active", "heartbeat_at", "created_at", "updated_at", "finished_at",
 	"worker_finished_at",
@@ -42,7 +42,7 @@ func TestRunRepositoryCreateStoresNullableRequestFields(t *testing.T) {
 
 	mock.ExpectExec(regexp.QuoteMeta(insertRunQuery)).
 		WithArgs(
-			task.RunID, task.ownerID, task.ThreadID, nil, nil, nil, task.Description,
+			task.RunID, task.ownerID, task.ThreadID, nil, nil, nil, task.Name, task.Description,
 			optionsJSON, task.SchemaVersion, nil, task.Status, task.Stage, task.Message,
 			task.LastEventSequence, nil, nil, task.FileURL, task.UpdatedAt,
 			task.CreatedAt, task.UpdatedAt, nil,
@@ -376,6 +376,45 @@ func TestRunRepositoryWorkerLifecycleUpdatesAreIdempotentAndOwnerIndependent(t *
 	}
 }
 
+func TestRunRepositoryDeletesOnlyOwnedStoppedTerminalRuns(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		rows       int64
+		lookupRows *sqlmock.Rows
+		wantErr    error
+	}{
+		{name: "deletable", rows: 1},
+		{name: "still running", lookupRows: sqlmock.NewRows([]string{"found"}).AddRow(1), wantErr: ErrTaskStillRunning},
+		{name: "not owned", lookupRows: sqlmock.NewRows([]string{"found"}), wantErr: ErrTaskNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			repo := NewRunRepository(db)
+
+			mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM ppt_runs WHERE owner_id = ? AND run_id = ? AND status IN ('succeeded', 'failed', 'cancelled') AND worker_active = 0`)).
+				WithArgs(int64(7), testRunID).
+				WillReturnResult(sqlmock.NewResult(0, test.rows))
+			if test.rows == 0 {
+				mock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM ppt_runs WHERE owner_id = ? AND run_id = ? LIMIT 1`)).
+					WithArgs(int64(7), testRunID).
+					WillReturnRows(test.lookupRows)
+			}
+
+			err = repo.Delete(t.Context(), 7, testRunID)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("Delete error = %v, want %v", err, test.wantErr)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestRunRepositoryRecoverInterruptedFailsRunningAndReleasesTerminalWorkers(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -433,6 +472,7 @@ func repositoryTask(runID string, now time.Time) Task {
 		ThreadID:      "thread-1",
 		RunID:         runID,
 		TaskID:        runID,
+		Name:          "Durable Deck",
 		Description:   "Build a durable deck",
 		Status:        TaskRunning,
 		Stage:         StagePreparing,
@@ -478,7 +518,7 @@ func runRowValues(task Task, fingerprint string, workerActive bool) []driver.Val
 	}
 	return []driver.Value{
 		task.RunID, task.ownerID, task.ThreadID, clientRequestID, storedFingerprint,
-		agentConfigID, task.Description, task.SchemaVersion, eventID, string(task.Status),
+		agentConfigID, task.Name, task.Description, task.SchemaVersion, eventID, string(task.Status),
 		string(task.Stage), task.Message, task.LastEventSequence, resultJSON, errorJSON,
 		task.FileURL, workerActive, task.UpdatedAt, task.CreatedAt, task.UpdatedAt,
 		finishedAt, nil,

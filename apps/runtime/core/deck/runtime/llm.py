@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _LLM_LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("deck_llm_log_context", default={})
 StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
 StructuredOutputMethod = Literal["json_schema", "json_mode", "function_calling"]
+MAX_VALIDATION_FEEDBACK_CHARS = 2_000
 
 
 class StructuredOutputError(ValueError):
@@ -160,7 +161,7 @@ def invoke_structured_with_retries(
                 )
                 if attempt + 1 < total_attempts:
                     record_retry()
-                    prompt = user + "\n\nThe previous structured response violated the schema. Return one corrected JSON object only."
+                    prompt = _retry_prompt(user, exc)
                     continue
                 raise StructuredOutputError(str(exc)) from exc
             last_invocation_error = exc
@@ -205,7 +206,7 @@ def invoke_structured_with_retries(
             )
             if attempt + 1 < total_attempts:
                 record_retry()
-                prompt = user + "\n\nThe previous complete response violated the schema. Return one corrected JSON object only."
+                prompt = _retry_prompt(user, exc)
                 continue
             raise StructuredOutputError(str(exc)) from exc
 
@@ -222,6 +223,32 @@ def invoke_structured_with_retries(
     if last_invocation_error is not None:
         raise ModelInvocationError(str(last_invocation_error)) from last_invocation_error
     raise StructuredOutputError(str(last_validation_error or "model did not return schema-valid output"))
+
+
+def _retry_prompt(user: str, exc: Exception) -> str:
+    """Return bounded, actionable schema feedback without replaying a completion."""
+
+    detail_source: BaseException = exc
+    visited: set[int] = set()
+    while id(detail_source) not in visited:
+        visited.add(id(detail_source))
+        if isinstance(detail_source, ValidationError):
+            break
+        nested = detail_source.__cause__ or detail_source.__context__
+        if nested is None:
+            break
+        detail_source = nested
+
+    detail = str(detail_source).strip() or type(detail_source).__name__
+    if len(detail) > MAX_VALIDATION_FEEDBACK_CHARS:
+        detail = "..." + detail[-MAX_VALIDATION_FEEDBACK_CHARS:]
+    return (
+        user
+        + "\n\nThe previous complete response violated the schema.\n"
+        + "Validation error:\n"
+        + detail
+        + "\nCorrect the reported fields and return one complete JSON object only."
+    )
 
 
 def _is_structured_validation_exception(exc: Exception) -> bool:

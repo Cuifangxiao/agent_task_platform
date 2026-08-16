@@ -5,6 +5,7 @@ manager: deepseek
 sdk: langchain_openai
 default_base_url: https://api.deepseek.com
 supports_custom_base_url: true
+request_timeout_seconds: 180
 structured_output_method: json_mode
 credential_test:
   enabled: true

@@ -10,6 +10,7 @@ const props = defineProps<{
   configs: AgentConfig[]
   error: string
   files: File[]
+  name: string
   submitting: boolean
   text: string
   uploadState: string
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   removeFile: [index: number]
   submit: []
   updateConfigId: [value: string]
+  updateName: [value: string]
   updateText: [value: string]
 }>()
 
@@ -71,6 +73,18 @@ function onTextareaKeydown(event: KeyboardEvent) {
       </div>
       <span class="character-count">{{ characterCount }}/5000</span>
     </div>
+
+    <label class="presentation-name-field" for="presentation-name">
+      <span>演示名称 <small>留空时根据需求自动命名</small></span>
+      <input
+        id="presentation-name"
+        :value="name"
+        :disabled="submitting"
+        maxlength="120"
+        placeholder="例如：Transformer 模型原理与应用"
+        @input="$emit('updateName', ($event.target as HTMLInputElement).value)"
+      />
+    </label>
 
     <textarea
       id="presentation-brief"
@@ -191,6 +205,30 @@ function onTextareaKeydown(event: KeyboardEvent) {
   color: var(--muted-2);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.presentation-name-field {
+  display: grid;
+  gap: 6px;
+}
+
+.presentation-name-field > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.presentation-name-field small {
+  margin-left: 6px;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.presentation-name-field input {
+  min-height: 40px;
+  border-color: var(--line);
+  background: #fbfcfc;
 }
 
 .composer-panel textarea {

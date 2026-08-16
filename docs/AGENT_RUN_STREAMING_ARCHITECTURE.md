@@ -128,7 +128,7 @@ WS connection 与 run 是多对多的瞬态关系。刷新页面会产生新 con
 
 客户端每次提交生成请求都产生新的 `client_request_id`。服务端计算稳定请求指纹，覆盖：
 
-- description；
+- name 与 description；
 - agent config；
 - options；
 - 附件名称、MIME、大小和 SHA-256。

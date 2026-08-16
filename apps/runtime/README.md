@@ -36,8 +36,8 @@ apps/runtime/
 │   │   ├── pipeline/        #   三阶段根图、共享 state、events 与 instrumentation
 │   │   ├── runtime/         #   LLM 调用、模型注册与请求级指标
 │   │   ├── workspace/       #   来源解析与 task-local 路径
-│   │   ├── design_system/   #   catalog、主题、recipes、base CSS 与本地图标
-│   │   ├── html/            #   sanitizer、assembler、Chromium DOM QA 与 fallback
+│   │   ├── design_system/   #   layout recipes、base CSS 与本地图标
+│   │   ├── html/            #   sanitizer、assembler、Chromium DOM QA 与 recipe 工具
 │   │   ├── export/          #   image-only PPTX 导出
 │   │   └── prompts/         #   outline、逐页视觉规划、HTML 与 repair 提示词
 └── utils/
@@ -95,10 +95,10 @@ START
      -> prepare_slide
      -> generate_slide_design                      # style，每页一次
      -> generate_slide_html                        # designer，每页一次
-     -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
-        -> valid: capture_png
-        -> repair: repair_slide_html -> sanitize... # designer，最多两轮
-        -> fallback: build_fallback_html -> sanitize...
+      -> sanitize_and_assemble_html -> render_html_and_measure_dom -> validate_dom
+         -> valid: capture_png
+         -> repair: repair_slide_html -> sanitize... # designer，最多三轮
+         -> repairs exhausted: fail with the actual schema/content/DOM diagnostic
      -> persist_slide_artifacts -> emit_slide_preview
   -> aggregate_slides
   -> assemble_image_pptx -> finalize_deck
@@ -116,18 +116,20 @@ START
 `layout_history` 和 `validation_issues` 通过 reducer 在 fan-in 时确定性归并，最终按 `slide_id`/页索引恢复顺序。
 每个请求从头执行，当前没有 LangGraph checkpointer、人工 review 或 pause/resume。
 
-默认页面并发数为 6、Chromium session pool 并发数为 3；可分别通过
+默认页面并发数为 4、Chromium session pool 并发数为 3；可分别通过
 `DECK_SLIDE_CONCURRENCY` 和 `DECK_BROWSER_CONCURRENCY` 调整。预览按完成顺序发送，调用方按
 `page_index`/`page_id` 定位页面。
 
-设计系统位于 `core/deck/design_system/`，提供 4 套完整主题（`paper_editorial`、
-`executive_signal`、`midnight_product`、`alpine_research`）、10 个 layout recipe 和 24 个本地 Lucide 图标。
-catalog 继续提供经过浏览器验证的几何、字体、间距、shape 和图标合同；页面颜色只来自阶段一的
-`GlobalStyleSpec`，确定性映射为 renderer `DesignSpec.palette`，逐页视觉规划不能发明冲突色板。
+设计系统位于 `core/deck/design_system/`，只保留 10 个 layout recipe（槽位、容量、结构与变体合同）
+和 24 个本地 Lucide 图标，不含视觉主题模板。renderer 的字体、字号、间距与 shape 几何是固定默认值；
+页面颜色只来自阶段一的 `GlobalStyleSpec`，确定性映射为 renderer `DesignSpec.palette`，逐页视觉规划
+不能发明冲突色板。
 模型生成的 HTML/CSS 会经过 parser-backed allowlist 清洗，再装入含 CSP、全局 DesignSpec token 和
 trusted base CSS 的文档壳。Chromium 对每页执行越界、溢出、重叠、最小字号、节点预算和字体可用性检查；
-内容错误最多修复两次，然后进入确定性 recipe fallback。确定性内容守卫要求 HTML 保留批准的标题、
-至少一个正文内容块和 key metric 原值；prompt 同时要求模型只使用本页 outline 与相关来源切片。
+硬错误最多由 designer 定向修复三次；仍未通过时任务携带真实诊断失败，不会用程序模板替换模型页面。
+安全清洗、合法单根节点、固定 1600×900 画布与渲染环境问题是硬错误；越界/裁切/隐藏、标题行数、字号、
+对比度、语义框重叠、复杂度和文案/数字一致性都作为质量 warning 写入诊断与报告，不阻断截图和导出。
+对应设计要求继续由 prompt 软约束模型。prompt 同时要求模型只使用本页 outline 与相关来源切片。
 当前实现不会对全部自由文本事实逐项执行来源蕴含校验。
 
 渲染画布为 `1600×900` CSS px，`deviceScaleFactor=2`，每页输出 `3200×1800` PNG。生产预览事件
@@ -137,7 +139,7 @@ trusted base CSS 的文档壳。Chromium 对每页执行越界、溢出、重叠
 
 模型角色固定为 `outline`、`style`、`designer`，配置由 Go 请求注入。MySQL migration
 `014_refactor_ppt_agent_model_nodes.sql` 更新 Agent 节点定义，保留这三个既有绑定并清理其他节点绑定。
-当前 state schema 为 `deck-state.v6`，prompt 版本为 `html-deck.v8`；
+当前 state schema 为 `deck-state.v6`，prompt 版本为 `html-deck.v12`；
 renderer 协议未改变，仍为 `chromium-html.v2`。
 文本附件以正文/provenance 进入 outline 和逐页相关来源上下文。图片会持久化到任务本地
 `sources/assets/`，其有界元数据可参与 outline 和逐页资源筛选；当前仍不做多模态视觉分析，
@@ -156,18 +158,9 @@ Linux/CI 可使用：
 sudo apt-get install -y fontconfig fonts-noto-cjk fonts-inter
 ```
 
-四套主题只使用 `Noto Sans CJK SC`（中文与混排）和 `Inter`（拉丁文）。运行
-`fc-list : family | rg -i 'Noto Sans CJK SC|Inter'` 检查目标环境；字体缺失是硬性渲染错误。
+渲染器固定使用 `Noto Sans SC`（中文与混排）和 `Inter`（拉丁文）。运行
+`fc-list : family | rg -i 'Noto Sans SC|Inter'` 检查目标环境；字体缺失是硬性渲染错误。
 生产 Runtime 应使用非 root 用户，并显式开启 Chromium sandbox。
-
-生成 10 页模板画廊和三套 6 页 HTML/PNG/PPTX 样例：
-
-```bash
-PYTHONPATH=. .venv/bin/python scripts/generate_html_deck_samples.py
-```
-
-输出位于 `artifacts/deck-samples/`；macOS 可通过 `--chinese-font "PingFang SC" --latin-font "Arial"`
-使用本机字体进行开发预览。生产验收仍应使用 `Noto Sans CJK SC` / `Inter`。
 
 生成产物写入 `DECK_ARTIFACTS_DIR/{task_id}/`，默认为 `apps/runtime/artifacts/decks`。若 Go 与 Runtime
 位于不同容器，`python_agent.artifacts_dir` 和 `DECK_ARTIFACTS_DIR` 必须挂载到同一物理目录。

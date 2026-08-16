@@ -7,6 +7,7 @@ import {
   MessagesSquare,
   Presentation,
   Square,
+  Trash2,
   Wifi,
 } from '@lucide/vue'
 
@@ -36,6 +37,7 @@ import {
   formatDateTime,
   MAX_DESCRIPTION_CHARACTERS,
   validatePresentationDescription,
+  validatePresentationName,
   validateSourceFiles,
 } from '../lib/presentationUtils'
 import type { PresentationSubmissionAttempt } from '../lib/presentationUtils'
@@ -54,6 +56,7 @@ interface RunViewState {
   error: string
   connectionState: string
   cancelling: boolean
+  deleting: boolean
   downloading: boolean
   submittedDescription: string
   previewSources: Record<string, string>
@@ -69,6 +72,7 @@ interface RunRuntimeState {
 }
 
 interface ComposerDraft {
+  name: string
   text: string
   files: File[]
 }
@@ -79,7 +83,7 @@ const props = defineProps<{
 }>()
 
 const MAX_TRACKED_TASKS = 20
-const composer = reactive({ text: '', files: [] as File[] })
+const composer = reactive({ name: '', text: '', files: [] as File[] })
 const selectedConfigId = ref('')
 const selectedTaskId = ref('')
 const taskOrder = ref<string[]>([])
@@ -107,7 +111,7 @@ watch(
   { immediate: true },
 )
 
-watch([selectedConfigId, () => composer.text, () => composer.files], () => {
+watch([selectedConfigId, () => composer.name, () => composer.text, () => composer.files], () => {
   failedCreateAttempt = null
 })
 
@@ -201,6 +205,12 @@ async function restoreTasks() {
 
 async function startGeneration() {
   composerError.value = ''
+  const name = composer.name.trim()
+  const nameError = validatePresentationName(name)
+  if (nameError) {
+    composerError.value = nameError
+    return
+  }
   const request = composer.text.trim()
   const requestError = validatePresentationDescription(request)
   if (requestError) {
@@ -234,11 +244,13 @@ async function startGeneration() {
   uploadState.value = sourceFiles.length ? '正在上传附件并创建任务…' : '正在创建任务…'
   const createAttempt = createPresentationSubmissionAttempt({
     agentConfigId: config.id,
+    name,
     description,
     sourceFiles,
   }, failedCreateAttempt)
   const payload: PptCreateTaskPayload = {
     agent_config_id: config.id,
+    ...(name ? { name } : {}),
     description,
     thread_id: createAttempt.threadId,
     client_request_id: createAttempt.clientRequestId,
@@ -259,6 +271,7 @@ async function startGeneration() {
     selectedTaskId.value = run.task.task_id
     revisionComposerOpen.value = false
     previewLightbox.value = null
+    composer.name = ''
     composer.text = ''
     composer.files = []
     uploadState.value = sourceFiles.length
@@ -413,6 +426,37 @@ async function cancelTask(taskId = selectedTaskId.value) {
   }
 }
 
+async function deleteTask(taskId = selectedTaskId.value) {
+  const run = runs[taskId]
+  if (!run || isRunningTask(run.task) || run.deleting) return
+  const label = runLabel(run)
+  if (!window.confirm(`确认删除会话“${label}”？\n\n会话记录、页面预览和生成的 PPT 文件都将永久删除。`)) return
+
+  run.deleting = true
+  run.error = ''
+  try {
+    await props.api.deleteTask(taskId)
+    const deletedIndex = taskOrder.value.indexOf(taskId)
+    const wasSelected = selectedTaskId.value === taskId
+    clearRunResources(taskId)
+    delete runs[taskId]
+    taskOrder.value = taskOrder.value.filter((id) => id !== taskId)
+
+    if (wasSelected) {
+      selectedTaskId.value = taskOrder.value[deletedIndex]
+        ?? taskOrder.value[deletedIndex - 1]
+        ?? ''
+      revisionComposerOpen.value = false
+      previewLightbox.value = null
+      restoreComposerDraft(selectedTaskId.value)
+    }
+  } catch (cause) {
+    run.error = `删除会话失败：${errorMessage(cause)}`
+  } finally {
+    if (runs[taskId]) runs[taskId].deleting = false
+  }
+}
+
 async function downloadTask(taskId = selectedTaskId.value) {
   const run = runs[taskId]
   if (!run || run.downloading) return
@@ -461,6 +505,9 @@ function startNewConversation() {
 
 function openRevisionComposer() {
   revisionComposerOpen.value = true
+  if (!composer.name.trim() && selectedRun.value?.task.name) {
+    composer.name = `${selectedRun.value.task.name} 新版本`.slice(0, 120)
+  }
   void focusComposer()
 }
 
@@ -470,11 +517,12 @@ function composerDraftKey(taskId = selectedTaskId.value) {
 
 function saveComposerDraft(taskId = selectedTaskId.value) {
   const key = composerDraftKey(taskId)
-  if (!composer.text.trim() && composer.files.length === 0) {
+  if (!composer.name.trim() && !composer.text.trim() && composer.files.length === 0) {
     composerDrafts.delete(key)
     return
   }
   composerDrafts.set(key, {
+    name: composer.name,
     text: composer.text,
     files: [...composer.files],
   })
@@ -482,6 +530,7 @@ function saveComposerDraft(taskId = selectedTaskId.value) {
 
 function restoreComposerDraft(taskId: string) {
   const draft = composerDrafts.get(composerDraftKey(taskId))
+  composer.name = draft?.name ?? ''
   composer.text = draft?.text ?? ''
   composer.files = draft ? [...draft.files] : []
   failedCreateAttempt = null
@@ -555,6 +604,7 @@ function upsertTask(
     error: '',
     connectionState: '',
     cancelling: false,
+    deleting: false,
     downloading: false,
     submittedDescription: options.submittedDescription ?? '',
     previewSources: {},
@@ -693,7 +743,8 @@ function runProgress(run: RunViewState | null | undefined) {
 }
 
 function runLabel(run: RunViewState) {
-  return run.task.description
+  return run.task.name
+    || run.task.description
     || run.submittedDescription
     || run.task.message
     || `PPT 任务 ${shortId(run.task.run_id || run.task.task_id)}`
@@ -849,6 +900,17 @@ function isNonRetryableSubscribeError(cause: unknown) {
           </div>
           <div class="conversation-toolbar-actions">
             <button
+              class="btn ghost delete-conversation-button"
+              type="button"
+              :disabled="isRunningTask(task) || selectedRun?.deleting"
+              :title="isRunningTask(task) ? '请先取消正在生成的任务' : '永久删除此会话及其生成文件'"
+              @click="deleteTask(task.task_id)"
+            >
+              <Loader2 v-if="selectedRun?.deleting" class="spin" :size="16" />
+              <Trash2 v-else :size="16" />
+              {{ selectedRun?.deleting ? '正在删除…' : '删除会话' }}
+            </button>
+            <button
               class="btn ghost"
               type="button"
               :aria-expanded="revisionComposerOpen"
@@ -918,6 +980,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
             :configs="props.configs"
             :error="composerError"
             :files="composer.files"
+            :name="composer.name"
             :helper="composerHelper"
             :placeholder="composerPlaceholder"
             :submit-label="composerSubmitLabel"
@@ -929,6 +992,7 @@ function isNonRetryableSubscribeError(cause: unknown) {
             @remove-file="removeFile"
             @submit="startGeneration"
             @update-config-id="selectedConfigId = $event"
+            @update-name="composer.name = $event"
             @update-text="composer.text = $event"
           />
         </div>
@@ -1504,6 +1568,16 @@ function isNonRetryableSubscribeError(cause: unknown) {
   min-height: 36px;
   padding: 7px 10px;
   font-size: 11px;
+}
+
+.conversation-toolbar-actions .delete-conversation-button:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
+  color: var(--danger);
+}
+
+.conversation-toolbar-actions .delete-conversation-button:not(:disabled):hover {
+  border-color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .conversation-welcome {

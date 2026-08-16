@@ -52,7 +52,7 @@ func TestCreateTaskUsesIndependentContextAndCompletes(t *testing.T) {
 	if task.SchemaVersion != CurrentSchemaVersion || task.EventID != "" || task.ThreadID == "" || task.RunID == "" || task.TaskID != task.RunID {
 		t.Fatalf("unexpected task envelope: %#v", task)
 	}
-	if task.Description != "Build an architecture deck" || task.AgentConfigID != 3 {
+	if task.Name != "Build an architecture deck" || task.Description != "Build an architecture deck" || task.AgentConfigID != 3 {
 		t.Fatalf("request metadata was not retained: %#v", task)
 	}
 	if runtime.request.ThreadID != task.ThreadID || runtime.request.RunID != task.RunID || runtime.request.TaskID != task.RunID {

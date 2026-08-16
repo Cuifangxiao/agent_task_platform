@@ -133,7 +133,7 @@ def generate_deck_outline(
     outline = DeckOutlineSpec.model_validate(outline)
     plan = deck_plan_from_outline(outline)
     layout_preferences = allocate_layout_preferences(plan)
-    theme, design = create_design_spec(outline)
+    design = create_design_spec(outline)
 
     project = _project_paths(output_dir, state)
     if project is not None:
@@ -145,14 +145,12 @@ def generate_deck_outline(
         _atomic_write_json(project.deck_plan_json, plan.model_dump(mode="json"))
         persist_design_artifacts(
             project,
-            theme=theme,
             design=design,
             plan=plan,
             layout_preferences=layout_preferences,
         )
 
     emit_event(events.outline_ready(_outline_markdown(outline)))
-    emit_event(events.template_selected(theme.name, theme.theme_id))
     emit_event(
         events.stage_progress(
             "generate_deck_outline",
@@ -173,7 +171,6 @@ def generate_deck_outline(
         "source_text": source_text,
         "deck_plan": plan.model_dump(mode="json"),
         "layout_preferences": layout_preferences,
-        "selected_template_id": theme.theme_id,
         "design_spec": design.model_dump(mode="json"),
         "status": "designing",
     }
@@ -204,6 +201,14 @@ def _validate_outline_output(
         if previous.layout_suggestion is current.layout_suggestion:
             raise ValueError(
                 f"adjacent slides {previous.id} and {current.id} must use different layouts"
+            )
+    for slide in outline.slides:
+        if slide.type is SlideRole.COVER:
+            continue
+        if not 2 <= len(slide.key_points) <= 4:
+            raise ValueError(
+                f"outline slide {slide.id} must contain 2-4 substantive key_points; "
+                f"received {len(slide.key_points)}"
             )
     return outline
 

@@ -106,6 +106,23 @@ test('canonical PPT task cancellation uses POST and unwraps the response', async
   assert.equal(requestedMethod, 'POST')
 })
 
+test('presentation API deletes a task with the canonical DELETE route', async (context) => {
+  let requestedPath = ''
+  let requestedMethod = ''
+  context.mock.method(globalThis, 'fetch', async (input, init) => {
+    requestedPath = String(input)
+    requestedMethod = init?.method ?? ''
+    return new Response(JSON.stringify({ data: { task_id: 'task-42' }, meta: { request_id: 'request-delete' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  })
+
+  await createPresentationApi(client(true)).deleteTask('task-42')
+  assert.equal(requestedPath, '/api/v1/ppt/tasks/task-42')
+  assert.equal(requestedMethod, 'DELETE')
+})
+
 test('presentation API lists tasks with filters and submits run correlation ids', async (context) => {
   const requestedUrls: string[] = []
   const requestedBodies: FormData[] = []
@@ -127,6 +144,7 @@ test('presentation API lists tasks with filters and submits run correlation ids'
 
   const payload = {
     agent_config_id: 7,
+    name: '季度经营复盘',
     description: '并行生成一份 PPT',
     thread_id: 'thread-1',
     client_request_id: 'request-1',
@@ -137,6 +155,7 @@ test('presentation API lists tasks with filters and submits run correlation ids'
 
   const form = requestedBodies[0] ?? toTaskFormData(payload)
   assert.equal(form.get('agent_config_id'), '7')
+  assert.equal(form.get('name'), '季度经营复盘')
   assert.equal(form.get('description'), '并行生成一份 PPT')
   assert.equal(form.get('thread_id'), 'thread-1')
   assert.equal(form.get('client_request_id'), 'request-1')

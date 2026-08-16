@@ -86,6 +86,7 @@ const designPreviewPresentationApi: PresentationApi = {
       task_id: taskId,
       client_request_id: payload.client_request_id,
       agent_config_id: payload.agent_config_id,
+      name: payload.name || '新建演示文稿',
       description: payload.description,
       status: 'running',
       stage: 'PREPARING',
@@ -123,9 +124,16 @@ const designPreviewPresentationApi: PresentationApi = {
     if (!task) throw new Error('找不到设计预览任务。')
     return task
   },
-  downloadTaskFile: async () => ({
+  deleteTask: async (taskId) => {
+    const task = findDesignPreviewTask(taskId)
+    if (!task) throw new Error('找不到设计预览任务。')
+    if (task.status === 'running') throw new Error('生成中的会话不能删除，请先取消任务。')
+    designPreviewTasks.value = designPreviewTasks.value.filter((item) => item.task_id !== task.task_id)
+    designPreviewEvents.delete(task.run_id || task.task_id)
+  },
+  downloadTaskFile: async (taskId) => ({
     blob: new Blob(['PPT design preview'], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
-    filename: 'pptagent-preview.pptx',
+    filename: `${findDesignPreviewTask(taskId)?.name || 'pptagent-preview'}.pptx`,
   }),
   createRealtimeClient: ({ onConnectionState, onEvent, onSnapshot }) => ({
     connect: () => onConnectionState('open'),

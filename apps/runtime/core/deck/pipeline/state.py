@@ -106,7 +106,6 @@ class DeckProcessorPlanningState(TypedDict, total=False):
 
 
 class DeckProcessorDesignState(TypedDict, total=False):
-    selected_template_id: str
     design_spec: dict[str, Any]
 
 
@@ -120,8 +119,7 @@ class DeckProcessorSlideState(TypedDict, total=False):
     current_assembled_html: str
     current_diagnostics: list[dict[str, Any]]
     current_repair_attempts: int
-    current_fallback_used: bool
-    current_render_decision: Literal["valid", "repair", "fallback"]
+    current_render_decision: Literal["valid", "repair"]
     current_speculative_preview_path: str
     current_speculative_preview_hash: str
     current_preview_path: str

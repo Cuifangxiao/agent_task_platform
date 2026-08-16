@@ -529,6 +529,7 @@ PPT 使用持久化 Run，不再使用旧 Conversation、Job、Action 或恢复�
 | `task_id` | UUID string | `run_id` 的兼容别名，两者始终相等 |
 | `client_request_id` | string，可省略 | 客户端幂等键 |
 | `agent_config_id` | integer | 创建请求中的 Agent 配置 ID；`0` 表示自动选择 |
+| `name` | string | 用户可见的演示名称；用于任务列表、会话标题和下载文件名 |
 | `description` | string | 已 trim 的 PPT 需求 |
 | `status` | string | `running`、`succeeded`、`failed`、`cancelled` |
 | `stage` | string | 当前稳定阶段 |
@@ -555,6 +556,7 @@ JSON 请求不支持附件：
   "thread_id": "5a5f7de4-1c1c-4aeb-8da3-c6994c2b723b",
   "client_request_id": "web-create-019f7e80",
   "agent_config_id": 1,
+  "name": "Agent Task Platform 架构介绍",
   "description": "生成一份介绍 Agent Task Platform 架构的 8 页中文演示文稿"
 }
 ```
@@ -564,9 +566,10 @@ JSON 请求不支持附件：
 | `thread_id` | 否 | 最长 128 字符；省略时由 Go 生成 UUID |
 | `client_request_id` | 否 | 最长 128 字符；建议每次用户创建意图生成一个稳定值 |
 | `agent_config_id` | 否 | 正整数；省略或 0 时选择当前用户默认 active PPT 配置，否则选择首个可用配置 |
+| `name` | 否 | trim 后最多 120 个 Unicode 字符；省略时从需求首句自动生成 |
 | `description` | 是 | trim 后非空，最多 5000 个 Unicode 字符 |
 
-语言、目标页数、画面比例和视觉模板不作为独立请求字段。`outline` 模型从 `description` 的自然语言中一次生成全局元数据、大纲与样式；确定性 adapter 再依据该结果和页面内容选择受控内部模板。
+语言、目标页数、画面比例和视觉模板不作为独立请求字段。`outline` 模型从 `description` 的自然语言中一次生成全局元数据、大纲与唯一调色板；确定性 adapter 再依据该结果派生页面规划、布局锁、内容合同和固定默认渲染合同，不使用主题模板。
 
 有附件时使用 `multipart/form-data`：
 
@@ -575,6 +578,7 @@ JSON 请求不支持附件：
 | `thread_id` | 否 | 规则同 JSON |
 | `client_request_id` | 否 | 规则同 JSON |
 | `agent_config_id` | 否 | 正整数；规则同 JSON |
+| `name` | 否 | 演示名称；规则同 JSON |
 | `description` | 是 | PPT 需求 |
 | `attachments` | 否 | 可重复文件字段；推荐名称 |
 | `source_files`、`source_file`、`file` | 否 | 与 `attachments` 等价的上传兼容名称 |
@@ -590,7 +594,7 @@ JSON 请求不支持附件：
 
 PPT Agent 配置必须 active，并且恰好能解析 `outline`、`style`、`designer` 三个 active 文本/多模态模型。任一节点缺失、模型停用或 `max_tokens <= 0` 都拒绝创建任务。
 
-`client_request_id` 在当前用户内是 MySQL 唯一的持久幂等键：同一键与完全相同的规范化请求会跨请求、跨 API 重启返回原 Task；同一键换了 thread、需求、配置、附件或 options 会返回 `409 client_request_conflict`。同一用户的同一 `thread_id` 同时只允许一个尚未退出的 worker，数据库唯一约束与本地 Hub 共同保护该规则；冲突返回 `409 thread_run_conflict`，不同 thread 可并行。当前 thread 仍只用于 Go 侧分组和互斥，不是 Python checkpoint。
+`client_request_id` 在当前用户内是 MySQL 唯一的持久幂等键：同一键与完全相同的规范化请求会跨请求、跨 API 重启返回原 Task；同一键换了 thread、演示名称、需求、配置或附件会返回 `409 client_request_conflict`。同一用户的同一 `thread_id` 同时只允许一个尚未退出的 worker，数据库唯一约束与本地 Hub 共同保护该规则；冲突返回 `409 thread_run_conflict`，不同 thread 可并行。当前 thread 仍只用于 Go 侧分组和互斥，不是 Python checkpoint。
 
 ### 9.3 列表与查询任务
 
@@ -728,10 +732,10 @@ Run 快照和 canonical 事件以 MySQL 为权威；TaskHub 只提供当前进�
 
 `GET /api/v1/ppt/tasks/:task_id/file`
 
-只有任务已收到包含 PPTX 相对路径的成功结果后才可下载。响应文件名为：
+只有任务已收到包含 PPTX 相对路径的成功结果后才可下载。响应文件名使用任务的演示名称，并清理操作系统不允许的文件名字符：
 
 ```text
-deck-<task_id>.pptx
+<name>.pptx
 ```
 
 ### 11.2 指定产物

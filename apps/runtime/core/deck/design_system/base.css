@@ -87,6 +87,8 @@ body {
 .slide .icon,
 .slide [data-resolved-icon="true"] {
   display: inline-flex;
+  width: 1em;
+  height: 1em;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;

@@ -11,6 +11,7 @@ var (
 	ErrTaskNotFound          = errors.New("ppt task not found")
 	ErrTaskNotReady          = errors.New("ppt task worker is not ready")
 	ErrTaskAlreadyFinished   = errors.New("ppt task is already finished")
+	ErrTaskStillRunning      = errors.New("running ppt task cannot be deleted")
 	ErrEventCursorAhead      = errors.New("event cursor is ahead of the run")
 	ErrEventCommitUnknown    = errors.New("ppt event commit outcome is unknown")
 	ErrClientRequestConflict = errors.New("client_request_id was already used for a different request")
@@ -151,6 +152,7 @@ type Task struct {
 	TaskID            string       `json:"task_id"` // Compatibility alias for run_id.
 	ClientRequestID   string       `json:"client_request_id,omitempty"`
 	AgentConfigID     int64        `json:"agent_config_id"`
+	Name              string       `json:"name"`
 	Description       string       `json:"description"`
 	Status            TaskStatus   `json:"status"`
 	Stage             Stage        `json:"stage"`
@@ -170,6 +172,7 @@ type CreateTaskRequest struct {
 	ThreadID        string
 	ClientRequestID string
 	AgentConfigID   int64
+	Name            string
 	Description     string
 	Attachments     []InputResource
 }

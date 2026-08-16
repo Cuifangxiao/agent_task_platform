@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 
+import pytest
+
 import core.deck.agents.processor.generation as generation
-from core.deck.design_system.catalog import get_html_theme
+from core.deck.agents.processor.design import default_design_spec
+from core.deck.html.browser import BrowserContentError
 from core.deck.domain.schemas import (
     ContentBlockType,
     LayoutFamily,
@@ -56,9 +59,7 @@ def test_render_skips_speculative_capture_when_sanitizer_already_reported_error(
     }
     state = {
         "request_id": "request-with-sanitizer-error",
-        "design_spec": get_html_theme("paper_editorial")
-        .to_design_spec()
-        .model_dump(mode="json"),
+        "design_spec": default_design_spec().model_dump(mode="json"),
         "current_slide_plan": _slide("s01", 1),
         "current_assembled_html": "<section class='slide'></section>",
         "current_diagnostics": [diagnostic],
@@ -97,6 +98,27 @@ def test_generation_nodes_track_completed_slides_per_request(monkeypatch):
         )
 
     assert completed_counts == [1, 2, 1, 2]
+
+
+def test_validation_fails_explicitly_after_model_repair_budget(tmp_path):
+    state = {
+        "current_slide_plan": {"index": 3},
+        "current_repair_attempts": 2,
+        "current_diagnostics": [
+            {
+                "code": "TEXT_OVERFLOW",
+                "category": "content",
+                "severity": "error",
+                "message": "Approved copy exceeds its semantic box.",
+            }
+        ],
+    }
+
+    with pytest.raises(
+        BrowserContentError,
+        match=r"Page 3 validation failed after 2 repair attempt\(s\): TEXT_OVERFLOW",
+    ):
+        generation.validate_dom(state, tmp_path, max_repairs=2)
 
 
 def test_relevant_sources_selects_late_positive_match_and_drops_zero_score_chunks():
@@ -167,6 +189,37 @@ def test_key_metric_prefers_business_value_over_year_and_source_locator():
 
     metrics = [block for block in content.content_blocks if block.type is ContentBlockType.METRIC]
     assert [block.value for block in metrics] == ["35%"]
+
+
+def test_formula_key_metric_preserves_approved_points_without_numeric_kpi():
+    outline = SlideOutlineSpec(
+        id="s04",
+        title="Self-Attention",
+        type=SlideRole.INSIGHT,
+        key_points=[
+            "Q、K、V 由输入线性变换得到",
+            "权重 = softmax(QK^T / √d_k)",
+            "缩放因子控制点积方差，避免 softmax 饱和",
+        ],
+        layout_suggestion=LayoutFamily.KEY_METRIC,
+        content_mode="data",
+        content_note="Explain the formula without inventing a KPI.",
+    )
+    slide = SlidePlan(
+        slide_id="s04",
+        index=4,
+        role=SlideRole.INSIGHT,
+        assertion_title=outline.title,
+        takeaway=outline.key_points[0],
+        content_intent=outline.content_note,
+        layout_family=LayoutFamily.KEY_METRIC,
+        rhythm=PageRhythm.DENSE,
+    )
+
+    content = generation._deterministic_content_spec(outline, slide)
+
+    assert [block.type for block in content.content_blocks] == [ContentBlockType.BULLET_LIST]
+    assert content.content_blocks[0].items == outline.key_points
 
 
 def test_data_mode_preserves_the_locked_non_metric_layout_structure():

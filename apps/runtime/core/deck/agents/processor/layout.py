@@ -33,7 +33,7 @@ def deck_plan_from_outline(outline: DeckOutlineSpec) -> DeckPlan:
             index=index,
             role=slide.type,
             assertion_title=truncate(slide.title, 120),
-            takeaway=truncate(_takeaway(slide), 320),
+            takeaway=truncate(_takeaway(slide, deck_subtitle=outline.subtitle), 320),
             content_intent=truncate(slide.content_note, 500),
             layout_family=slide.layout_suggestion,
             rhythm=_page_rhythm(slide),
@@ -98,7 +98,11 @@ def deck_plan_markdown(plan: DeckPlan) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _takeaway(slide: SlideOutlineSpec) -> str:
+def _takeaway(slide: SlideOutlineSpec, *, deck_subtitle: str = "") -> str:
+    # A cover has no body key points. Its audience-facing secondary copy comes
+    # from the deck subtitle; content_note is an internal planning/audit field.
+    if slide.type is SlideRole.COVER:
+        return deck_subtitle.strip() or (slide.key_points[0] if slide.key_points else slide.title)
     if slide.key_points:
         return slide.key_points[0]
     return slide.content_note

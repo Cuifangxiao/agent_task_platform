@@ -98,12 +98,16 @@ func newService(
 
 func (s *Service) CreateTask(ctx context.Context, user actor.User, req CreateTaskRequest) (*Task, error) {
 	description := strings.TrimSpace(req.Description)
+	name, err := normalizePresentationName(req.Name, description)
+	if err != nil {
+		return nil, err
+	}
 	threadID := strings.TrimSpace(req.ThreadID)
 	clientRequestID := strings.TrimSpace(req.ClientRequestID)
 	if user.UserID <= 0 || req.AgentConfigID < 0 || description == "" || len([]rune(description)) > 5000 || len(threadID) > 128 || len(clientRequestID) > 128 {
 		return nil, fmt.Errorf("%w: user, agent_config_id, or description is invalid", ErrInvalidRequest)
 	}
-	fingerprint, err := createTaskFingerprint(threadID, description, req.AgentConfigID, req.Attachments)
+	fingerprint, err := createTaskFingerprint(threadID, name, description, req.AgentConfigID, req.Attachments)
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint task request: %w", err)
 	}
@@ -154,6 +158,7 @@ func (s *Service) CreateTask(ctx context.Context, user actor.User, req CreateTas
 			TaskID:          runID,
 			ClientRequestID: clientRequestID,
 			AgentConfigID:   resolvedAgentConfigID,
+			Name:            name,
 			Description:     description,
 			Status:          TaskRunning,
 			Stage:           StagePreparing,
@@ -194,6 +199,7 @@ func (s *Service) CreateTask(ctx context.Context, user actor.User, req CreateTas
 			threadID,
 			clientRequestID,
 			fingerprint,
+			name,
 			description,
 			resolvedAgentConfigID,
 			user.UserID,
@@ -246,6 +252,24 @@ func (s *Service) ListTasks(ctx context.Context, ownerID int64, threadID string,
 		return s.runRepo.List(ctx, ownerID, threadID, limit)
 	}
 	return s.hub.List(ownerID, threadID, limit)
+}
+
+func (s *Service) DeleteTask(ctx context.Context, ownerID int64, taskID string) error {
+	taskID = normalizeTaskID(taskID)
+	if s.runRepo != nil {
+		unlock := s.lockRunTransition(taskID)
+		defer unlock()
+		if err := s.runRepo.Delete(ctx, ownerID, taskID); err != nil {
+			return err
+		}
+		s.hub.Invalidate(taskID)
+	} else if err := s.hub.Delete(ownerID, taskID); err != nil {
+		return err
+	}
+	if err := s.removeTaskArtifacts(taskID); err != nil {
+		slog.Warn("remove deleted ppt task artifacts", "run_id", taskID, "error", err)
+	}
+	return nil
 }
 
 func (s *Service) SubscribeTask(ctx context.Context, ownerID int64, taskID string, after uint64) (*Subscription, error) {
@@ -772,7 +796,7 @@ func taskResourceURL(taskID string, resource ResourceRef) string {
 	return "/api/v1/ppt/tasks/" + url.PathEscape(taskID) + "/artifacts/" + strings.Join(parts, "/")
 }
 
-func createTaskFingerprint(threadID, description string, agentConfigID int64, attachments []InputResource) (string, error) {
+func createTaskFingerprint(threadID, name, description string, agentConfigID int64, attachments []InputResource) (string, error) {
 	type fingerprintAttachment struct {
 		ResourceID    string `json:"resource_id"`
 		Name          string `json:"name"`
@@ -784,6 +808,7 @@ func createTaskFingerprint(threadID, description string, agentConfigID int64, at
 	type fingerprintRequest struct {
 		ThreadID      string                  `json:"thread_id"`
 		AgentConfigID int64                   `json:"agent_config_id"`
+		Name          string                  `json:"name"`
 		Description   string                  `json:"description"`
 		Attachments   []fingerprintAttachment `json:"attachments"`
 	}
@@ -802,6 +827,7 @@ func createTaskFingerprint(threadID, description string, agentConfigID int64, at
 	payload, err := json.Marshal(fingerprintRequest{
 		ThreadID:      strings.TrimSpace(threadID),
 		AgentConfigID: agentConfigID,
+		Name:          strings.TrimSpace(name),
 		Description:   strings.TrimSpace(description),
 		Attachments:   items,
 	})

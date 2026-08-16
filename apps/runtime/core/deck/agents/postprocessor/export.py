@@ -25,8 +25,8 @@ from core.deck.domain.schemas import PROMPT_VERSION, RENDERER_VERSION, SCHEMA_VE
 from core.deck.pipeline.state import DeckGraphState
 
 
-GENERATION_MANIFEST_SCHEMA = "deck-generation-manifest.v2"
-QUALITY_REPORT_SCHEMA = "deck-quality-report.v2"
+GENERATION_MANIFEST_SCHEMA = "deck-generation-manifest.v3"
+QUALITY_REPORT_SCHEMA = "deck-quality-report.v3"
 
 
 class ExportNodes:
@@ -195,13 +195,11 @@ def _build_generation_manifest(
                 "render_environment": dict(slide.get("render_environment") or {}),
                 "model_metadata": dict(slide.get("model_metadata") or {}),
                 "repair_attempts": max(0, int(slide.get("repair_attempts") or 0)),
-                "fallback_used": bool(slide.get("fallback_used")),
                 "diagnostic_count": len(diagnostics_by_slide.get(slide_id, [])),
             }
         )
 
     deck_plan = state.get("deck_plan") if isinstance(state.get("deck_plan"), dict) else {}
-    design_spec = state.get("design_spec") if isinstance(state.get("design_spec"), dict) else {}
     public_design_files = {
         "deck_outline": _relative_if_file(project, project.deck_outline_json),
         "global_style": _relative_if_file(project, project.global_style_json),
@@ -225,10 +223,6 @@ def _build_generation_manifest(
             "core_message": str(deck_plan.get("core_message") or ""),
         },
         "design": {
-            "template_id": str(
-                state.get("selected_template_id") or design_spec.get("theme_id") or ""
-            ),
-            "theme_id": str(design_spec.get("theme_id") or ""),
             "files": {key: value for key, value in public_design_files.items() if value},
         },
         "pages": pages,
@@ -238,7 +232,6 @@ def _build_generation_manifest(
             "diagnostic_count": int(quality_report["diagnostic_count"]),
             "error_count": int(quality_report["error_count"]),
             "warning_count": int(quality_report["warning_count"]),
-            "fallback_page_count": int(quality_report["fallback_page_count"]),
         },
         "export": {
             "engine": "python-pptx-image-only",
@@ -264,9 +257,6 @@ def _build_quality_report(
     categories = Counter(str(item.get("category") or "content").casefold() for item in diagnostics)
     error_count = severities["error"] + severities["must_fix"]
     warning_count = severities["warning"]
-    fallback_pages = [
-        str(item.get("slide_id") or "") for item in slides if bool(item.get("fallback_used"))
-    ]
     repaired_pages = [
         {
             "slide_id": str(item.get("slide_id") or ""),
@@ -285,8 +275,6 @@ def _build_quality_report(
         "warning_count": warning_count,
         "counts_by_severity": dict(sorted(severities.items())),
         "counts_by_category": dict(sorted(categories.items())),
-        "fallback_page_count": len(fallback_pages),
-        "fallback_pages": fallback_pages,
         "repaired_pages": repaired_pages,
         "diagnostics": diagnostics,
         "export_warnings": export_warnings,

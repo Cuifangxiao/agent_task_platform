@@ -22,6 +22,7 @@ export interface PresentationApi {
   listTasks: (options?: PptTaskListOptions) => Promise<PptTask[]>
   getTask: (taskId: string) => Promise<PptTask>
   cancelTask: (taskId: string) => Promise<PptTask>
+  deleteTask: (taskId: string) => Promise<void>
   downloadTaskFile: (taskId: string, relativePath?: string) => Promise<DownloadResult>
   createRealtimeClient: (handlers: PresentationWebSocketHandlers) => PresentationWebSocketClient
 }
@@ -44,6 +45,12 @@ export function createPresentationApi(http: HttpClient, options: PresentationApi
         method: 'POST',
         auth: true,
       }),
+    deleteTask: async (taskId) => {
+      await http.request(pptTaskPath(taskId), {
+        method: 'DELETE',
+        auth: true,
+      })
+    },
     downloadTaskFile: (taskId, relativePath) =>
       http.download(
         relativePath ? pptTaskArtifactPath(taskId, relativePath) : `${pptTaskPath(taskId)}/file`,
@@ -56,6 +63,7 @@ export function createPresentationApi(http: HttpClient, options: PresentationApi
 export function toTaskFormData(payload: PptCreateTaskPayload) {
   const formData = new FormData()
   formData.append('agent_config_id', String(payload.agent_config_id))
+  if (payload.name?.trim()) formData.append('name', payload.name.trim())
   formData.append('description', payload.description)
   if (payload.thread_id) formData.append('thread_id', payload.thread_id)
   if (payload.client_request_id) formData.append('client_request_id', payload.client_request_id)

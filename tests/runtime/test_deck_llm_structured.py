@@ -18,6 +18,7 @@ class _StructuredLLM:
     def __init__(self, responses, *, metadata=None):
         self.responses = list(responses)
         self.calls = 0
+        self.messages = []
         self.metadata = metadata
         self.structured_output_kwargs = None
 
@@ -25,7 +26,8 @@ class _StructuredLLM:
         self.structured_output_kwargs = kwargs
         return self
 
-    def invoke(self, _messages):
+    def invoke(self, messages):
+        self.messages.append(messages)
         response = self.responses[self.calls]
         self.calls += 1
         if isinstance(response, Exception):
@@ -46,6 +48,25 @@ def test_structured_parser_failure_is_retried_as_validation_error():
 
     assert result.value == 7
     assert llm.calls == 2
+
+
+def test_validation_retry_includes_the_specific_bounded_error():
+    llm = _StructuredLLM([{"value": "not-an-integer"}, {"value": 7}])
+
+    result = invoke_structured_with_retries(
+        llm,
+        _Payload,
+        system="Return a payload.",
+        user="A value is required.",
+        attempts=2,
+    )
+
+    retry_prompt = llm.messages[1][1][1]
+    assert result.value == 7
+    assert "Validation error:" in retry_prompt
+    assert "value" in retry_prompt
+    assert "valid integer" in retry_prompt
+    assert "Correct the reported fields" in retry_prompt
 
 
 def test_exhausted_structured_parser_failures_remain_non_transport_errors():

@@ -2,9 +2,11 @@ const SUPPORTED_SOURCE_FILE = /\.(pdf|txt|md|markdown|csv|json|ya?ml|docx|png|jp
 const MAX_SOURCE_FILE_BYTES = 20 * 1024 * 1024
 const MAX_TOTAL_SOURCE_BYTES = 100 * 1024 * 1024
 export const MAX_DESCRIPTION_CHARACTERS = 5_000
+export const MAX_PRESENTATION_NAME_CHARACTERS = 120
 
 export interface PresentationSubmissionIdentity {
   agentConfigId: string | number
+  name?: string
   description: string
   sourceFiles: ReadonlyArray<Pick<File, 'name' | 'size' | 'type' | 'lastModified'>>
 }
@@ -51,6 +53,7 @@ export function createPresentationSubmissionAttempt(
 export function presentationSubmissionFingerprint(identity: PresentationSubmissionIdentity) {
   return JSON.stringify({
     agent_config_id: String(identity.agentConfigId),
+    name: identity.name?.trim() || '',
     description: identity.description,
     source_files: identity.sourceFiles.map((file) => ({
       name: file.name,
@@ -59,6 +62,12 @@ export function presentationSubmissionFingerprint(identity: PresentationSubmissi
       last_modified: file.lastModified,
     })),
   })
+}
+
+export function validatePresentationName(name: string) {
+  return Array.from(name.trim()).length > MAX_PRESENTATION_NAME_CHARACTERS
+    ? `演示名称不能超过 ${MAX_PRESENTATION_NAME_CHARACTERS} 个字符。`
+    : ''
 }
 
 export function validatePresentationDescription(description: string) {

@@ -648,6 +648,31 @@ func newMemoryRunRepository(tasks ...Task) *memoryRunRepository {
 	return repo
 }
 
+func TestDeleteTaskRemovesPersistentRunAndArtifacts(t *testing.T) {
+	runID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	task := persistentTestTask(runID, 7, TaskSucceeded)
+	repo := newMemoryRunRepository(task)
+	artifactDir := t.TempDir()
+	taskArtifactDir := filepath.Join(artifactDir, runID, "exports")
+	if err := os.MkdirAll(taskArtifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskArtifactDir, "deck.pptx"), []byte("pptx"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{runRepo: repo, hub: NewTaskHub(time.Hour), artifactDir: artifactDir}
+
+	if err := service.DeleteTask(t.Context(), 7, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Get(t.Context(), 7, runID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted persistent task lookup error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(artifactDir, runID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted artifact directory stat error = %v", err)
+	}
+}
+
 func (repo *memoryRunRepository) FindIdempotent(_ context.Context, ownerID int64, clientRequestID, fingerprint string) (*Task, error) {
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -734,6 +759,23 @@ func (repo *memoryRunRepository) List(_ context.Context, ownerID int64, threadID
 		tasks = tasks[:limit]
 	}
 	return tasks, nil
+}
+
+func (repo *memoryRunRepository) Delete(_ context.Context, ownerID int64, runID string) error {
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	runID = normalizeTaskID(runID)
+	task := repo.tasks[runID]
+	if task == nil || task.ownerID != ownerID {
+		return ErrTaskNotFound
+	}
+	if !task.Status.Terminal() {
+		return ErrTaskStillRunning
+	}
+	delete(repo.tasks, runID)
+	delete(repo.events, runID)
+	delete(repo.fingerprints, runID)
+	return nil
 }
 
 func (repo *memoryRunRepository) AppendEvent(_ context.Context, event AgentEvent, receivedAt time.Time) (*Task, *AgentEvent, error) {

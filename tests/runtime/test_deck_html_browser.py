@@ -1,4 +1,3 @@
-from pathlib import Path
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -6,9 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from PIL import Image
 
-from core.deck.design_system.catalog import get_html_theme
+from core.deck.agents.processor.design import default_design_spec
 from core.deck.html.assembler import HTMLAssembler
-from core.deck.html.fallback import build_fallback_html_spec
 from core.deck.html.browser import (
     BrowserEnvironmentError,
     BrowserMeasurement,
@@ -17,15 +15,6 @@ from core.deck.html.browser import (
     SecureBrowserSession,
     SecureBrowserSessionPool,
     resolve_browser_concurrency,
-)
-from core.deck.domain.schemas import (
-    ContentBlock,
-    ContentBlockType,
-    LayoutFamily,
-    PageRhythm,
-    SlideContentSpec,
-    SlidePlan,
-    SlideRole,
 )
 
 
@@ -43,56 +32,33 @@ def chromium_renderer():
         renderer.close()
 
 
-def _content() -> SlideContentSpec:
-    return SlideContentSpec(
-        slide_id="s02",
-        assertion_title="Trusted HTML is the single render source",
-        takeaway="One PNG serves both preview and final export.",
-        content_blocks=[
-            ContentBlock(type=ContentBlockType.PARAGRAPH, text="Structure comes before visual composition."),
-            ContentBlock(type=ContentBlockType.BULLET_LIST, items=["Verifiable", "Repairable", "Traceable"]),
-            ContentBlock(type=ContentBlockType.METRIC, label="Visual consistency", value="100%"),
-            ContentBlock(type=ContentBlockType.COMPARISON_SIDE, side="left", items=["Two render paths", "Hard to reproduce"]),
-            ContentBlock(type=ContentBlockType.COMPARISON_SIDE, side="right", items=["One render path", "Stable output"]),
-            ContentBlock(type=ContentBlockType.PROCESS_STEP, ordinal=1, label="Plan", text="Lock the intent"),
-            ContentBlock(type=ContentBlockType.PROCESS_STEP, ordinal=2, label="Render", text="Capture the page"),
-            ContentBlock(type=ContentBlockType.TIMELINE_ITEM, ordinal=1, label="Now", text="Use one artifact"),
-            ContentBlock(type=ContentBlockType.ICON_LABEL, label="Safe", text="No remote assets"),
-        ],
-        suggested_icon_keys=["rocket", "target", "circle-check"],
-    )
+def _assembled():
+    """Build a minimal valid model-authored slide document through the shell."""
 
-
-def _assembled(family: LayoutFamily):
-    role = SlideRole.COVER if family is LayoutFamily.COVER_MINIMAL else SlideRole.INSIGHT
-    if family is LayoutFamily.CLOSING_RESOLUTION:
-        role = SlideRole.CLOSING
-    plan = SlidePlan(
-        slide_id="s02",
-        index=2,
-        role=role,
-        assertion_title="Trusted HTML is the single render source",
-        takeaway="One PNG serves both preview and final export.",
-        content_intent="Exercise a browser-verified fallback recipe",
-        layout_family=family,
-        rhythm=PageRhythm.BREATHING,
-    )
-    html_spec = build_fallback_html_spec(_content(), plan)
     result = HTMLAssembler().assemble(
-        body_html=html_spec.body_html,
-        page_css=html_spec.page_css,
-        design_spec=get_html_theme("paper_editorial").to_design_spec(),
+        body_html=(
+            '<section class="slide">'
+            '<div class="title" data-box="title" data-title-lines="2">'
+            "<h1>Trusted HTML is the single render source</h1></div>"
+            '<div class="copy" data-box="content">One PNG serves both preview and final export.</div>'
+            "</section>"
+        ),
+        page_css=(
+            ".slide .title{position:absolute;left:100px;top:120px;width:1200px;}"
+            ".slide .title h1{font-size:48px;line-height:1.2;color:var(--text-primary);margin:0}"
+            ".slide .copy{position:absolute;left:100px;top:320px;width:1000px;"
+            "font-size:26px;line-height:1.5;color:var(--text-primary)}"
+        ),
+        design_spec=default_design_spec(),
         language="en-US",
-        declared_icon_keys=html_spec.icon_keys,
-        expected_layout=family.value,
+        expected_layout="statement_focus",
     )
     assert not [item for item in result.diagnostics if item.severity == "error"]
     return result
 
 
-@pytest.mark.parametrize("family", list(LayoutFamily))
-def test_all_fallback_recipes_pass_real_chromium_dom_qa(chromium_renderer, family):
-    assembled = _assembled(family)
+def test_valid_slide_passes_real_chromium_dom_qa(chromium_renderer):
+    assembled = _assembled()
 
     measurement = chromium_renderer.measure(assembled.document, font_families=())
 
@@ -103,7 +69,7 @@ def test_all_fallback_recipes_pass_real_chromium_dom_qa(chromium_renderer, famil
 
 
 def test_chromium_capture_is_opaque_exact_size_and_deterministic(chromium_renderer, tmp_path):
-    document = _assembled(LayoutFamily.COVER_MINIMAL).document
+    document = _assembled().document
     first_path = tmp_path / "first.png"
     second_path = tmp_path / "second.png"
 
@@ -174,7 +140,7 @@ def test_measure_and_capture_skips_screenshot_for_invalid_dom(monkeypatch, tmp_p
 
 
 def test_hidden_slide_returns_diagnostics_without_timing_out_capture(chromium_renderer, tmp_path):
-    document = _assembled(LayoutFamily.STATEMENT_FOCUS).document.replace(
+    document = _assembled().document.replace(
         "</head>",
         "<style>.slide{display:none!important}</style></head>",
     )
@@ -269,7 +235,7 @@ def _qa_document(body_html: str, page_css: str):
     result = HTMLAssembler().assemble(
         body_html=body_html,
         page_css=page_css,
-        design_spec=get_html_theme("paper_editorial").to_design_spec(),
+        design_spec=default_design_spec(),
         expected_layout="statement_focus",
     )
     assert not [item for item in result.diagnostics if item.severity == "error"]
@@ -288,6 +254,43 @@ def test_browser_rejects_tiny_low_contrast_semantic_text(chromium_renderer):
     codes = {item.get("code") for item in measurement.diagnostics}
 
     assert {"FONT_TOO_SMALL", "LOW_TEXT_CONTRAST"}.issubset(codes)
+    assert {
+        item.get("severity")
+        for item in measurement.diagnostics
+        if item.get("code") in {"FONT_TOO_SMALL", "LOW_TEXT_CONTRAST"}
+    } == {"warning"}
+
+
+def test_browser_allows_16px_auxiliary_text_but_not_16px_body_copy(chromium_renderer):
+    document = _qa_document(
+        '<section class="slide"><div class="title" data-box="title"><h1>Readable title</h1></div>'
+        '<div class="eyebrow" data-box="eyebrow">SECTION LABEL</div>'
+        '<div class="copy" data-box="content">Body copy must remain readable.</div>'
+        '<div class="page-number" data-box="page-number">08</div></section>',
+        ".slide .title{position:absolute;left:100px;top:80px;width:900px;height:80px;}"
+        ".slide .eyebrow{position:absolute;left:100px;top:190px;width:500px;height:30px;font-size:16px;color:var(--text-primary);}"
+        ".slide .copy{position:absolute;left:100px;top:280px;width:700px;height:40px;font-size:16px;color:var(--text-primary);}"
+        ".slide .page-number{font-size:16px;color:var(--text-primary);}",
+    )
+
+    diagnostics = chromium_renderer.measure(document, font_families=()).diagnostics
+    tiny = [item for item in diagnostics if item.get("code") == "FONT_TOO_SMALL"]
+
+    assert len(tiny) == 1
+    assert tiny[0].get("details") == {"fontSize": 16, "minimum": 21}
+
+
+def test_browser_enforces_title_line_budget_on_non_heading_title_box(chromium_renderer):
+    document = _qa_document(
+        '<section class="slide"><div class="title" data-box="title">First line<br>Second line</div></section>',
+        ".slide .title{position:absolute;left:100px;top:80px;width:900px;font-size:48px;line-height:1.1;color:var(--text-primary);}",
+    )
+
+    diagnostics = chromium_renderer.measure(document, font_families=()).diagnostics
+    title_budget = [item for item in diagnostics if item.get("code") == "TITLE_LINE_BUDGET"]
+
+    assert len(title_budget) == 1
+    assert title_budget[0].get("details") == {"lines": 2, "allowed": 1}
 
 
 def test_browser_rejects_semantic_overlap_and_text_overflow(chromium_renderer):
@@ -302,11 +305,19 @@ def test_browser_rejects_semantic_overlap_and_text_overflow(chromium_renderer):
         ".slide .overflow{position:absolute;left:120px;top:180px;width:240px;height:48px;overflow:hidden;white-space:nowrap;}",
     )
 
-    overlap_codes = {item.get("code") for item in chromium_renderer.measure(overlap, font_families=()).diagnostics}
+    overlap_diagnostics = chromium_renderer.measure(overlap, font_families=()).diagnostics
+    overlap_codes = {item.get("code") for item in overlap_diagnostics}
     overflow_codes = {item.get("code") for item in chromium_renderer.measure(overflow, font_families=()).diagnostics}
 
     assert "BOX_OVERLAP" in overlap_codes
     assert "TEXT_OVERFLOW" in overflow_codes
+    overlap_item = next(item for item in overlap_diagnostics if item.get("code") == "BOX_OVERLAP")
+    assert ".a" in overlap_item["selector"] and ".b" in overlap_item["selector"]
+    assert overlap_item["details"]["firstBox"] == overlap_item["details"]["secondBox"]
+    assert overlap_item["box"]["width"] == 600
+    assert overlap_item["severity"] == "warning"
+    overflow_item = next(item for item in chromium_renderer.measure(overflow, font_families=()).diagnostics if item.get("code") == "TEXT_OVERFLOW")
+    assert overflow_item["severity"] == "warning"
 
 
 def test_browser_blocks_remote_requests_even_without_shell_csp(chromium_renderer):

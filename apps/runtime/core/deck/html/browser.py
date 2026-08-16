@@ -641,15 +641,36 @@ def _classify_browser_exception(exc: Exception) -> Exception:
 DOM_MEASUREMENT_JS = r"""
 (profile) => {
   const diagnostics = [];
+  const softQualityCodes = new Set([
+    'BOX_OUT_OF_BOUNDS',
+    'BOX_OVERLAP',
+    'CONTENT_HIDDEN',
+    'DOM_NODE_BUDGET',
+    'EMPTY_SEMANTIC_BOX',
+    'FONT_TOO_SMALL',
+    'LOW_TEXT_CONTRAST',
+    'PAGE_SCROLL_OVERFLOW',
+    'SEMANTIC_BOX_REQUIRED',
+    'SEMANTIC_MARKED_DECORATIVE',
+    'SHADOW_BUDGET',
+    'SVG_PATH_BUDGET',
+    'TEXT_HIDDEN',
+    'TEXT_OCCLUDED',
+    'TEXT_OUTSIDE_SEMANTIC_BOX',
+    'TEXT_OVERFLOW',
+    'TITLE_LINE_BUDGET',
+    'UNRESOLVED_ICON',
+  ]);
   const push = (code, selector, message, suggestion, box = {}, details = {}, category = 'content') => {
-    diagnostics.push({ code, category, severity: 'error', selector, message, suggestion, box, details });
+    const severity = softQualityCodes.has(code) ? 'warning' : 'error';
+    diagnostics.push({ code, category, severity, selector, message, suggestion, box, details });
   };
   const rectObject = rect => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
   const selector = el => {
     const box = el.getAttribute('data-box');
-    if (box) return `[data-box="${box}"]`;
     const classes = Array.from(el.classList || []).slice(0, 2).join('.');
-    return `${el.tagName.toLowerCase()}${classes ? `.${classes}` : ''}`;
+    const identity = `${el.tagName.toLowerCase()}${classes ? `.${classes}` : ''}`;
+    return box ? `${identity}[data-box="${box}"]` : identity;
   };
   const directTextNodes = el => Array.from(el.childNodes || []).filter(
     node => node.nodeType === Node.TEXT_NODE && (node.textContent || '').trim()
@@ -764,13 +785,17 @@ DOM_MEASUREMENT_JS = r"""
       continue;
     }
     const boxType = semanticOwner.getAttribute('data-box') || 'content';
+    const auxiliaryBox = new Set([
+      'caption', 'eyebrow', 'footer', 'legend', 'meta', 'metadata',
+      'page-number', 'page_number', 'source'
+    ]).has(boxType);
     const titleHeading = boxType === 'title'
       ? (semanticOwner.matches('h1,h2,h3') ? semanticOwner : semanticOwner.querySelector('h1,h2,h3'))
       : null;
     const size = Number.parseFloat(computed.fontSize) || 0;
     const minimum = boxType === 'title' && (textEl === titleHeading || titleHeading?.contains(textEl))
       ? (root.getAttribute('data-layout') === 'cover_minimal' ? profile.minimumCoverTitlePx : profile.minimumPageTitlePx)
-      : (boxType === 'footer' || boxType === 'caption' || boxType === 'title' ? profile.minimumCaptionPx : profile.minimumBodyPx);
+      : (auxiliaryBox || boxType === 'title' ? profile.minimumCaptionPx : profile.minimumBodyPx);
     if (size + .1 < minimum) {
       push('FONT_TOO_SMALL', selector(textEl), `Text is ${size}px; minimum is ${minimum}px.`, 'Reduce content instead of shrinking text.', rectObject(rect), { fontSize: size, minimum });
     }
@@ -852,7 +877,12 @@ DOM_MEASUREMENT_JS = r"""
     }
 
     const boxType = el.getAttribute('data-box') || 'content';
-    const titleHeading = boxType === 'title' ? (el.matches('h1,h2,h3') ? el : el.querySelector('h1,h2,h3')) : null;
+    // Models occasionally put data-box="title" directly on a div.  The title
+    // line budget is a semantic contract, so it must not silently disappear
+    // just because the element is not a heading tag.
+    const titleHeading = boxType === 'title'
+      ? (el.matches('h1,h2,h3') ? el : (el.querySelector('h1,h2,h3') || el))
+      : null;
     if (boxType === 'title') {
       const heading = titleHeading;
       if (heading) {
@@ -879,7 +909,20 @@ DOM_MEASUREMENT_JS = r"""
       const area = width * height;
       const smaller = Math.max(1, Math.min(ar.width * ar.height, br.width * br.height));
       if (area / smaller > 0.025) {
-        push('BOX_OVERLAP', `${selector(a)} ↔ ${selector(b)}`, 'Top-level semantic boxes overlap unexpectedly.', 'Adjust grid tracks, gaps, or explicit geometry.', {}, { overlapRatio: area / smaller });
+        const overlapRect = {
+          x: Math.max(ar.left, br.left),
+          y: Math.max(ar.top, br.top),
+          width,
+          height,
+        };
+        push(
+          'BOX_OVERLAP',
+          `${selector(a)} ↔ ${selector(b)}`,
+          'Top-level semantic boxes overlap unexpectedly.',
+          'Use the named classes and measured rectangles to separate the boxes with a visible gap.',
+          overlapRect,
+          { overlapRatio: area / smaller, firstBox: rectObject(ar), secondBox: rectObject(br) },
+        );
       }
     }
   }

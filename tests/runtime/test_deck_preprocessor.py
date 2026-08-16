@@ -45,7 +45,10 @@ def _outline_payload(page_count: int) -> dict:
                 "id": f"s{index:02d}",
                 "title": f"Page {index}",
                 "type": role,
-                "key_points": [f"Evidence for page {index}"],
+                "key_points": [
+                    f"Evidence for page {index}",
+                    f"Implication for page {index}",
+                ],
                 "layout_suggestion": layout,
                 "content_mode": "mixed",
                 "content_note": f"Use source section {index}.",
@@ -243,6 +246,10 @@ def test_explicit_page_count_mismatch_retries_and_never_persists_partial_outline
                 {"layout_suggestion": payload["slides"][0]["layout_suggestion"]}
             ),
             "adjacent slides",
+        ),
+        (
+            lambda payload: payload["slides"][1].update({"key_points": []}),
+            "2-4 substantive key_points",
         ),
     ],
 )

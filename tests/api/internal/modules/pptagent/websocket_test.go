@@ -679,6 +679,10 @@ func (service *wsTestService) CancelTask(_ context.Context, _ int64, runID strin
 	return cloneTask(task), nil
 }
 
+func (service *wsTestService) DeleteTask(context.Context, int64, string) error {
+	return errors.New("not implemented")
+}
+
 func (service *wsTestService) OpenArtifact(context.Context, int64, string, string) (*os.File, error) {
 	return nil, errors.New("not implemented")
 }

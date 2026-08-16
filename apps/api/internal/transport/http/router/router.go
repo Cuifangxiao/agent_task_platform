@@ -107,6 +107,7 @@ func registerV1(engine *gin.Engine, deps Dependencies) {
 	ppt.POST("/tasks", deps.Presentations.CreateTask)
 	ppt.GET("/tasks", deps.Presentations.ListTasks)
 	ppt.GET("/tasks/:task_id", deps.Presentations.GetTask)
+	ppt.DELETE("/tasks/:task_id", deps.Presentations.DeleteTask)
 	ppt.POST("/tasks/:task_id/cancel", deps.Presentations.CancelTask)
 	ppt.GET("/tasks/:task_id/file", deps.Presentations.DownloadFile)
 	ppt.GET("/tasks/:task_id/artifacts/*asset_path", deps.Presentations.DownloadArtifact)

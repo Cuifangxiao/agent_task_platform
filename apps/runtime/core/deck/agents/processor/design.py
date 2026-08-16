@@ -9,35 +9,56 @@ from pathlib import Path
 from typing import Any
 
 from core.deck.agents.processor.layout import deck_plan_markdown
-from core.deck.design_system.catalog import ThemeDefinition, get_recipe, select_html_theme
+from core.deck.design_system.catalog import get_recipe
 from core.deck.domain.schemas import (
     DeckOutlineSpec,
     DeckPlan,
     DesignSpec,
+    GlobalStyleSpec,
     PROMPT_VERSION,
     PaletteSpec,
     RENDERER_VERSION,
+    ShapeStyleSpec,
+    SpacingSpec,
+    TypeToken,
+    TypographySpec,
 )
 from core.deck.workspace.paths import DeckProjectPaths
 
 
-def create_design_spec(outline: DeckOutlineSpec) -> tuple[ThemeDefinition, DesignSpec]:
-    """Reuse tested typography/geometry while sourcing every color from stage one."""
+# Fixed renderer defaults for the whole deck.  Stage one owns every color via
+# GlobalStyleSpec; typography, spacing, and shape geometry are stable renderer
+# contracts that do not vary with topic, audience, or any template catalog.
+DEFAULT_TYPOGRAPHY = TypographySpec(
+    chinese_font="Noto Sans SC",
+    latin_font="Inter",
+    cover_title=TypeToken(size_px=76, weight=800, line_height=1.05, max_lines=2),
+    page_title=TypeToken(size_px=48, weight=700, line_height=1.14, max_lines=2),
+    body=TypeToken(size_px=23, weight=400, line_height=1.5, max_lines=8),
+    caption=TypeToken(size_px=16, weight=500, line_height=1.4, max_lines=3),
+)
+DEFAULT_SPACING = SpacingSpec(canvas_margin=80, base_unit=8, column_gap=40)
+DEFAULT_SHAPE_STYLE = ShapeStyleSpec(radius=8, line_width=2, shadow="none")
+DEFAULT_ICON_STYLE = "Lucide outline, 2px stroke, currentColor"
+DEFAULT_BACKGROUND_STYLE = "clean neutral field"
+DEFAULT_MOTIF = "subtle geometric accents and editorial rules"
+DEFAULT_DENSITY_POLICY = (
+    "alternate dense evidence pages with breathing statement pages; avoid equal card grids"
+)
 
-    theme = select_html_theme(
-        "auto",
-        " ".join(
-            [
-                outline.title,
-                outline.subtitle,
-                outline.metadata.design_style,
-                outline.metadata.source_summary,
-            ]
-        ),
-    )
-    baseline = theme.to_design_spec()
-    colors = outline.metadata.global_style_spec
-    palette = PaletteSpec(
+_NEUTRAL_PALETTE = PaletteSpec(
+    background="#FFFFFF",
+    surface="#F5F5F5",
+    text="#111111",
+    muted="#555555",
+    accent="#0057B8",
+    secondary="#6B4EFF",
+    divider="#C7C7C7",
+)
+
+
+def _palette_from_global(colors: GlobalStyleSpec) -> PaletteSpec:
+    return PaletteSpec(
         background=colors.background_color,
         surface=colors.surface_color,
         text=colors.text_primary,
@@ -46,19 +67,44 @@ def create_design_spec(outline: DeckOutlineSpec) -> tuple[ThemeDefinition, Desig
         secondary=colors.secondary_color,
         divider=colors.border_color,
     )
-    return theme, baseline.model_copy(
-        update={
-            "palette": palette,
-            "global_style_spec": colors,
-            "background_style": outline.metadata.design_style,
-        }
+
+
+def default_design_spec(
+    global_style: GlobalStyleSpec | None = None,
+    *,
+    background_style: str = DEFAULT_BACKGROUND_STYLE,
+) -> DesignSpec:
+    """Return the fixed renderer design contract with one color source."""
+
+    return DesignSpec(
+        palette=_palette_from_global(global_style) if global_style else _NEUTRAL_PALETTE,
+        global_style_spec=global_style,
+        typography=DEFAULT_TYPOGRAPHY,
+        spacing=DEFAULT_SPACING,
+        shape_style=DEFAULT_SHAPE_STYLE,
+        icon_style=DEFAULT_ICON_STYLE,
+        background_style=background_style or DEFAULT_BACKGROUND_STYLE,
+        motif=DEFAULT_MOTIF,
+        density_policy=DEFAULT_DENSITY_POLICY,
+    )
+
+
+def create_design_spec(outline: DeckOutlineSpec) -> DesignSpec:
+    """Derive the renderer design contract from the outline palette.
+
+    Stage one's ``GlobalStyleSpec`` remains the only palette source; every
+    other design token comes from the fixed renderer defaults above.
+    """
+
+    return default_design_spec(
+        outline.metadata.global_style_spec,
+        background_style=outline.metadata.design_style,
     )
 
 
 def persist_design_artifacts(
     project: DeckProjectPaths,
     *,
-    theme: ThemeDefinition,
     design: DesignSpec,
     plan: DeckPlan,
     layout_preferences: dict[str, dict[str, Any]],
@@ -83,25 +129,14 @@ def persist_design_artifacts(
         "immutable_tokens": design_payload,
         "pages": blueprints,
     }
-    template_manifest = {
-        "schema": "html-template-manifest.v1",
-        "theme_id": theme.theme_id,
-        "theme_name": theme.name,
-        "theme_catalog": "design_system/themes.json",
-        "recipe_catalog": "design_system/recipes.json",
-        "source": "native HTML theme catalog",
-        "license": "Project-authored themes; Lucide icons are separately licensed.",
-        "recipe_families": sorted({page["layout_family"] for page in blueprints}),
-    }
     _atomic_write_json(project.design_spec_json, design_payload)
     _atomic_write_json(project.spec_lock_json, execution_lock)
     _atomic_write_json(
         project.root / "page-blueprints.json",
         {"schema": "html-page-blueprints.v2", "pages": blueprints},
     )
-    _atomic_write_json(project.root / "template-manifest.json", template_manifest)
     _atomic_write_text(project.outline_markdown, deck_plan_markdown(plan))
-    _atomic_write_text(project.design_spec_markdown, _design_markdown(theme, design, spec_hash))
+    _atomic_write_text(project.design_spec_markdown, _design_markdown(design, spec_hash))
     _atomic_write_text(project.spec_lock_markdown, _lock_markdown(execution_lock))
 
 
@@ -141,12 +176,11 @@ def _atomic_write_text(path: Path, value: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _design_markdown(theme: ThemeDefinition, design: DesignSpec, spec_hash: str) -> str:
+def _design_markdown(design: DesignSpec, spec_hash: str) -> str:
     return "\n".join(
         [
             "# HTML Deck Design Specification",
             "",
-            f"- Theme geometry: `{theme.theme_id}` — {theme.name}",
             "- Palette source: `deck-outline.json.metadata.global_style_spec`",
             f"- Canvas: {design.canvas_width} × {design.canvas_height}",
             f"- Fonts: {design.typography.chinese_font} / {design.typography.latin_font}",
@@ -174,4 +208,4 @@ def _lock_markdown(lock: dict[str, Any]) -> str:
     )
 
 
-__all__ = ["create_design_spec", "persist_design_artifacts"]
+__all__ = ["create_design_spec", "default_design_spec", "persist_design_artifacts"]

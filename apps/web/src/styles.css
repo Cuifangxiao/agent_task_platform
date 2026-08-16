@@ -91,6 +91,14 @@ label {
   font-size: 13px;
 }
 
+.model-picker-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .mono {
   font-family: var(--mono);
 }

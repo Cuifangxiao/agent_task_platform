@@ -114,6 +114,7 @@ func TestCanonicalRouteTable(t *testing.T) {
 		"GET /api/v1/ppt/ws",
 		"POST /api/v1/ppt/tasks",
 		"GET /api/v1/ppt/tasks/:task_id",
+		"DELETE /api/v1/ppt/tasks/:task_id",
 		"POST /api/v1/ppt/tasks/:task_id/cancel",
 		"GET /api/v1/ppt/tasks/:task_id/file",
 		"GET /api/v1/ppt/tasks/:task_id/artifacts/*asset_path",

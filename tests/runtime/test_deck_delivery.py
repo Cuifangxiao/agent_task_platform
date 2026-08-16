@@ -47,7 +47,6 @@ def test_delivery_assembles_image_only_pptx_and_reports(tmp_path, monkeypatch):
             "renderer_version": "chromium-html.v2",
             "prompt_version": "html-deck.v4",
             "repair_attempts": 1,
-            "fallback_used": False,
         }
     }
     emitted = []
@@ -59,8 +58,6 @@ def test_delivery_assembles_image_only_pptx_and_reports(tmp_path, monkeypatch):
             "project_dir": str(project.root),
             "deck_title": "HTML deck",
             "deck_plan": {"deck_title": "HTML deck", "core_message": "Ship the result"},
-            "design_spec": {"theme_id": "paper_editorial"},
-            "selected_template_id": "paper_editorial",
             "completed_slides": completed,
         },
         ImagePptxExporter(tmp_path),
@@ -77,11 +74,11 @@ def test_delivery_assembles_image_only_pptx_and_reports(tmp_path, monkeypatch):
     assert emitted[-1].resources[0].relative_path == "exports/deck.pptx"
 
     generation = json.loads(project.generation_manifest.read_text(encoding="utf-8"))
-    assert generation["schema"] == "deck-generation-manifest.v2"
+    assert generation["schema"] == "deck-generation-manifest.v3"
     assert generation["export"]["engine"] == "python-pptx-image-only"
     assert generation["export"]["editable"] is False
     quality = json.loads(project.quality_report.read_text(encoding="utf-8"))
-    assert quality["schema"] == "deck-quality-report.v2"
+    assert quality["schema"] == "deck-quality-report.v3"
     assert quality["warning_count"] == 1
     assert quality["repaired_pages"] == [{"slide_id": "s01", "attempts": 1}]
 

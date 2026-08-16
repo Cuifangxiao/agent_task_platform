@@ -94,7 +94,7 @@ POST 创建任务
   → Go 解析 outline/style/designer 三个模型节点，并在 MySQL 创建 Run/幂等键/同 thread worker guard
   → Python 用 outline 一次生成完整 DeckOutlineSpec、页面规划与唯一 GlobalStyleSpec
   → Runtime 确定性派生 DeckPlan/DesignSpec，再通过 Send 并发执行每页 style 视觉规划与 designer HTML
-  → 受控 Chromium session pool 执行 DOM QA、有限 repair/fallback，并按完成顺序发送 PNG AgentEvent
+  → 受控 Chromium session pool 执行 DOM QA、有限 repair，并按完成顺序发送 PNG AgentEvent
   → 聚合器按 slide_id/page_index 恢复顺序，生成质量报告、manifest 与 image-only PPTX
   → Go 校验事件，在同一事务写 Event + Run 快照，提交后通过 WS 广播
   → Go 校验最终 PPTX 存在且 size/hash 匹配，再提交 TASK_COMPLETED
@@ -102,7 +102,7 @@ POST 创建任务
 ```
 
 - 使用独立的 `contracts/proto/ppt/ppt_agent.proto` 服务端流协议。
-- Runtime 使用 Send map-reduce LangGraph（全局根图 + 单页生成子图）；4 套完整主题、10 种版式 recipe 和本地 Lucide 图标共享同一 DesignSpec。
+- Runtime 使用 Send map-reduce LangGraph（全局根图 + 单页生成子图）；10 种版式 recipe 和本地 Lucide 图标共享同一固定默认 DesignSpec，不使用视觉主题模板。
 - 每页预览是固定 `3200×1800` PNG；最终 PPTX 每页只有一张全出血图片，因此视觉同源但页内元素不可编辑。
 - PPT 实时链路只使用一条可复用 WebSocket；每个 run 以独立 sequence 游标订阅和重放。
 - `ppt_runs` 保存快照与 worker 生命周期，`ppt_run_events` 保存完整 canonical 事件；API 重启后历史仍可查询和重放。

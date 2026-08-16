@@ -77,7 +77,10 @@ class HTMLAssembler:
     ) -> HTMLAssemblyResult:
         design = design_spec if isinstance(design_spec, DesignSpec) else DesignSpec.model_validate(design_spec)
         body = sanitize_html_fragment(body_html)
-        css = sanitize_css(page_css)
+        css = sanitize_css(
+            page_css,
+            locked_color_aliases=design_spec_color_aliases(design),
+        )
         locked_body, root_diagnostics = _lock_slide_root(body.html, expected_layout)
         injected, resolved, missing = self._icons.inject(locked_body)
         diagnostics = list(body.diagnostics) + list(css.diagnostics) + root_diagnostics
@@ -112,7 +115,7 @@ class HTMLAssembler:
             )
 
         safe_language = language if re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?", language or "") else "zh-CN"
-        theme_css = design_spec_css(design)
+        design_css = design_spec_css(design)
         document = "\n".join(
             [
                 "<!doctype html>",
@@ -121,8 +124,8 @@ class HTMLAssembler:
                 '<meta charset="utf-8">',
                 '<meta name="viewport" content="width=1600, initial-scale=1">',
                 f'<meta http-equiv="Content-Security-Policy" content="{html.escape(CSP, quote=True)}">',
-                "<style id=\"theme-style\">",
-                theme_css,
+                "<style id=\"design-style\">",
+                design_css,
                 "</style>",
                 "<style id=\"base-style\">",
                 self._base_css,
@@ -198,6 +201,45 @@ def design_spec_css(design: DesignSpec | dict) -> str:
             }
         )
     return ":root{\n" + "\n".join(f"  {name}: {value};" for name, value in variables.items()) + "\n}"
+
+
+def design_spec_color_aliases(design: DesignSpec | dict) -> dict[str, str]:
+    """Map immutable palette literals to the trusted CSS variable for that role."""
+
+    spec = design if isinstance(design, DesignSpec) else DesignSpec.model_validate(design)
+    pairs: list[tuple[str, str]] = []
+    if spec.global_style_spec is not None:
+        colors = spec.global_style_spec
+        pairs.extend(
+            [
+                (colors.primary_color, "--primary-color"),
+                (colors.secondary_color, "--secondary-color"),
+                (colors.accent_color, "--accent-color"),
+                (colors.background_color, "--background-color"),
+                (colors.surface_color, "--surface-color"),
+                (colors.text_primary, "--text-primary"),
+                (colors.text_secondary, "--text-secondary"),
+                (colors.text_muted, "--text-muted"),
+                (colors.border_color, "--border-color"),
+                (colors.success_color, "--success-color"),
+            ]
+        )
+    palette = spec.palette
+    pairs.extend(
+        [
+            (palette.background, "--slide-bg"),
+            (palette.surface, "--surface"),
+            (palette.text, "--text-primary"),
+            (palette.muted, "--text-muted"),
+            (palette.accent, "--accent"),
+            (palette.secondary, "--secondary"),
+            (palette.divider, "--divider"),
+        ]
+    )
+    aliases: dict[str, str] = {}
+    for color, variable in pairs:
+        aliases.setdefault(str(color).casefold(), variable)
+    return aliases
 
 
 def _quoted_font(value: str) -> str:

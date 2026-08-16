@@ -22,6 +22,7 @@ import {
 import {
   createPresentationId,
   createPresentationSubmissionAttempt,
+  validatePresentationName,
   validatePresentationDescription,
   validateSourceFiles,
 } from '../../apps/web/src/features/presentations/lib/presentationUtils.ts'
@@ -113,7 +114,7 @@ test('event ids deduplicate each run and canonical task/run aliases must agree',
   )
 })
 
-test('HTTP task routes cover list, snapshots, and artifacts', () => {
+test('HTTP task routes cover list, snapshots, deletion, and artifacts', () => {
   assert.equal(pptTasksListPath(), '/ppt/tasks')
   assert.equal(
     pptTasksListPath({ threadId: 'thread / 1', limit: 20.8 }),
@@ -134,6 +135,7 @@ test('a failed identical create attempt reuses ids while changed input gets fres
   const createId = () => `id-${++sequence}`
   const input = {
     agentConfigId: 7,
+    name: '季度汇报',
     description: '生成一份季度汇报',
     sourceFiles: [{ name: 'metrics.csv', size: 42, type: 'text/csv', lastModified: 123 }],
   }
@@ -150,6 +152,7 @@ test('a failed identical create attempt reuses ids while changed input gets fres
 
   const changed = createPresentationSubmissionAttempt({
     ...input,
+    name: '年度汇报',
     description: '生成一份年度汇报',
   }, first, createId)
   assert.deepEqual(
@@ -178,4 +181,11 @@ test('presentation descriptions use the same 5000 Unicode character limit as Go'
   assert.match(validatePresentationDescription('   '), /先描述/)
   assert.equal(validatePresentationDescription('🙂'.repeat(5_000)), '')
   assert.match(validatePresentationDescription('🙂'.repeat(5_001)), /5000/)
+})
+
+test('presentation names are optional and limited to 120 Unicode characters', () => {
+  assert.equal(validatePresentationName(''), '')
+  assert.equal(validatePresentationName('季度复盘'), '')
+  assert.equal(validatePresentationName('🙂'.repeat(120)), '')
+  assert.match(validatePresentationName('🙂'.repeat(121)), /120/)
 })

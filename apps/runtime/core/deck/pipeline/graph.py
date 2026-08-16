@@ -44,7 +44,7 @@ class PptGraph:
         preprocessor: Preprocessor | None = None,
         processor: Processor | None = None,
         postprocessor: Postprocessor | None = None,
-        max_repairs: int = 2,
+        max_repairs: int = 3,
         slide_concurrency: int | None = None,
     ) -> None:
         self.output_dir = Path(output_dir)

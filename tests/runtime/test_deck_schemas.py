@@ -88,7 +88,7 @@ def _design_plan_payload(slide_id: str = "s02") -> dict:
             "layout_type": "three_points",
             "color_scheme": PALETTE,
             "typography": {
-                "font_family": "Noto Sans CJK SC, Inter",
+                "font_family": "Noto Sans SC, Inter",
                 "title": "48px/1.15 700",
                 "heading": "28px/1.2 700",
                 "body": "21px/1.4 400",
@@ -102,7 +102,7 @@ def _design_plan_payload(slide_id: str = "s02") -> dict:
 
 def test_deck_schema_and_prompt_versions_match_the_three_stage_contract():
     assert SCHEMA_VERSION == "deck-state.v6"
-    assert PROMPT_VERSION == "html-deck.v8"
+    assert PROMPT_VERSION == "html-deck.v12"
     assert RENDERER_VERSION == "chromium-html.v2"
     assert (CANVAS_WIDTH, CANVAS_HEIGHT) == (1600, 900)
 
@@ -129,6 +129,22 @@ def test_global_style_is_complete_hex_normalized_and_readable():
     }
     with pytest.raises(ValidationError, match="contrast"):
         GlobalStyleSpec.model_validate(low_contrast)
+
+
+def test_global_style_does_not_reject_decorative_colors_by_palette_role_alone():
+    style = GlobalStyleSpec.model_validate(
+        {
+            **PALETTE,
+            "primary_color": "#2563EB",
+            "background_color": "#0F172A",
+            "surface_color": "#1E293B",
+            "text_primary": "#F8FAFC",
+            "text_secondary": "#CBD5E1",
+            "text_muted": "#94A3B8",
+        }
+    )
+
+    assert style.primary_color == "#2563EB"
 
 
 @pytest.mark.parametrize("page_count", [1, 30])
@@ -183,6 +199,20 @@ def test_renderer_deck_plan_preserves_outline_order_and_boundary_roles():
         DeckPlan.model_validate(invalid)
 
 
+def test_cover_uses_deck_subtitle_instead_of_internal_content_note():
+    payload = _outline_payload(3)
+    payload["subtitle"] = "Audience-facing promise"
+    payload["slides"][0]["key_points"] = []
+    payload["slides"][0]["content_note"] = (
+        "封面页。来源：通用知识。目的：吸引注意。可提及内部参考。"
+    )
+
+    plan = deck_plan_from_outline(DeckOutlineSpec.model_validate(payload))
+
+    assert plan.slides[0].takeaway == "Audience-facing promise"
+    assert plan.slides[0].content_intent == payload["slides"][0]["content_note"]
+
+
 def test_design_plan_uses_auditable_rationale_and_exact_global_palette():
     outline_slide = SlideOutlineSpec.model_validate(_slide_payload(2, 3))
     global_style = GlobalStyleSpec.model_validate(PALETTE).model_dump(mode="json")
@@ -193,7 +223,7 @@ def test_design_plan_uses_auditable_rationale_and_exact_global_palette():
         outline_slide=outline_slide,
         expected_layout=LayoutFamily.THREE_POINTS,
         global_style=global_style,
-        approved_fonts=["Noto Sans CJK SC", "Inter"],
+        approved_fonts=["Noto Sans SC", "Inter"],
     )
     assert validated.design_specifications.color_scheme.model_dump(mode="json") == global_style
     assert "thinking_process" not in validated.model_dump(mode="json")
@@ -208,7 +238,7 @@ def test_design_plan_uses_auditable_rationale_and_exact_global_palette():
             outline_slide=outline_slide,
             expected_layout=LayoutFamily.THREE_POINTS,
             global_style=global_style,
-            approved_fonts=["Noto Sans CJK SC", "Inter"],
+            approved_fonts=["Noto Sans SC", "Inter"],
         )
 
     conflicting_payload = copy.deepcopy(_design_plan_payload())

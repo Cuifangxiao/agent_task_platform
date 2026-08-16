@@ -3,11 +3,10 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ArrowRight, Bot, Network, Plus, Save, Trash2, X } from '@lucide/vue'
 
 import EmptyState from '@/components/EmptyState.vue'
-import ModelTypeBadge from '@/components/ModelTypeBadge.vue'
 import NodeBindingList from '@/components/NodeBindingList.vue'
-import ProviderIcon from '@/components/ProviderIcon.vue'
+import SearchableModelSelect from '@/components/SearchableModelSelect.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import { MODEL_TYPE_OPTIONS, modelTypeLabel, normalizeModelType } from '@/features/models/modelPresentation'
+import { modelTypeLabel, normalizeModelType } from '@/features/models/modelPresentation'
 import type { AgentConfig, AgentConfigNodeBinding, AgentConfigPayload, AgentDefinition, ModelConfig, Status } from '@/types'
 
 const props = defineProps<{
@@ -51,17 +50,17 @@ const isEditorOpen = ref(false)
 const activeModels = computed(() => props.models.filter((item) => (
   item.status === 'active' && normalizeModelType(item.model_type) !== 'image'
 )))
-const activeModelGroups = computed(() => MODEL_TYPE_OPTIONS
-  .filter((type) => type.value !== 'image')
-  .map((type) => ({
-    ...type,
-    models: activeModels.value.filter((model) => normalizeModelType(model.model_type) === type.value),
-  }))
-  .filter((group) => group.models.length > 0))
+const activeModelOptions = computed(() => activeModels.value.map((model) => ({
+  value: String(model.id),
+  label: model.name,
+  description: `${model.provider} / ${model.model_name}`,
+  provider: model.provider,
+  modelType: normalizeModelType(model.model_type),
+  group: modelTypeLabel(model.model_type),
+})))
 const selectedAgent = computed(() => props.agents.find((item) => item.id === Number(draft.agent_id)) ?? null)
 const requiredNodes = computed(() => selectedAgent.value?.nodes.filter((node) => node.requires_model) ?? [])
 const requiredNodesByKey = computed(() => new Map(requiredNodes.value.map((node) => [node.key, node])))
-const modelsByID = computed(() => new Map(props.models.map((model) => [model.id, model])))
 const activeAgents = computed(() => props.agents.filter((item) => item.status === 'active'))
 const activeConfigs = computed(() => props.agentConfigs.filter((item) => item.status === 'active'))
 const bindingCount = computed(() => props.agentConfigs.reduce((total, item) => total + item.node_bindings.length, 0))
@@ -138,11 +137,6 @@ function closeEditor() {
 
 function nodeMeta(nodeKey: string) {
   return requiredNodesByKey.value.get(nodeKey)
-}
-
-function bindingModel(modelConfigId: string) {
-  if (!modelConfigId) return null
-  return modelsByID.value.get(Number(modelConfigId)) ?? null
 }
 
 function submit() {
@@ -331,25 +325,14 @@ function submit() {
                   <strong>{{ nodeMeta(binding.node_key)?.display_name ?? binding.node_key }}</strong>
                   <p>{{ nodeMeta(binding.node_key)?.description }}</p>
                 </div>
-                <label>
-                  Model Config
-                  <select v-model="binding.model_config_id" required>
-                    <option value="">请选择 active 模型配置</option>
-                    <optgroup v-for="group in activeModelGroups" :key="group.value" :label="group.label">
-                      <option v-for="model in group.models" :key="model.id" :value="String(model.id)">
-                        [{{ modelTypeLabel(model.model_type) }}] {{ model.name }} / {{ model.provider }} / {{ model.model_name }}
-                      </option>
-                    </optgroup>
-                  </select>
-                  <div v-if="bindingModel(binding.model_config_id)" class="binding-model-summary">
-                    <ProviderIcon :provider="bindingModel(binding.model_config_id)!.provider" :size="32" />
-                    <div>
-                      <strong>{{ bindingModel(binding.model_config_id)!.name }}</strong>
-                      <small>{{ bindingModel(binding.model_config_id)!.provider }} / {{ bindingModel(binding.model_config_id)!.model_name }}</small>
-                    </div>
-                    <ModelTypeBadge :model-type="bindingModel(binding.model_config_id)!.model_type" />
-                  </div>
-                </label>
+                <div class="model-picker-field">
+                  <span>Model Config</span>
+                  <SearchableModelSelect
+                    v-model="binding.model_config_id"
+                    :options="activeModelOptions"
+                    placeholder="请选择 active 模型配置"
+                  />
+                </div>
                 <div class="form-grid">
                   <label>
                     Temperature 覆盖

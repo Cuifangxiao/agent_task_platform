@@ -256,7 +256,13 @@ func (r *MySQLRepository) UpdateConfig(ctx context.Context, config AgentConfig) 
 		return nil, fmt.Errorf("read updated rows: %w", err)
 	}
 	if rowsAffected == 0 {
-		return nil, ErrNotFound
+		exists, err := configExistsTx(ctx, tx, config.UserID, config.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, ErrNotFound
+		}
 	}
 	if err := replaceBindingsTx(ctx, tx, config.ID, config.NodeBindings); err != nil {
 		return nil, err
@@ -271,6 +277,23 @@ func (r *MySQLRepository) UpdateConfig(ctx context.Context, config AgentConfig) 
 	}
 
 	return updated, nil
+}
+
+func configExistsTx(ctx context.Context, tx *sql.Tx, userID int64, id int64) (bool, error) {
+	var exists bool
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(
+			SELECT 1
+			FROM agent_configs
+			WHERE user_id = ? AND id = ?
+		)`,
+		userID,
+		id,
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check agent config existence: %w", err)
+	}
+	return exists, nil
 }
 
 func (r *MySQLRepository) DeleteConfig(ctx context.Context, userID int64, id int64) error {

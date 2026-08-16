@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 SCHEMA_VERSION = "deck-state.v6"
-PROMPT_VERSION = "html-deck.v8"
+PROMPT_VERSION = "html-deck.v12"
 RENDERER_VERSION = "chromium-html.v2"
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 900
@@ -84,7 +84,7 @@ class GlobalStyleSpec(StrictModel):
         return value.upper()
 
     @model_validator(mode="after")
-    def readable_foreground(self) -> "GlobalStyleSpec":
+    def readable_text_colors(self) -> "GlobalStyleSpec":
         for surface_name, surface in (
             ("background_color", self.background_color),
             ("surface_color", self.surface_color),
@@ -101,16 +101,6 @@ class GlobalStyleSpec(StrictModel):
                 raise ValueError(
                     f"text_muted must have at least 3:1 contrast on {surface_name}"
                 )
-            for signal_name, signal in (
-                ("primary_color", self.primary_color),
-                ("secondary_color", self.secondary_color),
-                ("accent_color", self.accent_color),
-                ("success_color", self.success_color),
-            ):
-                if _color_contrast(surface, signal) < 3.0:
-                    raise ValueError(
-                        f"{signal_name} must have at least 3:1 contrast on {surface_name}"
-                    )
         return self
 
 
@@ -324,7 +314,6 @@ class ShapeStyleSpec(StrictModel):
 
 
 class DesignSpec(StrictModel):
-    theme_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,63}$")
     palette: PaletteSpec
     global_style_spec: GlobalStyleSpec | None = None
     typography: TypographySpec
@@ -446,7 +435,6 @@ class SlideArtifactMetadata(StrictModel):
     render_environment: dict[str, Any] = Field(default_factory=dict)
     model_metadata: dict[str, Any] = Field(default_factory=dict)
     repair_attempts: int = Field(ge=0, le=10)
-    fallback_used: bool = False
     diagnostics_path: str = Field(default="", max_length=500)
 
 

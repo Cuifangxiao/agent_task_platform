@@ -62,14 +62,14 @@ func (h *TaskHub) Create(taskID string, ownerID int64, now time.Time) (*Task, er
 // invariant. The bool result reports whether an existing idempotent run was
 // returned, in which case the caller must not start another runtime worker.
 func (h *TaskHub) CreateRun(runID, threadID, clientRequestID, fingerprint string, ownerID int64, now time.Time) (*Task, bool, error) {
-	return h.createRun(runID, threadID, clientRequestID, fingerprint, "", 0, ownerID, now)
+	return h.createRun(runID, threadID, clientRequestID, fingerprint, "", "", 0, ownerID, now)
 }
 
-func (h *TaskHub) CreateRunWithDetails(runID, threadID, clientRequestID, fingerprint, description string, agentConfigID, ownerID int64, now time.Time) (*Task, bool, error) {
-	return h.createRun(runID, threadID, clientRequestID, fingerprint, description, agentConfigID, ownerID, now)
+func (h *TaskHub) CreateRunWithDetails(runID, threadID, clientRequestID, fingerprint, name, description string, agentConfigID, ownerID int64, now time.Time) (*Task, bool, error) {
+	return h.createRun(runID, threadID, clientRequestID, fingerprint, name, description, agentConfigID, ownerID, now)
 }
 
-func (h *TaskHub) createRun(runID, threadID, clientRequestID, fingerprint, description string, agentConfigID, ownerID int64, now time.Time) (*Task, bool, error) {
+func (h *TaskHub) createRun(runID, threadID, clientRequestID, fingerprint, name, description string, agentConfigID, ownerID int64, now time.Time) (*Task, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pruneLocked(now)
@@ -103,6 +103,7 @@ func (h *TaskHub) createRun(runID, threadID, clientRequestID, fingerprint, descr
 			TaskID:          runID,
 			ClientRequestID: clientRequestID,
 			AgentConfigID:   agentConfigID,
+			Name:            strings.TrimSpace(name),
 			Description:     strings.TrimSpace(description),
 			Status:          TaskRunning,
 			Stage:           StagePreparing,
@@ -320,6 +321,21 @@ func (h *TaskHub) List(ownerID int64, threadID string, limit int) ([]*Task, erro
 		tasks = tasks[:limit]
 	}
 	return tasks, nil
+}
+
+func (h *TaskHub) Delete(ownerID int64, taskID string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	taskID = normalizeTaskID(taskID)
+	stream, ok := h.tasks[taskID]
+	if !ok || stream.task.ownerID != ownerID {
+		return ErrTaskNotFound
+	}
+	if !stream.task.Status.Terminal() || stream.workerAlive {
+		return ErrTaskStillRunning
+	}
+	h.deleteTaskLocked(taskID)
+	return nil
 }
 
 func (h *TaskHub) Publish(taskID string, event AgentEvent) error {
